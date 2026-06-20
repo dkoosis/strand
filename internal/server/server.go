@@ -1,0 +1,89 @@
+// Package server is strand's HTTP layer: a small JSON API over a bd.Client plus
+// the embedded web UI that consumes it.
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"github.com/dkoosis/strand/internal/bd"
+)
+
+// Server holds the bd client and serves both the API and the static UI.
+type Server struct {
+	bd     *bd.Client
+	static http.Handler
+}
+
+// New builds a Server. static is the file system holding the web UI (templates
+// and assets), wired in by the caller so package server stays free of embed.
+func New(client *bd.Client, static http.Handler) *Server {
+	return &Server{bd: client, static: static}
+}
+
+// Routes returns the mux with the API and UI wired up.
+func (s *Server) Routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/issues", s.handleIssues)
+	mux.HandleFunc("GET /api/ready", s.handleReady)
+	mux.HandleFunc("GET /api/issues/{id}", s.handleShow)
+	mux.Handle("/", s.static)
+	return mux
+}
+
+// reqContext bounds every bd shell-out so a hung CLI can't wedge a request.
+func reqContext(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(r.Context(), 10*time.Second)
+}
+
+func (s *Server) handleIssues(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := reqContext(r)
+	defer cancel()
+	var args []string
+	if status := r.URL.Query().Get("status"); status != "" {
+		args = append(args, "--status", status)
+	}
+	issues, err := s.bd.List(ctx, args...)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, issues)
+}
+
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := reqContext(r)
+	defer cancel()
+	issues, err := s.bd.Ready(ctx)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, issues)
+}
+
+func (s *Server) handleShow(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := reqContext(r)
+	defer cancel()
+	issue, err := s.bd.Show(ctx, r.PathValue("id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, issue)
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	// Encode to the response writer; if v marshals cleanly (it always should for
+	// our types) the client gets valid JSON.
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeError(w http.ResponseWriter, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadGateway)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+}
