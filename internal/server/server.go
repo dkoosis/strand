@@ -76,14 +76,23 @@ func (s *Server) handleShow(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
+	// Marshal before touching the response so a marshal failure becomes a clean
+	// error instead of a half-written body with a 200 already committed.
+	buf, err := json.Marshal(v)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	// Encode to the response writer; if v marshals cleanly (it always should for
-	// our types) the client gets valid JSON.
-	_ = json.NewEncoder(w).Encode(v)
+	_, _ = w.Write(buf)
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	buf, marshalErr := json.Marshal(map[string]string{"error": err.Error()})
+	if marshalErr != nil {
+		buf = []byte(`{"error":"internal error"}`)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadGateway)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+	_, _ = w.Write(buf)
 }
