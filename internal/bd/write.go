@@ -2,14 +2,24 @@ package bd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
+)
+
+// Static validation errors, wrapped with the calling op for context. Static so
+// callers can errors.Is them and err113 stays satisfied.
+var (
+	errEmptyID      = errors.New("empty id")
+	errEmptyTitle   = errors.New("empty title")
+	errEmptyText    = errors.New("empty text")
+	errUnknownField = errors.New("unknown field")
 )
 
 // requireID rejects an empty id; op names the calling method for the error.
 func requireID(id, op string) error {
 	if id == "" {
-		return fmt.Errorf("%s: empty id", op)
+		return fmt.Errorf("%s: %w", op, errEmptyID)
 	}
 	return nil
 }
@@ -34,7 +44,7 @@ func (c *Client) Update(ctx context.Context, id, field, value string) (*Issue, e
 	}
 	flag, ok := updateFlags[field]
 	if !ok {
-		return nil, fmt.Errorf("update: unknown field %q", field)
+		return nil, fmt.Errorf("update: %w %q", errUnknownField, field)
 	}
 	out, err := c.run(ctx, "update", id, flag, value, "--json")
 	if err != nil {
@@ -86,7 +96,7 @@ type CreateOpts struct {
 // Create makes a new issue and returns it.
 func (c *Client) Create(ctx context.Context, opts CreateOpts) (*Issue, error) {
 	if opts.Title == "" {
-		return nil, fmt.Errorf("create: empty title")
+		return nil, fmt.Errorf("create: %w", errEmptyTitle)
 	}
 	args := []string{"create", "--title", opts.Title}
 	if opts.Description != "" {
@@ -114,7 +124,7 @@ func (c *Client) Comment(ctx context.Context, id, text string) error {
 		return err
 	}
 	if text == "" {
-		return fmt.Errorf("comment: empty text")
+		return fmt.Errorf("comment: %w", errEmptyText)
 	}
 	_, err := c.run(ctx, "comment", id, text, "--json")
 	return err
@@ -139,6 +149,9 @@ func firstIssue(out []byte) (*Issue, error) {
 		return nil, err
 	}
 	if len(issues) == 0 {
+		// bd succeeded but emitted no issue (e.g. a silent update) — a real
+		// "no value, no error" outcome callers handle by nil-checking.
+		//nolint:nilnil // the (nil, nil) outcome is the documented contract here.
 		return nil, nil
 	}
 	return &issues[0], nil
