@@ -1,0 +1,12 @@
+{
+  "batch_id": "batch-7vwarN1fMFA7vhfqDy8pc5mKwWoBMDJjdXnar",
+  "input_file_id": "file-7vwarN1f5gd3rAPs5ACuRLSCRUPUAuz6SBCZQ",
+  "status": "validating",
+  "total": 19,
+  "completed": 0,
+  "failed": 0,
+  "created_at": "2026-06-21T09:36:14.747956-04:00",
+  "updated_at": "2026-06-21T09:36:14.903662-04:00",
+  "model": "voyage-code-3",
+  "index_fingerprint": "3a0df996179fea85"
+}
