@@ -8,8 +8,16 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
+
+// execMu serializes every bd invocation process-wide. beads' embedded Dolt store
+// is a single-writer lock — concurrent bd calls collide and can corrupt or error
+// (spec D6/Q5: every bd call goes through one mutex'd helper). One global lock is
+// the safest reading: it over-serializes across distinct repos, but strand is a
+// single localhost user and that cost is nil next to a corrupted store.
+var execMu sync.Mutex
 
 // Issue mirrors the JSON shape bd emits from `list`/`show`. Fields bd omits stay
 // at their zero value; extra fields bd adds later are ignored, not an error.
@@ -49,6 +57,8 @@ func (c *Client) bin() string {
 // run executes bd with args and returns stdout. A non-zero exit becomes an error
 // carrying bd's stderr, which is usually a readable hint.
 func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
+	execMu.Lock()
+	defer execMu.Unlock()
 	cmd := exec.CommandContext(ctx, c.bin(), args...)
 	cmd.Dir = c.Dir
 	var out, errBuf strings.Builder
