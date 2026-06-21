@@ -47,6 +47,81 @@ Most of what makes Linear *feel* good for a solo dev is a handful of views
 (a board, a ranked queue, a dependency picture, fast edits) — not the 90% of PM-suite
 surface area. strand provides that in a simple single local binary.
 
+## 1a. The forest reframe `[settled 2026-06-21]`
+
+*Captured from a working session with dk. This sharpens §1 and reframes how R0's views
+and §4a's "what is strand" should read. Where the earlier catalog/queue framing conflicts
+with this, this wins.*
+
+**The problem, in dk's words:** *"I have a really hard time seeing the forest because what
+I have is a catalog of trees and branches and leaves."* beads (and `bv`) already give a
+complete **catalog**. What's missing is the **forest** — the few things in motion, their
+shape, health, and drift, rendered so a human grasps the whole in one look.
+
+**A forest is not a shorter catalog.** Collapsing the task list to its top rows yields a
+smaller catalog, not a forest. The forest is a *different artifact*: **synthesis** —
+aggregation and roll-up over the catalog. This is strand's entire reason to exist, and it
+is probably **not a table** (a table is a good catalog, a poor forest).
+
+**Division of labor (the load-bearing principle):**
+
+- **Below the epic line** — tasks, subtasks, dependencies, ordering — is **agent
+  territory.** Agents work beads directly; they own task decomposition and order. strand
+  *shows* this layer but the human rarely touches it.
+- **The epic line — user stories — is the human's territory.** dk's actual job is
+  **shaping the big picture**: authoring stories, keeping them recognizable, and checking
+  that the work beneath still ladders up to them.
+- **The canonical strand session looks like the design conversation that produced this
+  section** — the human shaping the top, the structure forming beneath. strand should make
+  *that* easy. That is the product.
+
+**Level model (adds the top dk was missing):**
+
+```
+project north star    one line — what this project is FOR
+  └ stories (epics)    ← the forest the human shapes and currently can't see
+      └ tasks          ┐ agent territory: decomposition, deps, order.
+          └ subtasks   ┘ shown in strand, but read-mostly for the human.
+```
+
+dk goes one level deep in practice today but wants the structure to support three
+(epic → task → subtask). L1 forest units = the recognizable **trunks/epics** (e.g. trixi's
+MEMORY, WETWARE, RETRIEVAL) — these are what dk reacts to as "stories."
+
+**The Northstar keystone.** Each project carries a **one-line north star** stating its
+central guiding purpose. It does double duty:
+1. **Masthead of the forest** — the "why" above the stories.
+2. **The yardstick for story-integrity** — "is this epic a real user story?" is unanswerable
+   without a north star to test against. With one, **drift becomes visible**: an epic that
+   doesn't serve the line is a bucket, not a story.
+
+Home: the **global beads rules** (loaded into every `bd` interaction), so agents working at
+the bottom stay anchored to the same purpose the human shapes at the top. This is a
+**beads-wide convention, broader than strand** — strand merely *renders* it. (Open: exact
+mechanism — `bd` config key vs project memory surfaced by `bd prime`. Tracked separately
+from the strand view work.)
+
+**Forest view direction (supersedes the flat-table-first V1 landing).** dk reacted to two
+renderings of the same data — *story-map cards* and a *treemap landscape* — and picked a
+**fusion**: **sized story-cards.** Each story is a card (title + one-line gloss + roll-up
+progress + momentum), but **laid out and scaled by weight** like a treemap, so size and
+position signal where work and heat are *before* a word is read. The flat tabular list (the
+old V1) becomes the **drill-in** when the human expands a story to check that it ladders up,
+not the default surface.
+
+#### Scenarios — re-derived from the human-at-the-top seat
+*(These replace the IC-at-the-bottom scenarios — "where do I start," "claim a task" — which
+described agent/IC work, not dk's.)*
+
+- **Read the top** — open strand → see *all stories as a legible forest* (sized cards),
+  not N tasks. Zoom-out is the default, not zoom-in.
+- **Story integrity** — does each epic read as a real user story against the north star?
+  Surface the buckets-masquerading-as-stories.
+- **Does it ladder up?** — expand a story → do its tasks trace back to it? Surface drift
+  (work not serving the story) and thin stories (story with no work, or work with no story).
+- **Shape** — rename / split / merge stories, promote a task to its own story, re-parent.
+  The few writes the human actually makes.
+
 ## 2. Non-goals
 
 - **Not** a beads reimplementation. strand never touches Dolt or JSONL; `bd` is the

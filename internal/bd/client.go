@@ -6,12 +6,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
 )
+
+// ErrNotFound means bd has no issue with the requested ID. Callers (e.g. the
+// HTTP layer) can map it to a 404 with errors.Is.
+var ErrNotFound = errors.New("issue not found")
+
+// ErrBD wraps any non-zero bd exit or bd-reported error.
+var ErrBD = errors.New("bd command failed")
 
 // execMu serializes every bd invocation process-wide. beads' embedded Dolt store
 // is a single-writer lock — concurrent bd calls collide and can corrupt or error
@@ -60,6 +68,7 @@ func (c *Client) bin() string {
 func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	execMu.Lock()
 	defer execMu.Unlock()
+	//nolint:gosec // G204: bd is an operator-configured binary and args run via exec (no shell), so values like a status filter can't inject commands.
 	cmd := exec.CommandContext(ctx, c.bin(), args...)
 	cmd.Dir = c.Dir
 	var out bytes.Buffer
@@ -71,7 +80,7 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return nil, fmt.Errorf("bd %s: %s", strings.Join(args, " "), msg)
+		return nil, fmt.Errorf("%w: %s: %s", ErrBD, strings.Join(args, " "), msg)
 	}
 	return out.Bytes(), nil
 }
@@ -106,7 +115,7 @@ func (c *Client) Show(ctx context.Context, id string) (*Issue, error) {
 		return nil, err
 	}
 	if iss == nil {
-		return nil, fmt.Errorf("no issue %q", id)
+		return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
 	return iss, nil
 }
@@ -124,7 +133,7 @@ func decodeIssues(out []byte) ([]Issue, error) {
 			Error string `json:"error"`
 		}
 		if json.Unmarshal(trimmed, &e) == nil && e.Error != "" {
-			return nil, fmt.Errorf("%s", e.Error)
+			return nil, fmt.Errorf("%w: %s", ErrBD, e.Error)
 		}
 		// A non-error object is a single issue (bd create); wrap it.
 		var issue Issue

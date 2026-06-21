@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>strand · the forest</title>
+<link rel="preconnect" href="https://fonts.bunny.net">
+<link href="https://fonts.bunny.net/css?family=geist:400,500,600,700|geist-mono:400,500" rel="stylesheet">
+<style>
+/* ============================================================
+   strand · forest spike — tokens (§4a / §1a)
+   The forest is synthesis, not a shorter catalog. Size = open
+   work, heat = recency. Color = signal only; structure on gray.
+   ============================================================ */
+:root {
+  --fs-9: 11px; --fs-8: 12px; --fs-base: 13px;
+  --fs-2: 14px; --fs-3: 16px; --fs-4: 18px; --fs-5: 22px; --fs-6: 28px; --fs-7: 38px;
+  --lh-tight: 1.2; --lh: 1.45;
+  --s-1: 2px; --s-2: 4px; --s-3: 6px; --s-4: 8px; --s-5: 12px;
+  --s-6: 16px; --s-7: 20px; --s-8: 24px; --s-9: 32px; --s-10: 48px;
+  --detail-w: 460px;
+  --p0: #e5484d; --p1: #d99030; --p2: #4c7ef0; --p3: #7c8290; --p4: #5a606c;
+  --st-open: #4c7ef0; --st-prog: #d99030; --st-blocked: #e5484d;
+  --st-closed: #46a758; --st-deferred: #6b7280;
+  /* heat ramp — momentum signal */
+  --hot:  #46a758; --warm: #d99030; --cold: #5a606c;
+  font-synthesis: none; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+}
+:root[data-theme="dark"] {
+  --bg: #0c0d10; --bg-1: #121317; --bg-2: #16181d; --sel: #1b2333;
+  --line: #20232b; --line-2: #2a2e38;
+  --ink: #e7e9ee; --ink-2: #b3b8c4; --ink-3: #6c7280; --ink-4: #474c57;
+  --chip-ink: #0c0d10; --focus: #4c7ef0;
+  --card: #14161b; --card-hi: #181b21;
+}
+:root[data-theme="light"] {
+  --bg: #fbfbfa; --bg-1: #ffffff; --bg-2: #f4f4f2; --sel: #eaf0fd;
+  --line: #e9e9e5; --line-2: #dcdcd6;
+  --ink: #1a1c20; --ink-2: #4a4f59; --ink-3: #898f9b; --ink-4: #c2c6cd;
+  --chip-ink: #ffffff; --focus: #2f6bdd;
+  --card: #ffffff; --card-hi: #fafaf8;
+  --p2: #2f6bdd; --st-open: #2f6bdd; --st-closed: #2f9e4d; --hot: #2f9e4d;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-size: var(--fs-base); line-height: var(--lh);
+  font-feature-settings: "cv01", "cv11", "ss03";
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.mono { font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* ============================================================ header */
+header {
+  display: flex; align-items: center; gap: var(--s-6);
+  height: 44px; padding: 0 var(--s-7); border-bottom: 1px solid var(--line);
+  background: var(--bg-1); flex: 0 0 auto; z-index: 5;
+}
+.brand { font-weight: 600; font-size: var(--fs-2); letter-spacing: .14em; text-transform: lowercase; }
+.brand::after {
+  content: ""; display: inline-block; width: 5px; height: 5px; margin-left: 7px;
+  vertical-align: middle; border-radius: 50%; background: var(--p2);
+}
+.repo {
+  display: inline-flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-2) var(--s-3); border: 0; background: none; color: var(--ink);
+  font: inherit; font-weight: 500; cursor: pointer; border-radius: 4px;
+}
+.repo:hover { background: var(--bg-2); }
+.repo .caret { color: var(--ink-3); font-size: var(--fs-9); }
+.spacer { flex: 1; }
+.search { position: relative; width: 240px; }
+.search input {
+  width: 100%; height: 28px; padding: 0 var(--s-5) 0 26px; background: var(--bg-2);
+  border: 1px solid transparent; border-radius: 6px; color: var(--ink); font: inherit;
+}
+.search input::placeholder { color: var(--ink-3); }
+.search svg { position: absolute; left: 8px; top: 7px; color: var(--ink-3); }
+.icon-btn {
+  display: grid; place-items: center; width: 28px; height: 28px; border: 0;
+  background: none; color: var(--ink-3); cursor: pointer; border-radius: 6px;
+}
+.icon-btn:hover { background: var(--bg-2); color: var(--ink); }
+
+/* ============================================================ masthead — the north star keystone */
+.masthead {
+  padding: var(--s-5) var(--s-10) var(--s-5); border-bottom: 1px solid var(--line);
+  background: var(--bg-1); flex: 0 0 auto;
+}
+.ns-label {
+  font-size: var(--fs-9); letter-spacing: .16em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 600; margin-bottom: var(--s-3);
+  display: flex; align-items: center; gap: var(--s-3);
+}
+.ns-label::before {
+  content: "★"; color: var(--p1); font-size: 10px; letter-spacing: 0;
+}
+.northstar {
+  font-size: var(--fs-5); font-weight: 600; line-height: 1.25; letter-spacing: -.015em;
+  max-width: 70ch; color: var(--ink);
+}
+.northstar em { color: var(--ink-3); font-style: normal; font-weight: 500; }
+.ns-meta { margin-top: var(--s-5); display: flex; gap: var(--s-8); color: var(--ink-3); font-size: var(--fs-8); }
+.ns-meta b { color: var(--ink-2); font-weight: 600; }
+.ns-meta .tnum { color: var(--ink); }
+
+/* ============================================================ forest canvas */
+.canvas { flex: 1; overflow: auto; padding: var(--s-6) var(--s-10) var(--s-9); min-height: 0;
+  display: flex; flex-direction: column; }
+.section-head {
+  display: flex; align-items: baseline; gap: var(--s-4);
+  margin: 0 0 var(--s-5); font-size: var(--fs-9); letter-spacing: .1em;
+  text-transform: uppercase; color: var(--ink-3); font-weight: 600;
+}
+.section-head .sub { letter-spacing: 0; text-transform: none; font-weight: 400; color: var(--ink-4); font-size: var(--fs-8); }
+
+/* treemap — a compact "shape of the work" band (ECharts), not the whole view. */
+.treemap { position: relative; width: 100%; height: 260px; flex: 0 0 auto; }
+.tnode {
+  position: absolute; overflow: hidden; cursor: pointer;
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 9px; padding: var(--s-6);
+  display: flex; flex-direction: column;
+  transition: transform .12s ease, border-color .12s ease, background .12s ease;
+}
+.tnode:hover { background: var(--card-hi); border-color: var(--line-2); transform: translateY(-1px); z-index: 2; }
+/* heat accent — momentum, the only chromatic signal on a card */
+.tnode::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--heat, var(--cold));
+}
+.tnode.hot  { --heat: var(--hot); }
+.tnode.warm { --heat: var(--warm); }
+.tnode.cold { --heat: var(--cold); }
+
+.t-name {
+  font-weight: 700; letter-spacing: .02em; color: var(--ink);
+  font-size: var(--nameSize, var(--fs-3)); line-height: 1.1;
+}
+.t-gloss { color: var(--ink-2); font-size: var(--fs-2); margin-top: var(--s-2); line-height: 1.3; }
+.tnode.sm .t-gloss, .tnode.sm .t-foot .done { display: none; }
+.tnode.sm { padding: var(--s-5); }
+.t-spacer { flex: 1; min-height: var(--s-4); }
+/* hero metric — fills the body of large cards, makes size legible without reading */
+.t-hero { display: none; align-items: baseline; gap: var(--s-3); margin-top: var(--s-6); }
+.tnode.lg .t-hero { display: flex; }
+.t-hero .n { font-size: 56px; font-weight: 700; line-height: .9; letter-spacing: -.03em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.t-hero .l { font-size: var(--fs-2); color: var(--ink-3); }
+.tnode.lg .t-counts .open { display: none; }
+
+/* roll-up: counts + progress */
+.t-foot { display: flex; flex-direction: column; gap: var(--s-3); }
+.t-counts {
+  display: flex; align-items: baseline; gap: var(--s-5);
+  font-size: var(--fs-8); color: var(--ink-3); font-variant-numeric: tabular-nums;
+}
+.t-counts .open { color: var(--ink); font-weight: 600; font-size: var(--fs-3); }
+.t-counts .open .u { color: var(--ink-3); font-weight: 400; font-size: var(--fs-8); margin-left: 2px; }
+.t-counts .prog { color: var(--st-prog); }
+.t-counts .heat { margin-left: auto; display: inline-flex; align-items: center; gap: var(--s-2); }
+.t-counts .heat .hd { width: 6px; height: 6px; border-radius: 50%; background: var(--heat, var(--cold)); }
+.bar { height: 4px; border-radius: 3px; background: var(--bg-2); overflow: hidden; box-shadow: inset 0 0 0 1px var(--line); }
+.bar > i { display: block; height: 100%; background: var(--st-closed); border-radius: 3px; }
+.t-pct { font-size: var(--fs-9); color: var(--ink-4); }
+
+/* ============================================================ thin stories — drift shelf */
+.thin-wrap { margin-top: var(--s-9); }
+.thin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--s-3); }
+.thin {
+  display: flex; align-items: center; gap: var(--s-4); padding: var(--s-3) var(--s-5);
+  border: 1px solid var(--line); border-radius: 7px; background: var(--bg-1);
+  cursor: pointer; min-width: 0;
+}
+.thin:hover { border-color: var(--line-2); background: var(--card-hi); }
+.thin .tt { color: var(--ink-2); font-size: var(--fs-8); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.thin .tag {
+  font-size: 10px; letter-spacing: .04em; text-transform: uppercase; font-weight: 600;
+  padding: 1px 5px; border-radius: 4px; flex: 0 0 auto;
+  color: var(--ink-3); box-shadow: inset 0 0 0 1px var(--line-2);
+}
+.thin .tag.empty { color: var(--p1); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--p1) 40%, transparent); }
+
+/* ============================================================ drill-in drawer */
+.scrim { position: fixed; inset: 0; background: rgba(0,0,0,.38); opacity: 0; pointer-events: none; transition: opacity .16s; z-index: 8; }
+.scrim.show { opacity: 1; pointer-events: auto; }
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; width: 720px; max-width: 92vw;
+  background: var(--bg-1); border-left: 1px solid var(--line-2); z-index: 9;
+  transform: translateX(100%); transition: transform .2s cubic-bezier(.4,0,.2,1);
+  display: flex; flex-direction: column; box-shadow: -20px 0 60px rgba(0,0,0,.35);
+}
+.drawer.show { transform: none; }
+.dr-head { padding: var(--s-7) var(--s-7) var(--s-6); border-bottom: 1px solid var(--line); }
+.dr-eyebrow { display: flex; align-items: center; gap: var(--s-4); font-size: var(--fs-8); color: var(--ink-3); }
+.dr-eyebrow .ladder { color: var(--st-closed); font-weight: 500; }
+.dr-eyebrow .drift { color: var(--p1); font-weight: 500; }
+.dr-title { font-size: var(--fs-5); font-weight: 600; letter-spacing: -.01em; margin: var(--s-4) 0 var(--s-3); }
+.dr-gloss { color: var(--ink-2); font-size: var(--fs-2); }
+.dr-stat { display: flex; gap: var(--s-7); margin-top: var(--s-5); font-size: var(--fs-8); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.dr-stat b { color: var(--ink); font-weight: 600; }
+.dr-close { position: absolute; top: var(--s-6); right: var(--s-6); }
+.dr-body { flex: 1; overflow: auto; }
+.dr-listhead { padding: var(--s-5) var(--s-7) var(--s-3); font-size: var(--fs-9); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+table { width: 100%; border-collapse: collapse; }
+tbody td { padding: 0 var(--s-4); height: 34px; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; color: var(--ink-2); }
+tbody tr:hover td { background: var(--bg-2); }
+.r-id { color: var(--ink-4); font-size: var(--fs-9); font-family: "Geist Mono", monospace; width: 96px; padding-left: var(--s-7) !important; }
+.r-title { color: var(--ink); font-size: var(--fs-2); font-weight: 500; max-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.r-type { width: 70px; color: var(--ink-3); font-size: var(--fs-8); }
+.r-stat { width: 120px; padding-right: var(--s-7) !important; }
+.status { display: inline-flex; align-items: center; gap: var(--s-3); font-size: var(--fs-8); color: var(--ink-2); }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+.dot.open { background: var(--st-open); } .dot.in_progress { background: var(--st-prog); }
+.dot.closed { background: var(--st-closed); } .dot.deferred { background: var(--st-deferred); }
+.dot.blocked { background: var(--st-blocked); }
+tr.done .r-title { color: var(--ink-3); font-weight: 400; }
+
+footer { flex: 0 0 auto; padding: var(--s-3) var(--s-10); border-top: 1px solid var(--line); background: var(--bg-1); color: var(--ink-4); font-size: var(--fs-9); display: flex; gap: var(--s-6); }
+footer b { color: var(--ink-3); font-weight: 500; }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">strand</span>
+  <button class="repo"><span>trixi</span><span class="caret">▾</span></button>
+  <span class="spacer"></span>
+  <div class="search">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+    <input placeholder="Search stories…">
+  </div>
+  <button class="icon-btn" id="theme" title="Toggle theme">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></svg>
+  </button>
+</header>
+
+<div class="masthead">
+  <div class="ns-label">North star</div>
+  <div class="northstar">A personal knowledge graph that <em>remembers across sessions</em> and a coach that acts on what it knows.</div>
+  <div class="ns-meta">
+    <span><b id="m-stories">0</b> stories</span>
+    <span><b class="tnum" id="m-open">0</b> open · <b class="tnum" id="m-prog">0</b> in progress</span>
+    <span><b id="m-thin">0</b> thin <em>— no work, or work with no story</em></span>
+  </div>
+</div>
+
+<div class="canvas">
+  <div class="section-head">The forest <span class="sub">sized by open work · edge color = momentum</span></div>
+  <div class="treemap" id="treemap"></div>
+
+  <div class="thin-wrap" style="margin-top:var(--s-9)">
+    <div class="section-head">Thin stories <span class="sub">buckets masquerading as stories — merge, close, or grow into a story</span></div>
+    <div class="thin-grid" id="thin"></div>
+  </div>
+</div>
+
+<footer>
+  <span><b>Read the top</b> — zoom-out is the default</span>
+  <span><b>Click a story</b> → drill in: does the work ladder up?</span>
+  <span style="margin-left:auto">forest spike · real trixi roll-ups · §1a</span>
+</footer>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer">
+  <div class="dr-head">
+    <button class="icon-btn dr-close" id="drClose"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    <div class="dr-eyebrow" id="drEyebrow"></div>
+    <div class="dr-title" id="drTitle"></div>
+    <div class="dr-gloss" id="drGloss"></div>
+    <div class="dr-stat" id="drStat"></div>
+  </div>
+  <div class="dr-body">
+    <div class="dr-listhead">Work beneath this story</div>
+    <table><tbody id="drRows"></tbody></table>
+  </div>
+</aside>
+
+<script src="vendor/echarts.min.js"></script>
+<script src="forest-data.js"></script>
+<script>
+const F = window.FOREST;
+const $ = s => document.querySelector(s);
+const weight = t => t.open + t.in_progress * 2;
+const heatClass = h => h == null ? 'cold' : (h <= 2 ? 'hot' : (h <= 10 ? 'warm' : 'cold'));
+const heatWord = h => h == null ? 'quiet' : (h <= 2 ? 'today' : (h <= 10 ? Math.round(h)+'d ago' : Math.round(h)+'d cold'));
+// split "WETWARE trunk — gloss" → {name, gloss}
+function parse(t) {
+  const m = t.title.match(/^(.*?)\s*(?:trunk\s*)?[—–-]\s*(.+)$/);
+  if (m) return { name: m[1].replace(/\s*trunk$/i,'').trim(), gloss: m[2].trim() };
+  return { name: t.title, gloss: '' };
+}
+
+const active = F.filter(t => weight(t) > 0).sort((a,b) => weight(b) - weight(a));
+const thin   = F.filter(t => weight(t) === 0);
+
+// masthead roll-up
+$('#m-stories').textContent = active.length;
+$('#m-open').textContent = F.reduce((s,t)=>s+t.open,0);
+$('#m-prog').textContent = F.reduce((s,t)=>s+t.in_progress,0);
+$('#m-thin').textContent = thin.length;
+
+/* ---- ECharts nested treemap ---- */
+// One hue per trunk; children inherit it (ECharts shades them via colorSaturation).
+const TRUNK_COLORS = ['#e0843c','#4c7ef0','#46a758','#9b6dd6','#3aa6a0','#d9588b','#d99030','#5a89e8'];
+const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+let chart;
+// trunk area ∝ total work; children split that area evenly (they carry no weight).
+function treeData() {
+  return active.map((t, i) => {
+    const p = parse(t), kids = t.children || [];
+    const per = kids.length ? Math.max(t.total / kids.length, 1) : Math.max(t.total, 1);
+    return {
+      name: p.name,
+      value: Math.max(t.total, 1),
+      trunk: t,
+      itemStyle: { color: TRUNK_COLORS[i % TRUNK_COLORS.length] },
+      children: kids.map(c => ({
+        name: c.title.replace(/^\[epic\]\s*/i, '').replace(/^\(EPIC\)\s*/, ''),
+        value: per,
+        status: c.status,
+      })),
+    };
+  });
+}
+
+function buildOption() {
+  const bg = cssVar('--bg') || '#0c0d10';
+  return {
+    backgroundColor: 'transparent',
+    tooltip: {
+      backgroundColor: cssVar('--bg-1'), borderColor: cssVar('--line-2'),
+      textStyle: { color: cssVar('--ink'), fontSize: 12 },
+      formatter: p => {
+        const t = p.data.trunk;
+        if (t) return `<b>${p.name}</b><br>${t.open} open · ${t.in_progress} in prog · ${t.closed} done<br><span style="color:${cssVar('--ink-3')}">last activity ${heatWord(t.heat_days)}</span>`;
+        return `${p.name}<br><span style="color:${cssVar('--ink-3')}">${p.data.status || ''}</span>`;
+      },
+    },
+    series: [{
+      type: 'treemap', roam: false, nodeClick: false, animationDuration: 320,
+      breadcrumb: { show: false },
+      top: 0, left: 0, right: 0, bottom: 0,
+      visibleMin: 8, leafDepth: 2,
+      label: { show: true, fontSize: 10, color: '#fff', overflow: 'truncate',
+               textShadowColor: 'rgba(0,0,0,.4)', textShadowBlur: 2 },
+      upperLabel: { show: true, height: 22, color: '#fff', fontSize: 11, fontWeight: 600 },
+      levels: [
+        { // trunks
+          upperLabel: { show: true, height: 22 },
+          itemStyle: { borderColor: bg, borderWidth: 3, gapWidth: 3, borderRadius: 4 },
+        },
+        { // children
+          itemStyle: { borderColor: bg, borderWidth: 1, gapWidth: 1 },
+          colorSaturation: [0.32, 0.55],
+        },
+      ],
+      data: treeData(),
+    }],
+  };
+}
+
+function renderTreemap() {
+  const tm = $('#treemap');
+  if (!chart) {
+    chart = echarts.init(tm, null, { renderer: 'canvas' });
+    chart.on('click', p => { if (p.data && p.data.trunk) openDrawer(p.data.trunk); });
+  }
+  chart.setOption(buildOption());
+  chart.resize();
+}
+
+function renderThin() {
+  const g = $('#thin'); g.innerHTML = '';
+  for (const t of thin) {
+    const empty = t.total === 0;
+    const el = document.createElement('div');
+    el.className = 'thin';
+    el.innerHTML = `<span class="tt">${t.title.replace(/^\[epic\]\s*/i,'').replace(/^\(EPIC\)\s*/,'')}</span>
+      <span class="tag ${empty?'empty':''}">${empty ? 'no work' : t.closed+'/'+t.total}</span>`;
+    el.onclick = () => openDrawer(t);
+    g.appendChild(el);
+  }
+}
+
+/* ---- drill-in ---- */
+const dot = s => `<span class="dot ${s}"></span>`;
+function openDrawer(t) {
+  const p = parse(t);
+  const ladder = t.total > 0;
+  $('#drEyebrow').innerHTML = ladder
+    ? `<span>story</span> · <span class="ladder">${t.closed}/${t.total} laddering up</span>`
+    : `<span>story</span> · <span class="drift">thin — no work beneath</span>`;
+  $('#drTitle').textContent = p.name + (p.gloss && p.name !== t.title ? '' : '');
+  $('#drGloss').textContent = p.gloss || t.title;
+  $('#drStat').innerHTML = `
+    <span><b>${t.open}</b> open</span>
+    <span><b>${t.in_progress}</b> in progress</span>
+    <span><b>${t.closed}</b> done</span>
+    <span>last activity <b>${heatWord(t.heat_days)}</b></span>`;
+  const rows = $('#drRows'); rows.innerHTML = '';
+  if (!t.children || !t.children.length) {
+    rows.innerHTML = `<tr><td style="padding:20px 24px;color:var(--ink-3)">No work laddering up to this story. Merge it, close it, or grow it into a real story.</td></tr>`;
+  } else {
+    for (const c of t.children) {
+      const tr = document.createElement('tr');
+      if (c.status === 'closed') tr.className = 'done';
+      tr.innerHTML = `
+        <td class="r-id">${c.id.replace('trixi-','')}</td>
+        <td class="r-title">${c.title}</td>
+        <td class="r-type">${c.type}</td>
+        <td class="r-stat"><span class="status">${dot(c.status)}${c.status.replace('_',' ')}</span></td>`;
+      rows.appendChild(tr);
+    }
+  }
+  $('#scrim').classList.add('show');
+  $('#drawer').classList.add('show');
+}
+function closeDrawer() { $('#scrim').classList.remove('show'); $('#drawer').classList.remove('show'); }
+$('#scrim').onclick = closeDrawer; $('#drClose').onclick = closeDrawer;
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+
+$('#theme').onclick = () => {
+  const r = document.documentElement;
+  r.dataset.theme = r.dataset.theme === 'dark' ? 'light' : 'dark';
+  renderTreemap();   // rebuild so tile borders + tooltip track the theme
+};
+
+renderTreemap(); renderThin();
+let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => chart && chart.resize(), 120); });
+</script>
+</body>
+</html>

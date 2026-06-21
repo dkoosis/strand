@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/server"
@@ -21,8 +22,17 @@ func main() {
 	client := &bd.Client{Dir: *dir, Bin: *bin}
 	srv := server.New(client, http.FileServer(http.FS(web.FS)))
 
+	httpSrv := &http.Server{
+		Addr:              *addr,
+		Handler:           srv.Routes(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
 	log.Printf("strand: serving http://%s (beads dir: %s)", *addr, dirLabel(*dir))
-	if err := http.ListenAndServe(*addr, srv.Routes()); err != nil {
+	if err := httpSrv.ListenAndServe(); err != nil {
 		log.Fatalf("strand: %v", err)
 	}
 }
