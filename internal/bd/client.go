@@ -109,8 +109,9 @@ func (c *Client) Show(ctx context.Context, id string) (*Issue, error) {
 	return &issues[0], nil
 }
 
-// decodeIssues parses bd's JSON, which is an array even for a single issue.
-// bd reports its own errors as a JSON object with an "error" key; surface those.
+// decodeIssues parses bd's JSON. List-style commands emit an array; `create`
+// emits a single bare issue object. bd reports its own errors as a JSON object
+// with an "error" key; surface those.
 func decodeIssues(out []byte) ([]Issue, error) {
 	trimmed := strings.TrimSpace(string(out))
 	if trimmed == "" || trimmed == "[]" {
@@ -123,6 +124,12 @@ func decodeIssues(out []byte) ([]Issue, error) {
 		if json.Unmarshal([]byte(trimmed), &e) == nil && e.Error != "" {
 			return nil, fmt.Errorf("%s", e.Error)
 		}
+		// A non-error object is a single issue (bd create); wrap it.
+		var issue Issue
+		if err := json.Unmarshal([]byte(trimmed), &issue); err != nil {
+			return nil, fmt.Errorf("parse bd output: %w", err)
+		}
+		return []Issue{issue}, nil
 	}
 	var issues []Issue
 	if err := json.Unmarshal([]byte(trimmed), &issues); err != nil {

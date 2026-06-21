@@ -103,8 +103,11 @@ func TestCloseWithoutReasonOmitsFlag(t *testing.T) {
 	}
 }
 
+// bd create emits a single bare issue object, not the array shape used by
+// update/close. Create must decode it; otherwise every successful create is
+// reported as a parse failure after the issue already exists.
 func TestCreateSendsSetFieldsOnly(t *testing.T) {
-	c, log := fakeBD(t, `echo '[{"id":"x-9","title":"hi","status":"open"}]'`)
+	c, log := fakeBD(t, `echo '{"id":"x-9","title":"hi","status":"open"}'`)
 	p := 1
 	got, err := c.Create(context.Background(), CreateOpts{Title: "hi", Type: "task", Priority: &p})
 	if err != nil {
