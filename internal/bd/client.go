@@ -3,6 +3,7 @@
 package bd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -61,7 +62,8 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	defer execMu.Unlock()
 	cmd := exec.CommandContext(ctx, c.bin(), args...)
 	cmd.Dir = c.Dir
-	var out, errBuf strings.Builder
+	var out bytes.Buffer
+	var errBuf strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
@@ -71,7 +73,7 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("bd %s: %s", strings.Join(args, " "), msg)
 	}
-	return []byte(out.String()), nil
+	return out.Bytes(), nil
 }
 
 // List returns issues matching the given bd list flags (e.g. "--status", "open").
@@ -99,40 +101,40 @@ func (c *Client) Show(ctx context.Context, id string) (*Issue, error) {
 	if err != nil {
 		return nil, err
 	}
-	issues, err := decodeIssues(out)
+	iss, err := firstIssue(out)
 	if err != nil {
 		return nil, err
 	}
-	if len(issues) == 0 {
+	if iss == nil {
 		return nil, fmt.Errorf("no issue %q", id)
 	}
-	return &issues[0], nil
+	return iss, nil
 }
 
 // decodeIssues parses bd's JSON. List-style commands emit an array; `create`
 // emits a single bare issue object. bd reports its own errors as a JSON object
 // with an "error" key; surface those.
 func decodeIssues(out []byte) ([]Issue, error) {
-	trimmed := strings.TrimSpace(string(out))
-	if trimmed == "" || trimmed == "[]" {
+	trimmed := bytes.TrimSpace(out)
+	if len(trimmed) == 0 || string(trimmed) == "[]" {
 		return nil, nil
 	}
-	if strings.HasPrefix(trimmed, "{") {
+	if trimmed[0] == '{' {
 		var e struct {
 			Error string `json:"error"`
 		}
-		if json.Unmarshal([]byte(trimmed), &e) == nil && e.Error != "" {
+		if json.Unmarshal(trimmed, &e) == nil && e.Error != "" {
 			return nil, fmt.Errorf("%s", e.Error)
 		}
 		// A non-error object is a single issue (bd create); wrap it.
 		var issue Issue
-		if err := json.Unmarshal([]byte(trimmed), &issue); err != nil {
+		if err := json.Unmarshal(trimmed, &issue); err != nil {
 			return nil, fmt.Errorf("parse bd output: %w", err)
 		}
 		return []Issue{issue}, nil
 	}
 	var issues []Issue
-	if err := json.Unmarshal([]byte(trimmed), &issues); err != nil {
+	if err := json.Unmarshal(trimmed, &issues); err != nil {
 		return nil, fmt.Errorf("parse bd output: %w", err)
 	}
 	return issues, nil

@@ -6,6 +6,14 @@ import (
 	"strconv"
 )
 
+// requireID rejects an empty id; op names the calling method for the error.
+func requireID(id, op string) error {
+	if id == "" {
+		return fmt.Errorf("%s: empty id", op)
+	}
+	return nil
+}
+
 // updateFlags maps a logical field name to bd's `update` flag. Callers name the
 // field they mean; strand owns the flag spelling so a bd rename is a one-line fix.
 // Status writeback is `-s` (O7: there is no `set-state` subcommand in bd).
@@ -21,8 +29,8 @@ var updateFlags = map[string]string{
 // mutates the last-touched issue, the footgun this package exists to avoid.
 // Returns the updated issue when bd emits one (nil if it stays silent).
 func (c *Client) Update(ctx context.Context, id, field, value string) (*Issue, error) {
-	if id == "" {
-		return nil, fmt.Errorf("update: empty id")
+	if err := requireID(id, "update"); err != nil {
+		return nil, err
 	}
 	flag, ok := updateFlags[field]
 	if !ok {
@@ -37,8 +45,8 @@ func (c *Client) Update(ctx context.Context, id, field, value string) (*Issue, e
 
 // Claim assigns the issue to the current user (bd update <id> --claim).
 func (c *Client) Claim(ctx context.Context, id string) (*Issue, error) {
-	if id == "" {
-		return nil, fmt.Errorf("claim: empty id")
+	if err := requireID(id, "claim"); err != nil {
+		return nil, err
 	}
 	out, err := c.run(ctx, "update", id, "--claim", "--json")
 	if err != nil {
@@ -51,8 +59,8 @@ func (c *Client) Claim(ctx context.Context, id string) (*Issue, error) {
 // with the closure; pass "" to omit it. Status changes short of closing go
 // through Update(id, "status", …) per O7.
 func (c *Client) Close(ctx context.Context, id, reason string) (*Issue, error) {
-	if id == "" {
-		return nil, fmt.Errorf("close: empty id")
+	if err := requireID(id, "close"); err != nil {
+		return nil, err
 	}
 	args := []string{"close", id}
 	if reason != "" {
@@ -102,8 +110,8 @@ func (c *Client) Create(ctx context.Context, opts CreateOpts) (*Issue, error) {
 
 // Comment adds a comment to an issue (bd comment <id> "text").
 func (c *Client) Comment(ctx context.Context, id, text string) error {
-	if id == "" {
-		return fmt.Errorf("comment: empty id")
+	if err := requireID(id, "comment"); err != nil {
+		return err
 	}
 	if text == "" {
 		return fmt.Errorf("comment: empty text")
@@ -115,8 +123,8 @@ func (c *Client) Comment(ctx context.Context, id, text string) error {
 // Delete removes an issue. bd needs --force to delete non-interactively; the UI
 // supplies the confirmation step (O5: destructive ops confirm).
 func (c *Client) Delete(ctx context.Context, id string) error {
-	if id == "" {
-		return fmt.Errorf("delete: empty id")
+	if err := requireID(id, "delete"); err != nil {
+		return err
 	}
 	_, err := c.run(ctx, "delete", id, "--force")
 	return err

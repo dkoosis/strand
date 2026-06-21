@@ -179,7 +179,7 @@ func TestWriteSurfacesBdError(t *testing.T) {
 // is perfectly paired (start,end,start,end,…). An interleave would show two
 // starts in a row.
 func TestExecSerialized(t *testing.T) {
-	body := "echo start >> '%LOG%'\nsleep 0.03\necho end >> '%LOG%'\necho '[]'"
+	body := "echo start >> '%LOG%'\nsleep 0.01\necho end >> '%LOG%'\necho '[]'"
 	c, log := fakeBD(t, "")
 	// rewrite the script to use start/end bracketing around the same log file
 	script := "#!/bin/sh\n" + strings.ReplaceAll(body, "%LOG%", log) + "\n"
