@@ -10,16 +10,16 @@ import (
 // Static validation errors, wrapped with the calling op for context. Static so
 // callers can errors.Is them and err113 stays satisfied.
 var (
-	errEmptyID      = errors.New("empty id")
-	errEmptyTitle   = errors.New("empty title")
-	errEmptyText    = errors.New("empty text")
-	errUnknownField = errors.New("unknown field")
+	ErrEmptyID      = errors.New("empty id")
+	ErrEmptyTitle   = errors.New("empty title")
+	ErrEmptyText    = errors.New("empty text")
+	ErrUnknownField = errors.New("unknown field")
 )
 
 // requireID rejects an empty id; op names the calling method for the error.
 func requireID(id, op string) error {
 	if id == "" {
-		return fmt.Errorf("%s: %w", op, errEmptyID)
+		return fmt.Errorf("%s: %w", op, ErrEmptyID)
 	}
 	return nil
 }
@@ -44,7 +44,7 @@ func (c *Client) Update(ctx context.Context, id, field, value string) (*Issue, e
 	}
 	flag, ok := updateFlags[field]
 	if !ok {
-		return nil, fmt.Errorf("update: %w %q", errUnknownField, field)
+		return nil, fmt.Errorf("update: %w %q", ErrUnknownField, field)
 	}
 	out, err := c.run(ctx, "update", id, flag, value, "--json")
 	if err != nil {
@@ -96,7 +96,7 @@ type CreateOpts struct {
 // Create makes a new issue and returns it.
 func (c *Client) Create(ctx context.Context, opts CreateOpts) (*Issue, error) {
 	if opts.Title == "" {
-		return nil, fmt.Errorf("create: %w", errEmptyTitle)
+		return nil, fmt.Errorf("create: %w", ErrEmptyTitle)
 	}
 	args := []string{"create", "--title", opts.Title}
 	if opts.Description != "" {
@@ -124,7 +124,7 @@ func (c *Client) Comment(ctx context.Context, id, text string) error {
 		return err
 	}
 	if text == "" {
-		return fmt.Errorf("comment: %w", errEmptyText)
+		return fmt.Errorf("comment: %w", ErrEmptyText)
 	}
 	_, err := c.run(ctx, "comment", id, text, "--json")
 	return err

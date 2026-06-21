@@ -18,8 +18,8 @@ import (
 // HTTP layer) can map it to a 404 with errors.Is.
 var ErrNotFound = errors.New("issue not found")
 
-// errBD wraps any non-zero bd exit or bd-reported error.
-var errBD = errors.New("bd command failed")
+// ErrBD wraps any non-zero bd exit or bd-reported error.
+var ErrBD = errors.New("bd command failed")
 
 // execMu serializes every bd invocation process-wide. beads' embedded Dolt store
 // is a single-writer lock — concurrent bd calls collide and can corrupt or error
@@ -80,7 +80,7 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return nil, fmt.Errorf("%w: %s: %s", errBD, strings.Join(args, " "), msg)
+		return nil, fmt.Errorf("%w: %s: %s", ErrBD, strings.Join(args, " "), msg)
 	}
 	return out.Bytes(), nil
 }
@@ -133,7 +133,7 @@ func decodeIssues(out []byte) ([]Issue, error) {
 			Error string `json:"error"`
 		}
 		if json.Unmarshal(trimmed, &e) == nil && e.Error != "" {
-			return nil, fmt.Errorf("%w: %s", errBD, e.Error)
+			return nil, fmt.Errorf("%w: %s", ErrBD, e.Error)
 		}
 		// A non-error object is a single issue (bd create); wrap it.
 		var issue Issue
