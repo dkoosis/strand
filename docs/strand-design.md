@@ -168,6 +168,10 @@ Probed, not assumed. These are the exec strings strand issues.
 **Footgun (must guard):** `bd update`/`bd close` with **no ID** mutates the *last-touched*
 issue. strand SHALL always pass an explicit ID. **auto-commit:** this repo's
 `dolt.auto-commit=on` (writes persist); global default is `off` — strand should not assume.
+strand SHALL probe `bd config get dolt.auto-commit` (or equivalent) for the active repo on
+startup; if `off`, surface a persistent banner ("writes won't persist") rather than silently
+mutating into a void. No attempt to force-commit on bd's behalf — that's bd's contract, not
+strand's.
 
 ## 4a. UI design principles `[settled]`
 
@@ -206,7 +210,9 @@ plus, for the graph, dependency edges (`bd dep`/`bd show` relations).
 ### strand-owned
 `Repo { name, path, prefix, last_used }` — the registry, persisted to
 `~/.config/strand/repos.json` (XDG; honor `$XDG_CONFIG_HOME` — O9, locked). Discovered by
-scanning `~/Projects/*/.beads` and/or explicit add.
+scanning `~/Projects/*/.beads` and/or explicit add. **✗ `os.UserConfigDir()`** — it resolves
+to `~/Library/Application Support` on macOS (dk's platform), defeating the XDG intent. Roll
+the path by hand: `$XDG_CONFIG_HOME/strand`, else `~/.config/strand`, on every platform.
 
 ### Derived (computed, not stored)
 - **Ready queue** — from `bd ready`.
