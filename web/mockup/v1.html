@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>strand · V1 spike</title>
+<link rel="preconnect" href="https://fonts.bunny.net">
+<link href="https://fonts.bunny.net/css?family=geist:400,500,600|geist-mono:400,500" rel="stylesheet">
+<style>
+/* ============================================================
+   strand · V1 visual spike — tokens (§4a)
+   One variable set drives light + dark. Color = signal only;
+   everything structural lives on the gray ramp.
+   ============================================================ */
+:root {
+  /* type scale (1.125 minor third, 13px base) */
+  --fs-9:  11px;  --fs-8:  12px;  --fs-base: 13px;
+  --fs-2:  14px;  --fs-3:  16px;  --fs-4:  18px;  --fs-5: 22px;
+  --lh-tight: 1.25; --lh: 1.45;
+
+  /* space scale (4px grid) */
+  --s-1: 2px; --s-2: 4px; --s-3: 6px; --s-4: 8px; --s-5: 12px;
+  --s-6: 16px; --s-7: 20px; --s-8: 24px; --s-9: 32px; --s-10: 48px;
+
+  --row-h: 30px;
+  --detail-w: 416px;
+
+  /* signal — priority (chip) */
+  --p0: #e5484d; --p1: #d99030; --p2: #4c7ef0; --p3: #7c8290; --p4: #5a606c;
+  /* signal — status (dot) */
+  --st-open: #4c7ef0; --st-prog: #d99030; --st-blocked: #e5484d;
+  --st-closed: #46a758; --st-deferred: #6b7280;
+
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* dark (default) — quiet near-black, cool gray ramp */
+:root[data-theme="dark"] {
+  --bg:    #0c0d10;
+  --bg-1:  #121317;
+  --bg-2:  #16181d;
+  --sel:   #1b2333;       /* selected row tint, blue-biased */
+  --line:  #20232b;       /* hairline */
+  --line-2:#2a2e38;       /* stronger hairline */
+  --ink:   #e7e9ee;       /* primary text */
+  --ink-2: #b3b8c4;       /* secondary */
+  --ink-3: #6c7280;       /* tertiary / meta */
+  --ink-4: #474c57;       /* faint */
+  --chip-ink: #0c0d10;    /* text on saturated chip */
+  --focus: #4c7ef0;
+}
+/* light — warm paper, same variable names */
+:root[data-theme="light"] {
+  --bg:    #fbfbfa;
+  --bg-1:  #ffffff;
+  --bg-2:  #f4f4f2;
+  --sel:   #eaf0fd;
+  --line:  #e9e9e5;
+  --line-2:#dcdcd6;
+  --ink:   #1a1c20;
+  --ink-2: #4a4f59;
+  --ink-3: #898f9b;
+  --ink-4: #c2c6cd;
+  --chip-ink: #ffffff;
+  --focus: #2f6bdd;
+  --p2: #2f6bdd; --st-open: #2f6bdd; --st-closed: #2f9e4d;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-size: var(--fs-base);
+  line-height: var(--lh);
+  font-feature-settings: "cv01", "cv11", "ss03";
+  display: flex; flex-direction: column;
+}
+.mono {
+  font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  font-feature-settings: "tnum" 1, "zero" 1;   /* tabular + slashed zero */
+}
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* ============================================================ header */
+header {
+  display: flex; align-items: center; gap: var(--s-6);
+  height: 44px; padding: 0 var(--s-6);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-1);
+  flex: 0 0 auto;
+}
+.brand {
+  font-weight: 600; font-size: var(--fs-2); letter-spacing: .14em;
+  text-transform: lowercase; color: var(--ink);
+}
+.brand::after {
+  content: ""; display: inline-block; width: 5px; height: 5px;
+  margin-left: 7px; vertical-align: middle; border-radius: 50%;
+  background: var(--p2);
+}
+/* repo selector — a button that reads as a value, not a box */
+.repo {
+  display: inline-flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-2) var(--s-3); margin-left: calc(-1 * var(--s-3));
+  border: 0; background: none; color: var(--ink);
+  font: inherit; font-weight: 500; cursor: pointer; border-radius: 4px;
+}
+.repo:hover { background: var(--bg-2); }
+.repo .caret { color: var(--ink-3); font-size: var(--fs-9); }
+.repo .count { color: var(--ink-3); font-weight: 400; }
+
+.spacer { flex: 1; }
+
+.search {
+  position: relative; width: 260px;
+}
+.search input {
+  width: 100%; height: 28px; padding: 0 var(--s-5) 0 26px;
+  background: var(--bg-2); border: 1px solid transparent;
+  border-radius: 6px; color: var(--ink); font: inherit; font-size: var(--fs-base);
+}
+.search input::placeholder { color: var(--ink-3); }
+.search input:focus { outline: none; border-color: var(--line-2); background: var(--bg-1); }
+.search svg { position: absolute; left: 8px; top: 7px; color: var(--ink-3); }
+
+.icon-btn {
+  display: grid; place-items: center; width: 28px; height: 28px;
+  border: 0; background: none; color: var(--ink-3); cursor: pointer; border-radius: 6px;
+}
+.icon-btn:hover { background: var(--bg-2); color: var(--ink); }
+
+/* ============================================================ toolbar */
+.toolbar {
+  display: flex; align-items: center; gap: var(--s-2);
+  height: 38px; padding: 0 var(--s-6);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  flex: 0 0 auto;
+}
+.filter {
+  display: inline-flex; align-items: center; gap: var(--s-3);
+  height: 25px; padding: 0 var(--s-4);
+  border: 1px solid transparent; border-radius: 6px;
+  color: var(--ink-2); font-size: var(--fs-8); font-weight: 500; cursor: pointer;
+  background: none;
+}
+.filter:hover { background: var(--bg-2); color: var(--ink); }
+.filter.active { color: var(--ink); background: var(--bg-2); border-color: var(--line-2); }
+.filter .k { color: var(--ink-3); font-weight: 400; }
+.tb-sep { width: 1px; height: 16px; background: var(--line); margin: 0 var(--s-3); }
+.result-count { color: var(--ink-3); font-size: var(--fs-8); }
+.result-count b { color: var(--ink-2); font-weight: 600; }
+.sort-note {
+  margin-left: auto; color: var(--ink-3); font-size: var(--fs-8);
+  display: inline-flex; align-items: center; gap: var(--s-3);
+}
+.sort-note b { color: var(--ink-2); font-weight: 500; }
+
+/* ============================================================ split */
+.split { flex: 1; display: flex; min-height: 0; }
+.list-wrap { flex: 1; overflow: auto; min-width: 0; }
+
+/* table — hairline rows, no cell borders, no zebra */
+table { width: 100%; border-collapse: collapse; }
+thead th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--bg);
+  text-align: left; font-weight: 500; font-size: var(--fs-9);
+  letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3);
+  padding: var(--s-3) var(--s-4); height: 30px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer; white-space: nowrap; user-select: none;
+}
+thead th:hover { color: var(--ink-2); }
+thead th .arrow { color: var(--focus); margin-left: 3px; font-size: 9px; }
+thead th.num { text-align: right; }
+
+tbody td {
+  padding: 0 var(--s-4); height: var(--row-h);
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle; white-space: nowrap;
+  color: var(--ink-2);
+}
+tbody tr { cursor: pointer; }
+tbody tr:hover td { background: var(--bg-1); }
+tbody tr.sel td { background: var(--sel); }
+tbody tr.sel td:first-child { box-shadow: inset 2px 0 0 var(--focus); }
+
+/* columns */
+.c-pri  { width: 34px; padding-left: var(--s-6) !important; }
+.c-id   { width: 132px; }
+.c-title{ max-width: 0; width: 100%; }
+.c-stat { width: 116px; }
+.c-type { width: 74px; }
+.c-asg  { width: 56px; }
+.c-dep  { width: 64px; text-align: right; }
+.c-upd  { width: 78px; text-align: right; padding-right: var(--s-6) !important; }
+
+/* priority chip — tinted, not solid. Color still codes urgency, but it no
+   longer out-shouts the title. P0 keeps a touch more weight (it should bite). */
+.chip {
+  display: inline-grid; place-items: center;
+  width: 18px; height: 16px; border-radius: 4px;
+  font-family: "Geist Mono", monospace; font-size: 10px; font-weight: 500;
+  font-feature-settings: "tnum" 1;
+}
+.chip.p0 { color: var(--p0); background: color-mix(in srgb, var(--p0) 20%, transparent); }
+.chip.p1 { color: var(--p1); background: color-mix(in srgb, var(--p1) 16%, transparent); }
+.chip.p2 { color: var(--p2); background: color-mix(in srgb, var(--p2) 14%, transparent); }
+/* low priorities barely there — a faint outline handle */
+.chip.p3 { color: var(--ink-3); box-shadow: inset 0 0 0 1px var(--line-2); }
+.chip.p4 { color: var(--ink-4); box-shadow: inset 0 0 0 1px var(--line); }
+
+/* id — a required handle, not content. Smallest, faintest thing in the row. */
+.id { color: var(--ink-4); font-size: var(--fs-9); letter-spacing: -.01em; }
+tr:hover .id, tr.sel .id { color: var(--ink-3); }
+/* title — the payload. Brightest, heaviest, biggest text on the row. */
+.title { color: var(--ink); font-size: var(--fs-2); font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; display: block; }
+tr.done .title { color: var(--ink-3); font-weight: 400; }
+tr.done .title .strike { text-decoration: line-through; text-decoration-color: var(--ink-4); }
+
+/* status dot + label */
+.status { display: inline-flex; align-items: center; gap: var(--s-3); font-size: var(--fs-8); color: var(--ink-2); }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+.dot.open     { background: none; box-shadow: inset 0 0 0 1.5px var(--st-open); }
+.dot.in_progress { background: var(--st-prog); box-shadow: 0 0 0 3px color-mix(in srgb, var(--st-prog) 22%, transparent); }
+.dot.blocked  { background: var(--st-blocked); }
+.dot.closed   { background: var(--st-closed); }
+.dot.deferred { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-4); }
+
+.type { font-size: var(--fs-8); color: var(--ink-3); text-transform: lowercase; }
+/* epics earn one weight bump — structure, not color */
+.type.epic { color: var(--ink-2); font-weight: 600; }
+
+.avatar {
+  display: inline-grid; place-items: center; width: 19px; height: 19px;
+  border-radius: 50%; font-size: 9px; font-weight: 600;
+  background: var(--bg-2); color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--line-2);
+}
+.asg-empty { color: var(--ink-4); }
+
+/* dependents — micro bar + tabular count (Tufte P5, honest scalar) */
+.dep { display: inline-flex; align-items: center; gap: var(--s-3); justify-content: flex-end; color: var(--ink-3); font-size: var(--fs-8); }
+.depbar { display: inline-flex; gap: 1.5px; }
+.depbar i { width: 2.5px; height: 9px; background: var(--ink-4); border-radius: .5px; }
+.dep.zero { color: var(--ink-4); }
+.upd { color: var(--ink-3); font-size: var(--fs-8); }
+
+/* ============================================================ detail */
+.detail {
+  width: var(--detail-w); flex: 0 0 auto; overflow: auto;
+  border-left: 1px solid var(--line); background: var(--bg-1);
+  padding: var(--s-7) var(--s-7) var(--s-10);
+}
+.d-eyebrow { display: flex; align-items: center; gap: var(--s-4); margin-bottom: var(--s-4); }
+.d-eyebrow .id { font-size: var(--fs-8); }
+.d-eyebrow .sep { color: var(--ink-4); }
+.d-title { font-size: var(--fs-4); font-weight: 600; line-height: var(--lh-tight); letter-spacing: -.01em; margin: 0 0 var(--s-6); color: var(--ink); }
+
+/* action row — ghost buttons, hairline, text-forward */
+.actions { display: flex; gap: var(--s-3); margin-bottom: var(--s-7); flex-wrap: wrap; }
+.btn {
+  display: inline-flex; align-items: center; gap: var(--s-3);
+  height: 27px; padding: 0 var(--s-5);
+  border: 1px solid var(--line-2); border-radius: 6px;
+  background: none; color: var(--ink-2); font: inherit; font-size: var(--fs-8); font-weight: 500;
+  cursor: pointer;
+}
+.btn:hover { color: var(--ink); border-color: var(--ink-3); background: var(--bg-2); }
+.btn.primary { background: var(--focus); border-color: var(--focus); color: #fff; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn .kbd { color: var(--ink-4); font-size: var(--fs-9); margin-left: 2px; }
+.btn.primary .kbd { color: rgba(255,255,255,.6); }
+
+/* meta grid — label/value, aligned, no boxes */
+.meta { display: grid; grid-template-columns: 92px 1fr; row-gap: var(--s-4); column-gap: var(--s-5); margin-bottom: var(--s-7); align-items: center; }
+.meta dt { color: var(--ink-3); font-size: var(--fs-8); }
+.meta dd { margin: 0; color: var(--ink); font-size: var(--fs-base); display: flex; align-items: center; gap: var(--s-4); }
+
+.section-rule { height: 1px; background: var(--line); margin: 0 0 var(--s-6); }
+.d-h { font-size: var(--fs-9); letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 var(--s-4); }
+.desc { color: var(--ink-2); font-size: var(--fs-base); line-height: 1.55; white-space: pre-wrap; margin-bottom: var(--s-7); }
+.desc h2, .desc h3 { all: unset; display: block; font-weight: 600; color: var(--ink); font-size: var(--fs-base); margin-top: var(--s-5); }
+
+.labels { display: flex; gap: var(--s-3); flex-wrap: wrap; margin-bottom: var(--s-7); }
+.label {
+  font-size: var(--fs-9); color: var(--ink-2); padding: 2px var(--s-4);
+  border-radius: 4px; background: var(--bg-2); box-shadow: inset 0 0 0 1px var(--line);
+}
+.label.human { color: var(--p1); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--p1) 40%, transparent); }
+
+.dep-list { display: flex; flex-direction: column; gap: var(--s-3); margin-bottom: var(--s-7); }
+.dep-item { display: flex; align-items: center; gap: var(--s-4); font-size: var(--fs-8); color: var(--ink-2); }
+.dep-item .id { font-size: var(--fs-9); }
+
+.empty-line { color: var(--ink-4); font-size: var(--fs-8); }
+
+/* footer status bar — keyboard legend */
+.statusbar {
+  display: flex; align-items: center; gap: var(--s-6); height: 26px; padding: 0 var(--s-6);
+  border-top: 1px solid var(--line); background: var(--bg-1);
+  color: var(--ink-3); font-size: var(--fs-9); flex: 0 0 auto;
+}
+.statusbar kbd {
+  font-family: "Geist Mono", monospace; font-size: 10px; color: var(--ink-2);
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 3px;
+  padding: 0 4px; margin-right: 3px;
+}
+.statusbar .grow { flex: 1; }
+
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 6px; border: 3px solid var(--bg-1); }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-4); }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="brand">strand</span>
+  <button class="repo" title="Switch repo (R1)">
+    trixi <span class="count mono">·&nbsp;42</span> <span class="caret">▾</span>
+  </button>
+  <span class="spacer"></span>
+  <label class="search">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+    <input id="q" type="text" placeholder="Search id or title…">
+  </label>
+  <button class="icon-btn" id="theme" title="Toggle light / dark">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>
+  </button>
+</header>
+
+<div class="toolbar">
+  <button class="filter active" data-status="active">Active</button>
+  <button class="filter" data-status="open"><span class="dot open" style="margin-right:5px"></span>Open</button>
+  <button class="filter" data-status="in_progress">In&nbsp;progress</button>
+  <button class="filter" data-status="deferred">Deferred</button>
+  <button class="filter" data-status="closed">Closed</button>
+  <button class="filter" data-status="all">All</button>
+  <span class="tb-sep"></span>
+  <button class="filter" data-type="epic"><span class="k">type:</span>epic</button>
+  <button class="filter" data-type="bug"><span class="k">type:</span>bug</button>
+  <button class="filter" data-asg="me"><span class="k">@</span>me</button>
+  <span class="tb-sep"></span>
+  <span class="result-count"><b id="count">42</b> issues</span>
+  <span class="sort-note">sorted <b>priority ↑</b> · <b>updated ↓</b></span>
+</div>
+
+<div class="split">
+  <div class="list-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="c-pri" data-sort="p">P<span class="arrow">↑</span></th>
+          <th class="c-id" data-sort="id">ID</th>
+          <th class="c-title" data-sort="t">Title</th>
+          <th class="c-stat" data-sort="s">Status</th>
+          <th class="c-type" data-sort="k">Type</th>
+          <th class="c-asg" data-sort="a">Asg</th>
+          <th class="c-dep num" data-sort="d">Dep</th>
+          <th class="c-upd num" data-sort="u">Updated</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <aside class="detail" id="detail"><!-- filled by JS --></aside>
+</div>
+
+<div class="statusbar">
+  <span><kbd>j</kbd><kbd>k</kbd> move</span>
+  <span><kbd>↵</kbd> open</span>
+  <span><kbd>c</kbd> claim</span>
+  <span><kbd>e</kbd> edit</span>
+  <span><kbd>/</kbd> search</span>
+  <span class="grow"></span>
+  <span>V1 spike · static mockup · real <span class="mono">bd list --json</span> data (trixi)</span>
+</div>
+
+<script>
+const NOW = new Date("2026-06-21T11:00:00Z");
+const DATA = /*DATA*/[{"id":"trixi-module-collapse","t":"Single Go module: collapse modules/* into a capability-named internal/ tree","s":"open","p":2,"k":"epic","a":null,"l":null,"u":"2026-06-17T14:30:58Z","d":0,"c":0},{"id":"trixi-zuoh.5","t":"Phase 4: Daemon context-read instrumentation","s":"open","p":2,"k":"feature","a":"dkoosis@gmail.com","l":["human"],"u":"2026-06-18T00:55:28Z","d":0,"c":0},{"id":"trixi-43a1.4","t":"Consolidate-rewrite (cross-corpus pattern-finding)","s":"open","p":2,"k":"feature","a":"dkoosis@gmail.com","l":null,"u":"2026-06-18T00:55:29Z","d":1,"c":2},{"id":"trixi-26gj","t":"Trixi reasons over live body context during conversation","s":"open","p":2,"k":"feature","a":"dkoosis@gmail.com","l":["human"],"u":"2026-06-18T17:41:07Z","d":0,"c":0},{"id":"trixi-eval-realq","t":"Search eval gate hardened: real cc-log queries + self-explaining metrics","s":"open","p":2,"k":"epic","a":null,"l":null,"u":"2026-06-19T01:17:31Z","d":0,"c":0},{"id":"trixi-eval-realq.1","t":"Self-explaining eval metrics: 1-line direction+ideal gloss per metric in bench + gate reports","s":"in_progress","p":2,"k":"task","a":"dkoosis@gmail.com","l":null,"u":"2026-06-19T02:29:32Z","d":0,"c":0},{"id":"trixi-eval-realq.5","t":"Graded real cc-log queries added to the MRR gate query set","s":"open","p":2,"k":"task","a":null,"l":null,"u":"2026-06-19T09:26:31Z","d":0,"c":0},{"id":"trixi-4bd4","t":"journal-format skill emits valid quoted YAML frontmatter (cc-plugins)","s":"open","p":2,"k":"bug","a":null,"l":null,"u":"2026-06-19T23:42:02Z","d":0,"c":0},{"id":"trixi-memory","t":"MEMORY trunk — mnemosyne product core","s":"open","p":2,"k":"epic","a":null,"l":null,"u":"2026-06-20T02:45:10Z","d":0,"c":0},{"id":"trixi-wetware","t":"WETWARE trunk — the coaching line","s":"open","p":2,"k":"epic","a":null,"l":null,"u":"2026-06-20T02:45:10Z","d":0,"c":0},{"id":"trixi-collab","t":"COLLABORATION trunk — how dk + Trixi work","s":"open","p":2,"k":"epic","a":null,"l":null,"u":"2026-06-20T02:45:11Z","d":0,"c":0},{"id":"trixi-retrieval","t":"RETRIEVAL trunk — context that lands","s":"open","p":2,"k":"epic","a":null,"l":null,"u":"2026-06-20T02:45:11Z","d":0,"c":0},{"id":"trixi-substrate","t":"SUBSTRATE trunk — code health that pays for the rest","s":"open","p":2,"k":"epic","a":null,"l":null,"u":"2026-06-20T02:45:12Z","d":0,"c":0},{"id":"trixi-ixpb","t":"daemon-status generator deposits Trixi Status file into dk vault Project/trixi/","s":"open","p":2,"k":"task","a":null,"l":null,"u":"2026-06-20T08:30:01Z","d":0,"c":0},{"id":"trixi-plan-vault","t":"Dispatch plan convention: plans live in the vault Project/trixi/plans/, not in-repo docs/superpowers/plans/","s":"open","p":2,"k":"epic","a":null,"l":null,"u":"2026-06-20T08:40:31Z","d":0,"c":0},{"id":"trixi-ahzt","t":"wrap: surface reusable-recipe candidates from session shell history (capture-time discovery)","s":"open","p":2,"k":"feature","a":null,"l":null,"u":"2026-06-20T12:14:05Z","d":0,"c":0},{"id":"trixi-kong-cli.22","t":"Port ingest_healthsync group to kong","s":"closed","p":2,"k":"task","a":null,"l":null,"u":"2026-06-21T08:51:03Z","d":1,"c":0},{"id":"trixi-kong-cli.23","t":"Port nug-crud commands to kong (batch)","s":"closed","p":2,"k":"task","a":null,"l":null,"u":"2026-06-21T08:51:03Z","d":1,"c":0},{"id":"trixi-kong-cli.24","t":"Port ops/maintenance commands to kong (batch)","s":"closed","p":2,"k":"task","a":null,"l":null,"u":"2026-06-21T08:51:05Z","d":1,"c":0},{"id":"trixi-kong-cli.26","t":"kong root scaffold: flip main() to kong.Parse, lifecycle hooks, help-parity gate, port first groups","s":"closed","p":2,"k":"task","a":"dkoosis@gmail.com","l":null,"u":"2026-06-21T08:51:07Z","d":0,"c":0},{"id":"trixi-kong-cli.4","t":"Port eval group (eval/ subdir, ~40 cmds) to kong","s":"closed","p":2,"k":"task","a":null,"l":null,"u":"2026-06-21T08:51:08Z","d":1,"c":0},{"id":"trixi-kong-cli.5","t":"Port proposals group to kong","s":"closed","p":2,"k":"task","a":null,"l":null,"u":"2026-06-21T08:51:09Z","d":1,"c":0},{"id":"trixi-kong-cli.9","t":"Port permissions group to kong","s":"closed","p":2,"k":"task","a":null,"l":null,"u":"2026-06-21T08:51:11Z","d":1,"c":0},{"id":"trixi-kong-cli.25","t":"Drop cobra: flip root to pure kong, remove cobra/pflag","s":"closed","p":2,"k":"task","a":null,"l":null,"u":"2026-06-21T08:51:16Z","d":0,"c":0},{"id":"trixi-mwy","t":"trixi ingest <file> with frontmatter","s":"deferred","p":3,"k":"feature","a":null,"l":null,"u":"2026-04-30T21:15:42Z","d":0,"c":0},{"id":"trixi-fv36","t":"Re-check whether CC exports CLAUDE_CODE_SESSION_ID to MCP server subprocesses","s":"deferred","p":3,"k":"task","a":null,"l":null,"u":"2026-05-17T17:09:29Z","d":0,"c":0},{"id":"trixi-btco","t":"Experiment: turn CI box into always-on helper agent","s":"deferred","p":3,"k":"task","a":null,"l":null,"u":"2026-05-30T21:13:55Z","d":0,"c":0},{"id":"trixi-i0z.1","t":"Phase 0: audit curate meta.facet output + vault scan (read-only gate)","s":"open","p":3,"k":"task","a":"dkoosis@gmail.com","l":["human"],"u":"2026-06-02T09:32:11Z","d":1,"c":3},{"id":"trixi-i0z.2","t":"Phase 1: create model.attunement-gap-categories reference nug","s":"open","p":3,"k":"chore","a":null,"l":null,"u":"2026-06-02T12:33:26Z","d":1,"c":0},{"id":"trixi-i0z.5","t":"Phase 4: 10-session validation — quantitative density shift + qualitative judgment","s":"open","p":3,"k":"spike","a":null,"l":null,"u":"2026-06-05T23:58:27Z","d":0,"c":0},{"id":"trixi-i0z.3","t":"Phase 2: reflect gap scoring + derived.gap-scores nug + drift test","s":"open","p":3,"k":"feature","a":null,"l":null,"u":"2026-06-05T23:58:28Z","d":1,"c":0},{"id":"trixi-i0z.4","t":"Phase 3: attunement.md gap-aware question selection","s":"open","p":3,"k":"feature","a":null,"l":null,"u":"2026-06-05T23:58:28Z","d":1,"c":0},{"id":"trixi-nm24","t":"[epic] Workflow engine productionization — P3-P6 (deferred from trixi-3pnl spike)","s":"deferred","p":3,"k":"epic","a":null,"l":null,"u":"2026-06-07T17:30:30Z","d":0,"c":2},{"id":"trixi-6re5","t":"Single-source CI tool version pins (Go toolchain + golangci-lint + go-arch-lint) through Makefile.cross.mk","s":"deferred","p":3,"k":"chore","a":null,"l":null,"u":"2026-06-07T17:53:39Z","d":0,"c":0},{"id":"trixi-1rn","t":"Refactor reference.* — split into reference / state / strategy + move preference to log","s":"deferred","p":3,"k":"chore","a":null,"l":["human"],"u":"2026-06-15T00:22:08Z","d":0,"c":1},{"id":"trixi-up8c","t":"Promote CLI: move app/cmd/trixi/ → cmd/trixi/ at repo root","s":"deferred","p":3,"k":"chore","a":null,"l":null,"u":"2026-06-16T13:07:14Z","d":0,"c":1},{"id":"trixi-edg","t":"personal-scope bdbase at ~/beads/ for cross-project work","s":"deferred","p":3,"k":"spike","a":null,"l":["human"],"u":"2026-06-16T13:07:15Z","d":0,"c":0},{"id":"trixi-i0z","t":"ATTUNEMENT: gap-aware observation + directed learning (GH #449)","s":"open","p":3,"k":"epic","a":null,"l":["human"],"u":"2026-06-16T16:11:08Z","d":0,"c":0},{"id":"trixi-op24","t":"SDLC tightening — deferred items from rev4 proposal","s":"open","p":3,"k":"epic","a":null,"l":["human"],"u":"2026-06-16T16:11:12Z","d":0,"c":0},{"id":"trixi-lkrx","t":"KG dreamwork: periodic tag de-dupe + refactor (daemon sleep-work)","s":"open","p":3,"k":"task","a":null,"l":null,"u":"2026-06-16T21:51:41Z","d":0,"c":0},{"id":"trixi-9t15","t":"Bug: deadAttach tombstone leaks on permanent attachment delete","s":"open","p":3,"k":"bug","a":null,"l":null,"u":"2026-06-21T09:14:14Z","d":0,"c":0},{"id":"trixi-e585","t":"Context assembly redesign: dynamic identity, pre-compaction flush, trend synthesis (GH #395)","s":"open","p":4,"k":"feature","a":null,"l":null,"u":"2026-05-03T00:08:39Z","d":0,"c":0}]/*DATA*/;
+const DESC = /*DESC*/{"trixi-module-collapse":"## Problem\n\ntrixi is 24 Go modules (root + 23 under modules/) but versions NONE independently — ~100 `replace => ../sibling` directives + a committed go.work pay the full module tax (per-module go.mod/go.sum, 24-way `make check` fan-out) for zero benefit. The DAG is clean+acyclic, so the seams are correct — just expressed as the heaviest construct (module) instead of the right one (internal/ package), enforced going forward by ONE archtest instead of 24 .go-arch-lint.yml.\n\n## Outcome — collapse + capability regroup (NOT a flat lift)\n\nOne module (github.com/dkoosis/trixi). modules/* become a capability-named internal/ tree (Brief LOCKED 2026-06-17), NOT flat internal/<oldname>:\n- nug/ (graph+domain/validate) { store, crud, search } · ingest/sources · mnemd/ · agent/ (agent+mcp) · heartbeat/ (schedule) · recipes/ (recipe) /gwf (workflow) · observe/. cmd/trixi + cmd/ingest-cclog.\n- Splits (judgment, not sed): domain->2, app(15K)->3 (cmd/heartbeat/mnemd), score->2, intent->search. Cycle-breaker contract leaves fold into consumers. inttest dissolves.\n- plumbing dropped (not canonical Go); observe is the lone surviving shared leaf.\n\n## Sequencing — option B (dk, 2026-06-17): TWO PRs\n- PR1 = mechanical lift+rename (git mv + scripted import rewrite, behavior-neutral, trivial review).\n- PR2 = judgment splits + one layering archtest + tooling (all the regression risk, isolated so the make eval MRR gate stays diagnostic).\nThe flat-but-renamed tree is a green intermediate between PRs, never a shipped end-state.\n\n## Success criteria\n- Exactly one go.mod at root; zero under tree; no go.work, no replace.\n- Packages live under the LOCKED capability tree (internal/ + cmd/), not flat internal/<oldname>.\n- make check green; make eval MRR floor holds (D14) on BOTH PRs.\n- GOWORK=off go build/test ./... pass. configfs.go //go:embed resolves from root.\n- New internal/-layering archtest passes AND fails on a deliberate upward-import probe (not a no-op).\n- Behavior-neutral: every changed line traces to module->package conversion or the locked regroup (D9).\n- Plan reviewed/approved by dk (requires_plan) before any code; /review-gate before close (requires_review).\n\n## Plan\ndocs/superpowers/plans/trixi-module-collapse-single-module.md (rewritten 2026-06-17, option B)","trixi-43a1.4":"The 'improves overnight' promise (Memory C). Replace shipped consolidate (embedding-similarity clustering — cheap proxy) with frozen-snapshot, cross-corpus inference synthesizing durable structure from episodic specifics. One wholesale rewrite; stays behind the loop contract and propose-never-commit.","trixi-26gj":"Use case: when dk and Trixi interact, Trixi should adapt to body state — softer tone after bad sleep, less push on a heavy-activity day, recognize 'I'm tired' has a measurable cause.\n\nToday: today.yaml body section feeds <session-context> via session-context.sh hook, so the data is technically present every session. But there's no instruction telling Trixi how/when to use it, and no derived signals (e.g. 'sleep_debt', 'low_energy_day', 'first_walk_of_day').\n\nScope:\n- Add interpretation rules to ~/.claude/rules/identity.md or a new body-aware.md rule: 'when sleep_hours < 6, soften /coach prompts'; 'when walks_today >= 3, acknowledge effort if dk mentions tiredness'.\n- Consider derived flags computed in refresh-body.sh: low_sleep (bool), high_activity (bool), since_last_walk_min — cheaper for Trixi to consume than raw numbers.\n- Mid-session staleness: today.yaml refresh is hourly. For 'near real-time' (e.g., 'I just got back from a walk'), would need a faster trigger or an explicit /pulse refresh command.\n\nOpen question: does this belong in coaching skills (so it only fires when dk asks for coaching) or in the global identity rule (so all interactions are body-aware)? Probably the former — global awareness risks Trixi over-narrating biometrics.\n\nAcceptance:\n- Defined set of derived signals\n- Documented interpretation guidance dk endorses\n- Manual test: simulate low-sleep day in today.yaml, observe Trixi behavior shift","trixi-eval-realq.1":"## What\ndk ask (b): a 1-line gloss on every metric the eval/bench reports print, stating DIRECTION + IDEAL (not just a definition) so a bare number is interpretable (\"MRR 0.84\" alone tells you nothing).\n\n## How\n- One shared gloss map keyed by metric -> {definition, direction, ideal}; single source of truth so bench + gate cannot drift.\n- Text report: gloss inline next to each number. --json: a separate `about` block (never inline prose into data rows).\n- e.g. MRR=higher better,1.0=always rank 1; p95=lower better; robustness=higher better.\n\n## Acceptance Criteria\n- Both bench (cmd/trixi/eval/eval_bench.go) and gate report paths consume the SAME map.\n- Text + JSON both carry glosses. make scan green.\n\n## Notes\nNo deps, no decisions — lowest-friction, do FIRST.","trixi-i0z.1":"Read-only audit. Read config/skills/curate/SKILL.md — what meta.facet values does it produce? Enumerate meta.facet across log.observation nugs using vault markdown (not SQLite — #639 trap): rg -l 'type: log.observation' $TRIXI_KG/Log/observation | xargs rg '^facet:'. Cross-reference with .claude/rules/attunement.md's 4 lenses. Gate: >=3 of 4 lenses represented → proceed to Phase 1. <3 → STOP; file #640 follow-up (already filed). No commits until gate passes.","trixi-9t15":"## Bug: deadAttach tombstone leaks on permanent attachment delete\n\n**Severity:** Low | **Confidence:** Confirmed | **Audit Pass:** 1\n\n### Evidence\n`internal/nug/crud/reconciler/watcher.go:319-323` adds the tombstone on any dead attachment event:\n```go\nif isAttachmentExt(filepath.Ext(path)) {\n    ix.mu.Lock()\n    ix.deadAttach[path] = struct{}{}\n    ix.mu.Unlock()\n}\n```\nThe dead-path handler `handleFileDeletion` (watcher.go:489-500) calls `cleanDerivedAttachmentNug(path)` but never removes the `deadAttach[path]` entry. The map is only drained by a later `ingestPDF` via `clearTombstone` (attachment.go:170) or `consumeTombstone` (attachment.go:225,261). `deadAttach` declared at reconciler.go:118.\n\n## Steps to Reproduce\n1. Run the long-lived MCP daemon watching the KG vault.\n2. Add an attachment source (e.g. `foo.pdf`) so it ingests, then delete it and do NOT re-create it.\n3. Repeat for several distinct attachment files.\n4. Observe `ix.deadAttach` retains one entry per deleted path — never reclaimed (no in-flight ingest to `consumeTombstone`, no re-ingest to `clearTombstone`).\n\n### Mechanism\nA permanent delete (the common case) sets `deadAttach[path]` but nothing consumes it. The entry persists for the daemon lifetime.\n\n### Failure Scenario\nLong-lived daemon; user deletes N distinct attachment files over weeks. `deadAttach` grows by one permanent entry per distinct deleted path, never reclaimed. Unbounded over daemon lifetime (bounded only by count of distinct deleted attachment paths).\n\n### Test Coverage\n`TestWatcher_DeadEventAfterAsyncIngestCompletes` and the dual-arm race test (attachment_test.go:1351-1469) exercise the consume path, but no test asserts `deadAttach` is emptied after a delete-without-recreate. The leak path is untested.\n\n### Suggested Fix\nIn `handleFileDeletion` attachment branch, after `cleanDerivedAttachmentNug(path)`, drop the tombstone:\n```go\nix.mu.Lock(); delete(ix.deadAttach, path); ix.mu.Unlock()\n```\nTest: fire a dead attachment event with no in-flight ingest, assert `len(ix.deadAttach)==0` afterward.\n\n---\n*Generated by go-bug-audit on 2026-06-21*","trixi-kong-cli.25":""}/*DESC*/;
+
+const PRIO = {0:"P0",1:"P1",2:"P2",3:"P3",4:"P4"};
+const STLABEL = {open:"Open", in_progress:"In progress", blocked:"Blocked", closed:"Closed", deferred:"Deferred"};
+const ME = "dkoosis@gmail.com";
+
+function rel(iso){
+  const d = (NOW - new Date(iso))/1000;
+  const day = 86400;
+  if (d < 3600) return Math.max(1,Math.round(d/60))+"m";
+  if (d < day)  return Math.round(d/3600)+"h";
+  if (d < day*30) return Math.round(d/day)+"d";
+  if (d < day*365) return Math.round(d/(day*30))+"mo";
+  return Math.round(d/(day*365))+"y";
+}
+function fullDate(iso){
+  return new Date(iso).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+}
+function initials(a){ if(!a) return ""; const n=a.split("@")[0]; return n.slice(0,2).toUpperCase(); }
+function depbar(n){ const k=Math.min(n,5); let s=""; for(let i=0;i<k;i++)s+="<i></i>"; return s; }
+
+let state = { sort:"p", dir:1, status:"active", type:null, asg:null, q:"", sel:null };
+
+function view(){
+  let r = DATA.slice();
+  if (state.status==="active") r = r.filter(x=>x.s!=="closed");        // default: hide done work
+  else if (state.status!=="all") r = r.filter(x=>x.s===state.status);
+  if (state.type)  r = r.filter(x=>x.k===state.type);
+  if (state.asg==="me") r = r.filter(x=>x.a===ME);
+  if (state.q){ const q=state.q.toLowerCase(); r=r.filter(x=>x.id.toLowerCase().includes(q)||x.t.toLowerCase().includes(q)); }
+  const k = state.sort, dir = state.dir;
+  r.sort((a,b)=>{
+    let A=a[k], B=b[k];
+    if (k==="p"){ // priority asc, then updated desc as tiebreak
+      if (A!==B) return (A-B)*dir;
+      return new Date(b.u)-new Date(a.u);
+    }
+    if (k==="d"){ return (A-B)*dir; }
+    if (k==="u"){ return (new Date(A)-new Date(B))*dir; }
+    A=(A||"").toString().toLowerCase(); B=(B||"").toString().toLowerCase();
+    return A<B?-1*dir:A>B?1*dir:0;
+  });
+  return r;
+}
+
+function renderRows(){
+  const r = view();
+  document.getElementById("count").textContent = r.length;
+  const done = s => s==="closed";
+  document.getElementById("rows").innerHTML = r.map(x=>`
+    <tr data-id="${x.id}" class="${x.id===state.sel?"sel":""} ${done(x.s)?"done":""}">
+      <td class="c-pri"><span class="chip p${x.p}">${x.p}</span></td>
+      <td class="c-id"><span class="id mono">${x.id}</span></td>
+      <td class="c-title"><span class="title">${done(x.s)?`<span class="strike">${esc(x.t)}</span>`:esc(x.t)}</span></td>
+      <td class="c-stat"><span class="status"><span class="dot ${x.s}"></span>${STLABEL[x.s]}</span></td>
+      <td class="c-type"><span class="type ${x.k}">${x.k}</span></td>
+      <td class="c-asg">${x.a?`<span class="avatar" title="${x.a}">${initials(x.a)}</span>`:`<span class="asg-empty">·</span>`}</td>
+      <td class="c-dep"><span class="dep ${x.d?"":"zero"} tnum"><span class="depbar">${depbar(x.d)}</span>${x.d}</span></td>
+      <td class="c-upd"><span class="upd mono tnum">${rel(x.u)}</span></td>
+    </tr>`).join("");
+  document.querySelectorAll("#rows tr").forEach(tr=>{
+    tr.onclick=()=>select(tr.dataset.id);
+  });
+}
+
+function esc(s){ return s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+function descHTML(id){
+  const d = DESC[id];
+  if (!d) return `<p class="empty-line">No description.</p>`;
+  // light markdown: ## headings + paragraphs
+  return esc(d).split(/\n\n+/).map(b=>{
+    const m = b.match(/^#+\s+(.*)/);
+    if (m) return `<h3>${m[1]}</h3>`;
+    return `<p style="margin:0 0 8px">${b.replace(/\n/g,"<br>")}</p>`;
+  }).join("");
+}
+
+function blockers(id){
+  // mock dependency relations for a couple of beads to show the panel section
+  const REL = {
+    "trixi-43a1.4": [{id:"trixi-43a1", t:"Memory C — improves-overnight loop", s:"open", p:2}],
+    "trixi-i0z.1":  [{id:"trixi-i0z", t:"ATTUNEMENT epic", s:"open", p:3}],
+  };
+  return REL[id]||[];
+}
+
+function select(id){
+  state.sel = id;
+  document.querySelectorAll("#rows tr").forEach(tr=>tr.classList.toggle("sel", tr.dataset.id===id));
+  const x = DATA.find(d=>d.id===id);
+  if(!x){ document.getElementById("detail").innerHTML=""; return; }
+  const labels = (x.l||[]).map(l=>`<span class="label ${l}">${l}</span>`).join("");
+  const bl = blockers(id);
+  document.getElementById("detail").innerHTML = `
+    <div class="d-eyebrow">
+      <span class="chip p${x.p}">${x.p}</span>
+      <span class="id mono">${x.id}</span>
+      <span class="sep">·</span>
+      <span class="status"><span class="dot ${x.s}"></span>${STLABEL[x.s]}</span>
+    </div>
+    <h1 class="d-title">${esc(x.t)}</h1>
+    <div class="actions">
+      ${x.a===ME?"":`<button class="btn primary">Claim <span class="kbd">c</span></button>`}
+      <button class="btn">Edit <span class="kbd">e</span></button>
+      <button class="btn">Comment</button>
+      ${x.s==="closed"?`<button class="btn">Reopen</button>`:`<button class="btn">Close</button>`}
+    </div>
+    <dl class="meta">
+      <dt>Priority</dt><dd><span class="chip p${x.p}">${x.p}</span> ${PRIO[x.p]}</dd>
+      <dt>Status</dt><dd><span class="dot ${x.s}"></span> ${STLABEL[x.s]}</dd>
+      <dt>Type</dt><dd><span class="type ${x.k}">${x.k}</span></dd>
+      <dt>Assignee</dt><dd>${x.a?`<span class="avatar">${initials(x.a)}</span> ${x.a}`:`<span class="empty-line">unassigned</span>`}</dd>
+      <dt>Dependents</dt><dd class="tnum">${x.d}</dd>
+      <dt>Comments</dt><dd class="tnum">${x.c||0}</dd>
+      <dt>Updated</dt><dd class="tnum">${fullDate(x.u)} <span class="empty-line">· ${rel(x.u)} ago</span></dd>
+    </dl>
+    ${labels?`<div class="labels">${labels}</div>`:""}
+    <div class="section-rule"></div>
+    <h2 class="d-h">Description</h2>
+    <div class="desc">${descHTML(id)}</div>
+    ${bl.length?`
+      <div class="section-rule"></div>
+      <h2 class="d-h">Blocked by</h2>
+      <div class="dep-list">${bl.map(b=>`
+        <div class="dep-item"><span class="chip p${b.p}">${b.p}</span><span class="dot ${b.s}"></span><span class="id mono">${b.id}</span> ${esc(b.t)}</div>`).join("")}</div>`:""}
+  `;
+}
+
+// ---- filters
+document.querySelectorAll(".filter").forEach(b=>{
+  b.onclick=()=>{
+    if (b.dataset.status){
+      document.querySelectorAll("[data-status]").forEach(x=>x.classList.remove("active"));
+      b.classList.add("active"); state.status=b.dataset.status;
+    } else if (b.dataset.type){
+      const on = b.classList.toggle("active"); state.type = on?b.dataset.type:null;
+    } else if (b.dataset.asg){
+      const on = b.classList.toggle("active"); state.asg = on?"me":null;
+    }
+    renderRows();
+  };
+});
+// ---- sort
+document.querySelectorAll("thead th").forEach(th=>{
+  th.onclick=()=>{
+    const k=th.dataset.sort;
+    if(state.sort===k) state.dir*=-1; else { state.sort=k; state.dir = (k==="u"||k==="d")?-1:1; }
+    document.querySelectorAll("thead .arrow").forEach(a=>a.remove());
+    const ar=document.createElement("span"); ar.className="arrow"; ar.textContent=state.dir>0?"↑":"↓"; th.appendChild(ar);
+    renderRows();
+  };
+});
+// ---- search
+document.getElementById("q").addEventListener("input", e=>{ state.q=e.target.value; renderRows(); });
+// ---- theme
+document.getElementById("theme").onclick=()=>{
+  const r=document.documentElement;
+  r.dataset.theme = r.dataset.theme==="dark"?"light":"dark";
+};
+// ---- keyboard (P8)
+document.addEventListener("keydown", e=>{
+  if (e.target.tagName==="INPUT"){ if(e.key==="Escape")e.target.blur(); return; }
+  if (e.key==="/"){ e.preventDefault(); document.getElementById("q").focus(); return; }
+  const rows=[...document.querySelectorAll("#rows tr")];
+  let i=rows.findIndex(r=>r.dataset.id===state.sel);
+  if (e.key==="j"||e.key==="ArrowDown"){ e.preventDefault(); i=Math.min(rows.length-1,i+1); }
+  else if (e.key==="k"||e.key==="ArrowUp"){ e.preventDefault(); i=Math.max(0,i-1); }
+  else return;
+  const id=rows[i]?.dataset.id; if(id){ select(id); rows[i].scrollIntoView({block:"nearest"}); }
+});
+
+renderRows();
+// default-select a meaty open bead so the detail panel reads real, not an empty closed task
+select(DATA.find(d=>DESC[d.id] && d.s!=="closed")?.id || view()[0].id);
+</script>
+</body>
+</html>
