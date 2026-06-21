@@ -117,9 +117,8 @@ header {
 }
 .section-head .sub { letter-spacing: 0; text-transform: none; font-weight: 400; color: var(--ink-4); font-size: var(--fs-8); }
 
-/* treemap — sized story cards laid out by weight. Fills the canvas: the
-   forest is the screen, not a band in it. Min-height keeps cards legible. */
-.treemap { position: relative; width: 100%; flex: 1 0 auto; min-height: 440px; }
+/* treemap — a compact "shape of the work" band (ECharts), not the whole view. */
+.treemap { position: relative; width: 100%; height: 260px; flex: 0 0 auto; }
 .tnode {
   position: absolute; overflow: hidden; cursor: pointer;
   background: var(--card); border: 1px solid var(--line);
@@ -278,6 +277,7 @@ footer b { color: var(--ink-3); font-weight: 500; }
   </div>
 </aside>
 
+<script src="vendor/echarts.min.js"></script>
 <script src="forest-data.js"></script>
 <script>
 const F = window.FOREST;
@@ -301,74 +301,75 @@ $('#m-open').textContent = F.reduce((s,t)=>s+t.open,0);
 $('#m-prog').textContent = F.reduce((s,t)=>s+t.in_progress,0);
 $('#m-thin').textContent = thin.length;
 
-/* ---- squarified treemap ---- */
-function squarify(items, x, y, w, h) {
-  const out = [];
-  const total = items.reduce((s,i)=>s+i.v, 0);
-  let nodes = items.map(i => ({ ...i, area: i.v / total * (w*h) }));
-  let rx = x, ry = y, rw = w, rh = h;
-  function worst(row, len) {
-    const s = row.reduce((a,b)=>a+b.area,0);
-    const max = Math.max(...row.map(r=>r.area)), min = Math.min(...row.map(r=>r.area));
-    return Math.max((len*len*max)/(s*s), (s*s)/(len*len*min));
-  }
-  let i = 0;
-  while (i < nodes.length) {
-    const horizontal = rw < rh;          // lay row along the shorter side
-    const len = horizontal ? rw : rh;
-    let row = [nodes[i]];
-    while (i + row.length < nodes.length) {
-      const next = nodes[i + row.length];
-      if (worst(row, len) >= worst([...row, next], len)) row.push(next);
-      else break;
-    }
-    const rowArea = row.reduce((a,b)=>a+b.area,0);
-    const thick = rowArea / len;
-    let off = horizontal ? rx : ry;
-    for (const n of row) {
-      const frac = n.area / rowArea * len;
-      if (horizontal) out.push({ ...n, x: off, y: ry, w: frac, h: thick });
-      else            out.push({ ...n, x: rx, y: off, w: thick, h: frac });
-      off += frac;
-    }
-    if (horizontal) { ry += thick; rh -= thick; } else { rx += thick; rw -= thick; }
-    i += row.length;
-  }
-  return out;
+/* ---- ECharts nested treemap ---- */
+// One hue per trunk; children inherit it (ECharts shades them via colorSaturation).
+const TRUNK_COLORS = ['#e0843c','#4c7ef0','#46a758','#9b6dd6','#3aa6a0','#d9588b','#d99030','#5a89e8'];
+const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+let chart;
+// trunk area ∝ total work; children split that area evenly (they carry no weight).
+function treeData() {
+  return active.map((t, i) => {
+    const p = parse(t), kids = t.children || [];
+    const per = kids.length ? Math.max(t.total / kids.length, 1) : Math.max(t.total, 1);
+    return {
+      name: p.name,
+      value: Math.max(t.total, 1),
+      trunk: t,
+      itemStyle: { color: TRUNK_COLORS[i % TRUNK_COLORS.length] },
+      children: kids.map(c => ({
+        name: c.title.replace(/^\[epic\]\s*/i, '').replace(/^\(EPIC\)\s*/, ''),
+        value: per,
+        status: c.status,
+      })),
+    };
+  });
+}
+
+function buildOption() {
+  const bg = cssVar('--bg') || '#0c0d10';
+  return {
+    backgroundColor: 'transparent',
+    tooltip: {
+      backgroundColor: cssVar('--bg-1'), borderColor: cssVar('--line-2'),
+      textStyle: { color: cssVar('--ink'), fontSize: 12 },
+      formatter: p => {
+        const t = p.data.trunk;
+        if (t) return `<b>${p.name}</b><br>${t.open} open · ${t.in_progress} in prog · ${t.closed} done<br><span style="color:${cssVar('--ink-3')}">last activity ${heatWord(t.heat_days)}</span>`;
+        return `${p.name}<br><span style="color:${cssVar('--ink-3')}">${p.data.status || ''}</span>`;
+      },
+    },
+    series: [{
+      type: 'treemap', roam: false, nodeClick: false, animationDuration: 320,
+      breadcrumb: { show: false },
+      top: 0, left: 0, right: 0, bottom: 0,
+      visibleMin: 8, leafDepth: 2,
+      label: { show: true, fontSize: 10, color: '#fff', overflow: 'truncate',
+               textShadowColor: 'rgba(0,0,0,.4)', textShadowBlur: 2 },
+      upperLabel: { show: true, height: 22, color: '#fff', fontSize: 11, fontWeight: 600 },
+      levels: [
+        { // trunks
+          upperLabel: { show: true, height: 22 },
+          itemStyle: { borderColor: bg, borderWidth: 3, gapWidth: 3, borderRadius: 4 },
+        },
+        { // children
+          itemStyle: { borderColor: bg, borderWidth: 1, gapWidth: 1 },
+          colorSaturation: [0.32, 0.55],
+        },
+      ],
+      data: treeData(),
+    }],
+  };
 }
 
 function renderTreemap() {
   const tm = $('#treemap');
-  tm.innerHTML = '';
-  const W = tm.clientWidth, H = tm.clientHeight, gap = 8;
-  const rects = squarify(active.map(t => ({ t, v: weight(t) })), 0, 0, W, H);
-  for (const r of rects) {
-    const t = r.t, p = parse(t), area = r.w * r.h;
-    const small = area < 26000 || r.w < 150;
-    const large = area > 60000 && r.w > 200 && r.h > 180;
-    const pct = t.total ? Math.round(t.closed / t.total * 100) : 0;
-    const el = document.createElement('div');
-    el.className = `tnode ${heatClass(t.heat_days)}${small ? ' sm' : ''}${large ? ' lg' : ''}`;
-    el.style.left = (r.x + gap/2) + 'px'; el.style.top = (r.y + gap/2) + 'px';
-    el.style.width = (r.w - gap) + 'px'; el.style.height = (r.h - gap) + 'px';
-    el.style.setProperty('--nameSize', area > 70000 ? '26px' : area > 38000 ? '20px' : '15px');
-    el.innerHTML = `
-      <div class="t-name">${p.name}</div>
-      <div class="t-gloss">${p.gloss}</div>
-      <div class="t-hero"><span class="n">${t.open}</span><span class="l">open<br>beads</span></div>
-      <div class="t-spacer"></div>
-      <div class="t-foot">
-        <div class="t-counts">
-          <span class="open">${t.open}<span class="u">open</span></span>
-          ${t.in_progress ? `<span class="prog">${t.in_progress} in prog</span>` : ''}
-          <span class="done">${t.closed} done</span>
-          <span class="heat" title="last activity ${heatWord(t.heat_days)}"><span class="hd"></span>${heatWord(t.heat_days)}</span>
-        </div>
-        <div class="bar"><i style="width:${pct}%"></i></div>
-      </div>`;
-    el.onclick = () => openDrawer(t);
-    tm.appendChild(el);
+  if (!chart) {
+    chart = echarts.init(tm, null, { renderer: 'canvas' });
+    chart.on('click', p => { if (p.data && p.data.trunk) openDrawer(p.data.trunk); });
   }
+  chart.setOption(buildOption());
+  chart.resize();
 }
 
 function renderThin() {
@@ -424,10 +425,11 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(
 $('#theme').onclick = () => {
   const r = document.documentElement;
   r.dataset.theme = r.dataset.theme === 'dark' ? 'light' : 'dark';
+  renderTreemap();   // rebuild so tile borders + tooltip track the theme
 };
 
 renderTreemap(); renderThin();
-let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(renderTreemap, 120); });
+let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => chart && chart.resize(), 120); });
 </script>
 </body>
 </html>
