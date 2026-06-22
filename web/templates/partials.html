@@ -69,7 +69,7 @@
   <button class="icon-btn dr-close" id="drClose" type="button"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
   <div class="dr-eyebrow"><span class="dr-id mono">{{shortID .ID}}</span> · <span>{{.IssueType}}</span></div>
   {{if .Err}}<div class="dr-err" role="alert">{{.Err}}</div>{{end}}
-  <form class="dr-title-edit" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change">
+  <form class="dr-title-edit" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change" onsubmit="event.preventDefault();">
     <input type="hidden" name="field" value="title">
     <input class="dr-title" name="value" value="{{.Title}}" aria-label="title">
   </form>
@@ -88,7 +88,7 @@
   </div>
 </div>
 <div class="dr-body">
-  <form class="dr-field" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change">
+  <form class="dr-field" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change" onsubmit="event.preventDefault();">
     <input type="hidden" name="field" value="priority">
     <label>Priority
       <select name="value">
@@ -96,12 +96,12 @@
       </select>
     </label>
   </form>
-  <form class="dr-field" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change">
+  <form class="dr-field" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change" onsubmit="event.preventDefault();">
     <input type="hidden" name="field" value="assignee">
     <label>Assignee <input name="value" value="{{.Assignee}}" placeholder="unassigned"></label>
   </form>
   <h3>Description</h3>
-  <form class="dr-field" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change">
+  <form class="dr-field" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change" onsubmit="event.preventDefault();">
     <input type="hidden" name="field" value="description">
     <textarea name="value" rows="5" placeholder="No description recorded.">{{.Description}}</textarea>
   </form>
