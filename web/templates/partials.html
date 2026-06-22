@@ -32,6 +32,7 @@
     <button class="vt active" type="button" disabled>Table</button>
     <button class="vt" type="button" hx-get="/board{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Board</button>
     <button class="vt" type="button" hx-get="/graph{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Graph</button>
+    <button class="vt" type="button" hx-get="/insights{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Insights</button>
   </div>
   <div class="lp-stat">
     {{if .HasEpic}}<span><b>{{.Epic.Open}}</b> open beads</span>
@@ -59,6 +60,7 @@
     <button class="vt" type="button" hx-get="/list{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Table</button>
     <button class="vt active" type="button" disabled>Board</button>
     <button class="vt" type="button" hx-get="/graph{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Graph</button>
+    <button class="vt" type="button" hx-get="/insights{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Insights</button>
   </div>
 </div>
 <div class="board-bar">
@@ -109,6 +111,7 @@
     <button class="vt" type="button" hx-get="/list{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Table</button>
     <button class="vt" type="button" hx-get="/board{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Board</button>
     <button class="vt active" type="button" disabled>Graph</button>
+    <button class="vt" type="button" hx-get="/insights{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Insights</button>
   </div>
 </div>
 <div class="graph-legend">
@@ -121,6 +124,95 @@
 <div class="pane-head"><div class="lp-scope"><span class="lp-name">—</span></div></div>
 <div class="list-body"><p class="empty">No live work. The forest is quiet.</p></div>
 {{end}}
+{{end}}
+
+{{define "insights"}}
+{{if .Region.Epics}}
+<div class="pane-head">
+  <div class="lp-scope">
+    <span class="lp-dot" style="background:{{.Region.Color}}"></span>
+    <span class="lp-name">{{if .HasEpic}}{{cleanName .Epic.Name}}{{else}}{{.Region.Name}}{{end}}</span>
+  </div>
+  <div class="view-toggle">
+    <button class="vt" type="button" hx-get="/list{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Table</button>
+    <button class="vt" type="button" hx-get="/board{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Board</button>
+    <button class="vt" type="button" hx-get="/graph{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Graph</button>
+    <button class="vt active" type="button" disabled>Insights</button>
+  </div>
+</div>
+{{with .Insights}}
+<div class="insights">
+  <div class="ipanel triage">
+    <div class="ip-head">Triage</div>
+    <div class="counts">
+      <div class="count"><b class="tnum">{{.Counts.Total}}</b><span>total</span></div>
+      <div class="count"><b class="tnum">{{.Counts.Ready}}</b><span>ready</span></div>
+      <div class="count"><b class="tnum">{{.Counts.Blocked}}</b><span>blocked</span></div>
+      <div class="count"><b class="tnum">{{.Counts.InProgress}}</b><span>in progress</span></div>
+      <div class="count"><b class="tnum">{{.Counts.Open}}</b><span>open</span></div>
+      <div class="count{{if .Counts.Stale}} warn{{end}}"><b class="tnum">{{.Counts.Stale}}</b><span>stale</span></div>
+    </div>
+  </div>
+
+  <div class="ipanel">
+    <div class="ip-head">Influence <span class="ip-sub">PageRank</span></div>
+    {{template "leaderboard" .Influence}}
+  </div>
+
+  <div class="ipanel">
+    <div class="ip-head">Bottlenecks <span class="ip-sub">betweenness</span></div>
+    {{template "leaderboard" .Bottleneck}}
+  </div>
+
+  <div class="ipanel">
+    <div class="ip-head">Critical path <span class="ip-sub">longest chain</span></div>
+    {{if .CritPath}}
+    <ol class="critpath">
+      {{range .CritPath}}<li><span class="pchip {{pclass .Priority}}">{{.Priority}}</span> {{.Title}} <span class="cp-id mono">{{shortID .ID}}</span></li>{{end}}
+    </ol>
+    {{else}}<p class="ip-empty">No dependency chain in scope.</p>{{end}}
+  </div>
+
+  <div class="ipanel">
+    <div class="ip-head">Cycles</div>
+    {{if .Cycles}}
+    <ul class="cycles">
+      {{range .Cycles}}<li class="warn">{{range $i, $id := .}}{{if $i}} → {{end}}<span class="mono">{{shortID $id}}</span>{{end}}</li>{{end}}
+    </ul>
+    {{else}}<p class="ip-ok">No cycles — the graph is acyclic.</p>{{end}}
+  </div>
+
+  <div class="ipanel">
+    <div class="ip-head">Label health</div>
+    {{if .Labels}}
+    <ul class="labels">
+      {{range .Labels}}<li><span class="lbl">{{.Label}}</span><span class="lbl-ct tnum">{{.Count}}</span></li>{{end}}
+    </ul>
+    {{else}}<p class="ip-empty">No labels on open beads.</p>{{end}}
+    {{if .Untagged}}<p class="ip-warn">{{.Untagged}} open bead{{if ne .Untagged 1}}s{{end}} untagged.</p>{{end}}
+  </div>
+</div>
+{{end}}
+{{else}}
+<div class="pane-head"><div class="lp-scope"><span class="lp-name">—</span></div></div>
+<div class="list-body"><p class="empty">No live work. The forest is quiet.</p></div>
+{{end}}
+{{end}}
+
+{{define "leaderboard"}}
+{{if .}}
+<ul class="lboard">
+  {{range .}}
+  <li>
+    <div class="lb-row">
+      <span class="lb-title">{{.Title}}</span>
+      <span class="lb-id mono">{{shortID .ID}}</span>
+    </div>
+    <div class="lb-bar"><span style="width:{{.Width}}%"></span></div>
+  </li>
+  {{end}}
+</ul>
+{{else}}<p class="ip-empty">No ranked beads — no dependencies in scope.</p>{{end}}
 {{end}}
 
 {{define "epicGroup"}}

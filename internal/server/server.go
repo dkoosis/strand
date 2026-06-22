@@ -5,6 +5,7 @@ package server
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -29,6 +30,15 @@ import (
 var (
 	errNoRepo  = errors.New("no active repo")
 	errNoIssue = errors.New("no issue to display")
+)
+
+// bd status values strand reasons about (triage, the kanban status pivot). The
+// kanban column captions stay separate display strings.
+const (
+	statusOpen       = "open"
+	statusInProgress = "in_progress"
+	statusClosed     = "closed"
+	statusDeferred   = "deferred"
 )
 
 // IssueSource is the slice of bd.Client the server needs: reads plus the V1
@@ -65,7 +75,8 @@ type Server struct {
 	tmpl     *template.Template
 	static   http.Handler
 	syn      forest.Synthesis
-	shutdown func() // raised by POST /shutdown; a test seam over the interrupt hook
+	shutdown func()           // raised by POST /shutdown; a test seam over the interrupt hook
+	now      func() time.Time // clock for the stale cutoff; a test seam (default time.Now)
 }
 
 // defaultShutdown raises os.Interrupt at strand's own process, so the Quit button
@@ -84,7 +95,7 @@ func defaultShutdown() {
 // server stays free of embed. syn is the human-shaped synthesis layer (north
 // star); the project label follows the active repo.
 func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, static http.Handler, syn forest.Synthesis) *Server {
-	return &Server{srcFor: srcFor, reg: reg, tmpl: tmpl, static: static, syn: syn, shutdown: defaultShutdown}
+	return &Server{srcFor: srcFor, reg: reg, tmpl: tmpl, static: static, syn: syn, shutdown: defaultShutdown, now: time.Now}
 }
 
 // source resolves the active repo's issue source. ok is false when no repo is
@@ -104,6 +115,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /list", s.handleList)
 	mux.HandleFunc("GET /board", s.handleBoard)
 	mux.HandleFunc("GET /graph", s.handleGraph)
+	mux.HandleFunc("GET /insights", s.handleInsights)
 	mux.HandleFunc("GET /bead/{id}", s.handleBead)
 	mux.HandleFunc("PATCH /bead/{id}", s.handleEdit)
 	mux.HandleFunc("POST /bead/{id}/move", s.handleMove)
@@ -225,7 +237,7 @@ type pivotField struct {
 // reports that aren't seeded (a named assignee) are appended. The assignee
 // "unassigned" column writes an empty value — dropping there clears the field.
 var pivotFields = []pivotField{
-	{"status", []boardColumn{{Key: "open", Label: "open"}, {Key: "in_progress", Label: "in progress"}, {Key: "blocked", Label: "blocked"}, {Key: "closed", Label: "closed"}}, func(b *forest.Bead) string { return b.Status }},
+	{"status", []boardColumn{{Key: statusOpen, Label: "open"}, {Key: statusInProgress, Label: "in progress"}, {Key: "blocked", Label: "blocked"}, {Key: statusClosed, Label: "closed"}}, func(b *forest.Bead) string { return b.Status }},
 	{"priority", []boardColumn{{Key: "0", Label: "P0"}, {Key: "1", Label: "P1"}, {Key: "2", Label: "P2"}, {Key: "3", Label: "P3"}, {Key: "4", Label: "P4"}}, func(b *forest.Bead) string { return strconv.Itoa(b.Priority) }},
 	{"assignee", []boardColumn{{Key: "", Label: "unassigned"}}, func(b *forest.Bead) string { return b.Assignee }},
 }
@@ -526,6 +538,276 @@ func metricNodes(beads []forest.Bead, m *graph.Metrics) []graphNode {
 	return nodes
 }
 
+// insightsView wraps the scope chrome (so the fragment reuses the list/board/graph
+// head) with the computed dashboard.
+type insightsView struct {
+	listView
+	Insights insights
+}
+
+// insights is the V4 dashboard (spec §10): quick-ref counts plus five panels over
+// strand's own in-process metrics. Structural panels (Influence, Bottlenecks,
+// CritPath, Cycles) read the in-scope closed graph, mirroring V3; the triage counts
+// read all blockers (a bead can be blocked from outside the scope).
+type insights struct {
+	Counts     triageCounts
+	Influence  []rankedBead // top PageRank — foundational beads
+	Bottleneck []rankedBead // top betweenness — chokepoints
+	CritPath   []forest.Bead
+	Cycles     [][]string
+	Labels     []labelCount // label distribution over open beads, descending
+	Untagged   int          // open beads carrying no label at all
+}
+
+// triageCounts is the quick-ref panel: the live shape of the scope's queue.
+type triageCounts struct {
+	Total, Open, InProgress, Ready, Blocked, Stale int
+}
+
+// rankedBead is one leaderboard row: a bead, its raw metric score, and a 0–100 bar
+// width normalized to the panel's top score (computed in Go so the template is dumb).
+type rankedBead struct {
+	forest.Bead
+	Score float64
+	Width int
+}
+
+// labelCount is one row of the label-health distribution.
+type labelCount struct {
+	Label string
+	Count int
+}
+
+// staleAfter is how long an open bead can sit untouched before triage flags it.
+const staleAfter = 14 * 24 * time.Hour
+
+// leaderboardSize caps the Influence and Bottleneck panels.
+const leaderboardSize = 5
+
+// handleInsights renders the V4 dashboard for the active scope (a region or one
+// epic), mirroring handleGraph. No repo or an empty scope renders the same empty
+// pane the other views use. It lists once and reuses the issues for both the forest
+// (scope) and the metric/triage computation.
+func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := reqContext(r)
+	defer cancel()
+	src, repo, ok := s.source()
+	if !ok {
+		s.render(w, "insights", insightsView{})
+		return
+	}
+	issues, err := src.List(ctx)
+	if err != nil {
+		s.renderError(w, fmt.Errorf("list issues: %w", err))
+		return
+	}
+	f := forest.Build(issues, s.synFor(repo))
+	view := listViewFor(f, r.URL.Query().Get("epic"))
+	model, err := s.insightsModel(ctx, src, &view, issues)
+	if err != nil {
+		s.renderError(w, err)
+		return
+	}
+	s.render(w, "insights", insightsView{listView: view, Insights: model})
+}
+
+// insightsModel computes the dashboard for a scope. issues is the full repo list
+// (for labels and timestamps the forest drops); the scope's beads come from the
+// view. Deps drives both the in-scope structural graph and the all-blockers triage.
+func (s *Server) insightsModel(ctx context.Context, src IssueSource, v *listView, issues []bd.Issue) (insights, error) {
+	// Epics are containers, not actionable work: the dashboard is about the queue
+	// and the structure of real tasks, so it drops them (the graph view keeps them).
+	beads := actionable(scopeBeads(v))
+	ids, inScope := scopeIDs(beads)
+
+	var deps []bd.DepEdge
+	if len(ids) > 0 {
+		var err error
+		if deps, err = src.Deps(ctx, ids...); err != nil {
+			return insights{}, fmt.Errorf("insights deps: %w", err)
+		}
+	}
+	compEdges, _ := blocksEdges(deps, inScope)
+	m := graph.Compute(ids, compEdges)
+
+	idx := indexIssues(issues)
+	out := insights{
+		Counts:   triage(beads, deps, idx, s.now()),
+		CritPath: beadPath(m.CriticalPath, beadByID(beads)),
+		Cycles:   m.Cycles,
+		Labels:   labelHealth(beads, idx),
+		Untagged: untaggedOpen(beads, idx),
+	}
+	// The leaderboards rank by graph position; with no dependencies every bead ties
+	// at PageRank's base rank, so a ranking would be noise. Show them only with edges.
+	if len(compEdges) > 0 {
+		out.Influence = leaderboard(beads, m.PageRank)
+		out.Bottleneck = leaderboard(beads, m.Betweenness)
+	}
+	return out, nil
+}
+
+// actionable drops epic-type beads (containers) from a scope, leaving the real work
+// the dashboard reasons about.
+func actionable(beads []forest.Bead) []forest.Bead {
+	out := make([]forest.Bead, 0, len(beads))
+	for i := range beads {
+		if beads[i].Type != "epic" {
+			out = append(out, beads[i])
+		}
+	}
+	return out
+}
+
+// indexIssues maps every repo bead by id, so triage and label-health can read the
+// fields forest.Bead drops (status of an out-of-scope blocker, timestamps, labels).
+func indexIssues(issues []bd.Issue) map[string]bd.Issue {
+	m := make(map[string]bd.Issue, len(issues))
+	for i := range issues {
+		m[issues[i].ID] = issues[i]
+	}
+	return m
+}
+
+// beadByID indexes the scope's beads for the critical-path title lookup.
+func beadByID(beads []forest.Bead) map[string]forest.Bead {
+	m := make(map[string]forest.Bead, len(beads))
+	for i := range beads {
+		m[beads[i].ID] = beads[i]
+	}
+	return m
+}
+
+// triage counts the scope's queue shape. ready/blocked weigh ALL of a bead's
+// blocks-dependencies (resolved against the full-repo index), since a blocker can
+// live outside the visible scope; stale flags live work untouched past the cut.
+func triage(beads []forest.Bead, deps []bd.DepEdge, idx map[string]bd.Issue, now time.Time) triageCounts {
+	openBlockers := blockerCounts(deps, idx)
+	var c triageCounts
+	for i := range beads {
+		b := &beads[i]
+		c.Total++
+		switch b.Status {
+		case statusInProgress:
+			c.InProgress++
+		case statusOpen:
+			c.Open++
+			if openBlockers[b.ID] > 0 {
+				c.Blocked++
+			} else {
+				c.Ready++
+			}
+		}
+		if isStale(b.Status, idx[b.ID].UpdatedAt, now) {
+			c.Stale++
+		}
+	}
+	return c
+}
+
+// blockerCounts tallies, per bead, how many of its blocks-dependencies are still
+// unmet — the ones keeping it out of the ready queue. A blocker counts only if it's
+// present in the live index AND not closed; an absent target is treated as resolved,
+// since `bd list` omits closed beads (a done dependency simply isn't in the list).
+func blockerCounts(deps []bd.DepEdge, idx map[string]bd.Issue) map[string]int {
+	open := map[string]int{}
+	for _, d := range deps {
+		if d.Type != "blocks" {
+			continue
+		}
+		if iss, ok := idx[d.DependsOnID]; ok && iss.Status != statusClosed {
+			open[d.IssueID]++
+		}
+	}
+	return open
+}
+
+// isStale reports whether live (open/in-progress) work has gone untouched past the
+// cutoff. A zero timestamp (never recorded) is not flagged — absence isn't staleness.
+func isStale(status string, updated, now time.Time) bool {
+	if status == statusClosed || status == statusDeferred || updated.IsZero() {
+		return false
+	}
+	return now.Sub(updated) > staleAfter
+}
+
+// leaderboard ranks the scope's beads by a metric, descending, keeping the top few
+// with a positive score and sizing each row's bar against the leader. An all-zero
+// metric (no edges) yields no rows — there's nothing to lead.
+func leaderboard(beads []forest.Bead, score map[string]float64) []rankedBead {
+	ranked := make([]rankedBead, 0, len(beads))
+	for i := range beads {
+		if s := score[beads[i].ID]; s > 0 {
+			ranked = append(ranked, rankedBead{Bead: beads[i], Score: s})
+		}
+	}
+	slices.SortFunc(ranked, func(a, b rankedBead) int {
+		if a.Score != b.Score {
+			return cmp.Compare(b.Score, a.Score) // descending
+		}
+		return cmp.Compare(a.ID, b.ID) // stable tiebreak
+	})
+	if len(ranked) > leaderboardSize {
+		ranked = ranked[:leaderboardSize]
+	}
+	if len(ranked) > 0 {
+		top := ranked[0].Score
+		for i := range ranked {
+			ranked[i].Width = int(ranked[i].Score / top * 100)
+		}
+	}
+	return ranked
+}
+
+// beadPath resolves the critical-path ids to scope beads (for their titles),
+// dropping any id not in scope so the panel can't render a blank row.
+func beadPath(path []string, byID map[string]forest.Bead) []forest.Bead {
+	out := make([]forest.Bead, 0, len(path))
+	for _, id := range path {
+		if b, ok := byID[id]; ok {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// labelHealth tallies labels across the scope's open beads, descending by count
+// then name, so the panel surfaces what the live work is tagged with.
+func labelHealth(beads []forest.Bead, idx map[string]bd.Issue) []labelCount {
+	count := map[string]int{}
+	for i := range beads {
+		if beads[i].Status != statusOpen {
+			continue
+		}
+		for _, l := range idx[beads[i].ID].Labels {
+			count[l]++
+		}
+	}
+	out := make([]labelCount, 0, len(count))
+	for l, n := range count {
+		out = append(out, labelCount{Label: l, Count: n})
+	}
+	slices.SortFunc(out, func(a, b labelCount) int {
+		if a.Count != b.Count {
+			return cmp.Compare(b.Count, a.Count)
+		}
+		return cmp.Compare(a.Label, b.Label)
+	})
+	return out
+}
+
+// untaggedOpen counts open beads carrying no label — the hygiene warning that pairs
+// with the distribution.
+func untaggedOpen(beads []forest.Bead, idx map[string]bd.Issue) int {
+	n := 0
+	for i := range beads {
+		if beads[i].Status == statusOpen && len(idx[beads[i].ID].Labels) == 0 {
+			n++
+		}
+	}
+	return n
+}
+
 // drawerData is the detail panel: a bead, its comments, and an optional write
 // error. Embedding promotes the issue's fields, so the template reads .Title etc.
 // directly; .Err carries a bd write failure to show inline (spec Q2).
@@ -606,7 +888,7 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleReopen(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.writeAndRefresh(w, r, id, func(ctx context.Context, src IssueSource) (*bd.Issue, error) {
-		iss, err := src.Update(ctx, id, "status", "open")
+		iss, err := src.Update(ctx, id, "status", statusOpen)
 		return iss, wrapWrite("reopen", err)
 	})
 }
@@ -757,9 +1039,16 @@ func (s *Server) buildForest(ctx context.Context, src IssueSource, repo registry
 	if err != nil {
 		return forest.Forest{}, fmt.Errorf("list issues: %w", err)
 	}
+	return forest.Build(issues, s.synFor(repo)), nil
+}
+
+// synFor labels the synthesis with the active repo's name; the project follows the
+// active repo, so a switch re-labels every view. Shared by buildForest and the
+// insights handler (which lists issues itself, so can't go through buildForest).
+func (s *Server) synFor(repo registry.Repo) forest.Synthesis {
 	syn := s.syn
 	syn.Project = repo.Name
-	return forest.Build(issues, syn), nil
+	return syn
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {

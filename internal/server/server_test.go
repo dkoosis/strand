@@ -12,9 +12,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/forest"
+	"github.com/dkoosis/strand/internal/graph"
 	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/web"
 )
@@ -768,5 +770,223 @@ func TestGraphNoRepo(t *testing.T) {
 	rec := do(t, srv, "/graph")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /graph (no repo) = %d, want 200", rec.Code)
+	}
+}
+
+// --- V4 insights (strand-alg.3) ---
+
+// insightsNow is the fixed clock the insights tests pin Server.now to, so the stale
+// cutoff is deterministic regardless of when the suite runs.
+var insightsNow = time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+
+var (
+	insFresh = insightsNow.Add(-time.Hour)
+	insStale = insightsNow.Add(-30 * 24 * time.Hour)
+)
+
+// insightsIssues is the fixture for the dashboard: epic demo-i with a 3-bead
+// dependency chain (i.3→i.2→i.1, so i.1 is foundational), one in-progress bead, and
+// one stale untagged bead. bd list omits closed, so no closed beads appear.
+var insightsIssues = []bd.Issue{
+	{ID: "demo-i", Title: "Insights epic", IssueType: "epic", Status: "open", Priority: 1, UpdatedAt: insFresh},
+	{ID: "demo-i.1", Parent: "demo-i", Title: "Foundation", Status: "open", Priority: 1, Labels: []string{"core"}, UpdatedAt: insFresh},
+	{ID: "demo-i.2", Parent: "demo-i", Title: "Mid", Status: "open", Priority: 2, Labels: []string{"core", "ui"}, UpdatedAt: insFresh},
+	{ID: "demo-i.3", Parent: "demo-i", Title: "Leaf", Status: "open", Priority: 2, Labels: []string{"ui"}, UpdatedAt: insFresh},
+	{ID: "demo-i.4", Parent: "demo-i", Title: "Active", Status: "in_progress", Priority: 2, Labels: []string{"core"}, UpdatedAt: insFresh},
+	{ID: "demo-i.5", Parent: "demo-i", Title: "Stale", Status: "open", Priority: 3, UpdatedAt: insStale},
+}
+
+var insightsDeps = []bd.DepEdge{
+	{IssueID: "demo-i.2", DependsOnID: "demo-i.1", Type: "blocks"},
+	{IssueID: "demo-i.3", DependsOnID: "demo-i.2", Type: "blocks"},
+}
+
+// insScope returns the demo-i epic's beads and the full-repo issue index, the two
+// inputs the pure insight helpers take.
+func insScope(t *testing.T) ([]forest.Bead, map[string]bd.Issue) {
+	t.Helper()
+	f := forest.Build(insightsIssues, forest.Synthesis{Project: "demo"})
+	view := listViewFor(f, "demo-i")
+	if !view.HasEpic {
+		t.Fatal("fixture epic demo-i not found in forest")
+	}
+	// mirror insightsModel: the dashboard reasons over actionable work, not the
+	// epic container the forest folds into the scope.
+	return actionable(view.Epic.Beads), indexIssues(insightsIssues)
+}
+
+// TestTriageCounts pins the queue-shape math: ready/blocked weigh all blockers,
+// in-progress and stale are split out, and Total counts only live beads.
+func TestTriageCounts(t *testing.T) {
+	beads, idx := insScope(t)
+	got := triage(beads, insightsDeps, idx, insightsNow)
+	want := triageCounts{Total: 5, Open: 4, InProgress: 1, Ready: 2, Blocked: 2, Stale: 1}
+	if got != want {
+		t.Errorf("triage = %+v, want %+v", got, want)
+	}
+}
+
+// TestTriageAbsentBlockerIsResolved: a blocks-dep whose target isn't in the live
+// list (bd omits closed) must not keep the bead out of ready.
+func TestTriageAbsentBlockerIsResolved(t *testing.T) {
+	beads, idx := insScope(t)
+	deps := append(append([]bd.DepEdge(nil), insightsDeps...),
+		bd.DepEdge{IssueID: "demo-i.1", DependsOnID: "demo-gone", Type: "blocks"})
+	got := triage(beads, deps, idx, insightsNow)
+	if got.Ready != 2 || got.Blocked != 2 {
+		t.Errorf("absent blocker changed triage: ready=%d blocked=%d, want 2/2", got.Ready, got.Blocked)
+	}
+}
+
+// TestIsStale: only live work past the cutoff is stale; a zero timestamp isn't.
+func TestIsStale(t *testing.T) {
+	cases := []struct {
+		name    string
+		status  string
+		updated time.Time
+		want    bool
+	}{
+		{"old open", "open", insStale, true},
+		{"fresh open", "open", insFresh, false},
+		{"old closed", "closed", insStale, false},
+		{"zero time", "open", time.Time{}, false},
+	}
+	for _, c := range cases {
+		if got := isStale(c.status, c.updated, insightsNow); got != c.want {
+			t.Errorf("isStale(%s) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestLeaderboard: ranks by score descending, caps the list, and sizes the leader's
+// bar at 100%. The foundational bead (most depended-on) tops PageRank.
+func TestLeaderboard(t *testing.T) {
+	beads, _ := insScope(t)
+	compEdges := []graph.Edge{
+		{Dependent: "demo-i.2", Dependency: "demo-i.1"},
+		{Dependent: "demo-i.3", Dependency: "demo-i.2"},
+	}
+	m := graph.Compute([]string{"demo-i.1", "demo-i.2", "demo-i.3", "demo-i.4", "demo-i.5"}, compEdges)
+	board := leaderboard(beads, m.PageRank)
+	if len(board) == 0 {
+		t.Fatal("leaderboard empty; expected ranked beads")
+	}
+	if board[0].ID != "demo-i.1" {
+		t.Errorf("top influence = %s, want demo-i.1 (foundational)", board[0].ID)
+	}
+	if board[0].Width != 100 {
+		t.Errorf("leader bar = %d%%, want 100%%", board[0].Width)
+	}
+	for i := 1; i < len(board); i++ {
+		if board[i-1].Score < board[i].Score {
+			t.Errorf("leaderboard not descending at %d: %v < %v", i, board[i-1].Score, board[i].Score)
+		}
+	}
+}
+
+// TestLeaderboardEmptyWithoutEdges: an all-zero metric (no deps) yields no rows.
+func TestLeaderboardEmptyWithoutEdges(t *testing.T) {
+	beads, _ := insScope(t)
+	if board := leaderboard(beads, map[string]float64{}); len(board) != 0 {
+		t.Errorf("leaderboard over zero scores = %d rows, want 0", len(board))
+	}
+}
+
+// TestLabelHealth: counts labels over open beads (in-progress excluded), descending
+// by count then name, and flags untagged open beads.
+func TestLabelHealth(t *testing.T) {
+	beads, idx := insScope(t)
+	labels := labelHealth(beads, idx)
+	want := []labelCount{{Label: "core", Count: 2}, {Label: "ui", Count: 2}}
+	if len(labels) != len(want) {
+		t.Fatalf("labelHealth = %+v, want %+v", labels, want)
+	}
+	for i := range want {
+		if labels[i] != want[i] {
+			t.Errorf("label[%d] = %+v, want %+v", i, labels[i], want[i])
+		}
+	}
+	if n := untaggedOpen(beads, idx); n != 1 {
+		t.Errorf("untaggedOpen = %d, want 1 (demo-i.5)", n)
+	}
+}
+
+// TestBeadPath resolves the critical-path ids to scope beads, dropping unknowns.
+func TestBeadPath(t *testing.T) {
+	beads, _ := insScope(t)
+	path := beadPath([]string{"demo-i.3", "demo-i.2", "demo-i.1", "demo-gone"}, beadByID(beads))
+	if len(path) != 3 {
+		t.Fatalf("beadPath len = %d, want 3 (unknown dropped)", len(path))
+	}
+	if path[0].ID != "demo-i.3" || path[2].ID != "demo-i.1" {
+		t.Errorf("beadPath order wrong: %s..%s", path[0].ID, path[2].ID)
+	}
+}
+
+// TestInsightsFragmentRenders: the dashboard returns the six panels, the view-toggle
+// (with Insights active and links back to the other views), and the computed values.
+func TestInsightsFragmentRenders(t *testing.T) {
+	srv := newTestServer(t, &stubBD{issues: insightsIssues, deps: insightsDeps})
+	srv.now = func() time.Time { return insightsNow }
+	rec := do(t, srv, "/insights?epic=demo-i")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /insights = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Triage", "Influence", "Bottlenecks", "Critical path", "Cycles", "Label health",
+		`hx-get="/list?epic=demo-i"`,  // toggle back to Table
+		`hx-get="/graph?epic=demo-i"`, // and Graph
+		"Foundation",                  // top influence bead title
+		"No cycles",                   // acyclic fixture
+		"untagged",                    // hygiene warning (demo-i.5)
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("insights fragment missing %q", want)
+		}
+	}
+}
+
+// TestInsightsScopedToEpic: the epic param narrows the dashboard to one epic; a bead
+// from another epic must not appear in the critical path or leaderboards.
+func TestInsightsScopedToEpic(t *testing.T) {
+	mixed := append(append([]bd.Issue(nil), insightsIssues...),
+		bd.Issue{ID: "demo-z", Title: "Other epic", IssueType: "epic", Status: "open", Priority: 2, UpdatedAt: insFresh},
+		bd.Issue{ID: "demo-z.1", Parent: "demo-z", Title: "Elsewhere", Status: "open", Priority: 2, UpdatedAt: insFresh})
+	srv := newTestServer(t, &stubBD{issues: mixed, deps: insightsDeps})
+	srv.now = func() time.Time { return insightsNow }
+	body := do(t, srv, "/insights?epic=demo-i").Body.String()
+	if strings.Contains(body, "Elsewhere") {
+		t.Error("epic-scoped insights leaked a bead from another epic")
+	}
+}
+
+// TestInsightsCycleWarning: a scope with a dependency cycle surfaces it instead of
+// the all-clear (reuses the graph fixture's {g.5,g.6} cycle).
+func TestInsightsCycleWarning(t *testing.T) {
+	srv := newTestServer(t, &stubBD{issues: graphIssues, deps: graphDeps})
+	srv.now = func() time.Time { return insightsNow }
+	body := do(t, srv, "/insights?epic=demo-g").Body.String()
+	if strings.Contains(body, "No cycles") {
+		t.Error("cyclic scope reported as acyclic")
+	}
+	if !strings.Contains(body, `class="cycles"`) {
+		t.Error("cycle panel missing the cycle list")
+	}
+}
+
+// TestInsightsNoRepo: with no active repo the dashboard degrades to the empty pane
+// at 200, like the other views.
+func TestInsightsNoRepo(t *testing.T) {
+	tmpl, err := web.Templates()
+	if err != nil {
+		t.Fatalf("parse templates: %v", err)
+	}
+	srv := New(func(registry.Repo) IssueSource { return &stubBD{} },
+		registry.InMemory(), tmpl, web.Static(), forest.Synthesis{})
+	rec := do(t, srv, "/insights")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /insights (no repo) = %d, want 200", rec.Code)
 	}
 }
