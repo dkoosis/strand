@@ -99,9 +99,9 @@ func Compute(nodes []string, edges []Edge) Metrics {
 	// or epic scope whose in-scope "blocks" edges are all filtered out hits it.
 	// With no links every hub/authority is zero, so fill them and skip the call.
 	if g.Edges().Len() == 0 {
-		nodes := g.Nodes()
-		for nodes.Next() {
-			name := id.name(nodes.Node().ID())
+		graphNodes := g.Nodes()
+		for graphNodes.Next() {
+			name := id.name(graphNodes.Node().ID())
 			m.Hub[name] = 0
 			m.Authority[name] = 0
 		}
