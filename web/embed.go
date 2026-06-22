@@ -40,7 +40,11 @@ var funcs = template.FuncMap{
 	"regionLabel": regionLabel,
 	"epicArgs":    epicArgs,
 	"priorities":  priorities,
+	"beadTypes":   func() []string { return beadTypes },
 }
+
+// beadTypes are the issue types the create form offers, matching bd's --type.
+var beadTypes = []string{"task", "bug", "feature", "epic"}
 
 // maxPri is the highest bd priority (P0 is most urgent). One source for both the
 // clamp and the dropdown so the range can't drift.

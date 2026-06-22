@@ -11,13 +11,14 @@ import (
 
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/forest"
+	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/internal/server"
 	"github.com/dkoosis/strand/web"
 )
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:7777", "address to listen on")
-	dir := flag.String("dir", "", "beads workspace directory (default: current directory)")
+	dir := flag.String("dir", "", "seed this beads workspace into the registry and make it active")
 	bin := flag.String("bd", "bd", "path to the bd binary")
 	northStar := flag.String("northstar", "", "north-star line shown above the forest")
 	flag.Parse()
@@ -27,10 +28,26 @@ func main() {
 		log.Fatalf("strand: parse templates: %v", err)
 	}
 
-	client := &bd.Client{Dir: *dir, Bin: *bin}
-	project := projectLabel(*dir)
-	syn := forest.Synthesis{Project: project, NorthStar: *northStar}
-	srv := server.New(client, tmpl, web.Static(), syn)
+	reg, err := registry.Open(registry.ConfigPath(), registry.ScanRoot())
+	if err != nil {
+		log.Fatalf("strand: open registry: %v", err)
+	}
+	// -dir seeds and activates an explicit workspace (handy for a repo outside
+	// the ~/Projects scan); a current-directory .beads is the bare-launch default.
+	if seed := seedDir(*dir); seed != "" {
+		if _, err := reg.Add(seed); err != nil {
+			log.Printf("strand: seed %s: %v", seed, err)
+		}
+	}
+
+	// srcFor scopes a fresh bd client to the active repo's path, so switching the
+	// active repo re-scopes every read and write (spec D3).
+	bdBin := *bin
+	srcFor := func(repo registry.Repo) server.IssueSource {
+		return &bd.Client{Dir: repo.Path, Bin: bdBin}
+	}
+	syn := forest.Synthesis{NorthStar: *northStar}
+	srv := server.New(srcFor, reg, tmpl, web.Static(), syn)
 
 	httpSrv := &http.Server{
 		Addr:              *addr,
@@ -41,21 +58,25 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	log.Printf("strand: serving http://%s (beads dir: %s)", *addr, project)
+	log.Printf("strand: serving http://%s", *addr)
 	if err := httpSrv.ListenAndServe(); err != nil {
 		log.Fatalf("strand: %v", err)
 	}
 }
 
-// projectLabel names the forest region: the workspace directory's base name, or
-// the current directory's when -dir is unset.
-func projectLabel(dir string) string {
-	if dir == "" {
-		if wd, err := os.Getwd(); err == nil {
-			dir = wd
-		} else {
-			return "."
-		}
+// seedDir resolves the workspace to seed at launch: the -dir flag if set, else
+// the current directory when it holds a .beads workspace, else nothing (the user
+// picks a repo from the selector). registry.Add validates the .beads itself.
+func seedDir(dir string) string {
+	if dir != "" {
+		return dir
 	}
-	return filepath.Base(dir)
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	if _, err := os.Stat(filepath.Join(wd, ".beads")); err != nil {
+		return ""
+	}
+	return wd
 }

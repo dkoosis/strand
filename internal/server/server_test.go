@@ -12,6 +12,7 @@ import (
 
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/forest"
+	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/web"
 )
 
@@ -24,6 +25,7 @@ var errMarshal = errors.New("json: unsupported type")
 type stubBD struct {
 	issues   []bd.Issue
 	show     map[string]*bd.Issue
+	comments map[string][]bd.Comment
 	listErr  error
 	showErr  error
 	writeErr error // when set, every write fails with it; the show map stays put
@@ -38,6 +40,61 @@ func (s *stubBD) Show(_ context.Context, id string) (*bd.Issue, error) {
 		return nil, s.showErr
 	}
 	return s.show[id], nil
+}
+
+func (s *stubBD) Comments(_ context.Context, id string) ([]bd.Comment, error) {
+	return s.comments[id], nil
+}
+
+// Comment appends to the in-memory thread so the drawer's re-read shows it; an
+// empty text fails like bd's validation does, and writeErr models a bd outage.
+func (s *stubBD) Comment(_ context.Context, id, text string) error {
+	if s.writeErr != nil {
+		return s.writeErr
+	}
+	if text == "" {
+		return bd.ErrEmptyText
+	}
+	if s.comments == nil {
+		s.comments = map[string][]bd.Comment{}
+	}
+	s.comments[id] = append(s.comments[id], bd.Comment{IssueID: id, Author: "me", Text: text})
+	return nil
+}
+
+// Create mints a bead with a fixed id and stores it so the post-create drawer
+// re-read finds it; an empty title fails like bd's validation does.
+func (s *stubBD) Create(_ context.Context, opts bd.CreateOpts) (*bd.Issue, error) {
+	if s.writeErr != nil {
+		return nil, s.writeErr
+	}
+	if opts.Title == "" {
+		return nil, bd.ErrEmptyTitle
+	}
+	iss := &bd.Issue{ID: "demo-new", Title: opts.Title, IssueType: opts.Type, Status: "open"}
+	if opts.Priority != nil {
+		iss.Priority = *opts.Priority
+	}
+	if s.show == nil {
+		s.show = map[string]*bd.Issue{}
+	}
+	s.show[iss.ID] = iss
+	return iss, nil
+}
+
+func (s *stubBD) DeletePreview(_ context.Context, id string) (string, error) {
+	if s.showErr != nil {
+		return "", s.showErr
+	}
+	return "DELETE PREVIEW\n  " + id, nil
+}
+
+func (s *stubBD) Delete(_ context.Context, id string) error {
+	if s.writeErr != nil {
+		return s.writeErr
+	}
+	delete(s.show, id)
+	return nil
 }
 
 // The write methods mutate the in-memory show map so the handler's re-read
@@ -81,13 +138,21 @@ func (s *stubBD) Close(_ context.Context, id, _ string) (*bd.Issue, error) {
 	return s.show[id], nil
 }
 
-func newTestServer(t *testing.T, src issueSource) *Server {
+// demoRepo is the active repo every test server scopes to; its name labels the
+// forest region the way the active repo's name does in production.
+var demoRepo = registry.Repo{Name: "demo", Path: "/demo"}
+
+// newTestServer wires a server whose only repo is demoRepo, so srcFor always
+// hands back the one stub regardless of the (single) active repo.
+func newTestServer(t *testing.T, src IssueSource) *Server {
 	t.Helper()
 	tmpl, err := web.Templates()
 	if err != nil {
 		t.Fatalf("parse templates: %v", err)
 	}
-	return New(src, tmpl, web.Static(), forest.Synthesis{Project: "demo", NorthStar: "remember across sessions"})
+	reg := registry.InMemory(demoRepo)
+	srcFor := func(registry.Repo) IssueSource { return src }
+	return New(srcFor, reg, tmpl, web.Static(), forest.Synthesis{NorthStar: "remember across sessions"})
 }
 
 func do(t *testing.T, srv *Server, path string) *httptest.ResponseRecorder {
@@ -270,6 +335,129 @@ func TestWriteErrorIsHonest(t *testing.T) {
 	}
 	if !strings.Contains(body, bd.ErrBD.Error()) {
 		t.Errorf("drawer hides bd's error message:\n%s", body)
+	}
+}
+
+// TestDrawerShowsComments: the drawer renders the issue's comment thread.
+func TestDrawerShowsComments(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	stub.comments = map[string][]bd.Comment{"demo-x": {{Author: "ada", Text: "first note"}}}
+	srv := newTestServer(t, stub)
+	rec := do(t, srv, "/bead/demo-x")
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "ada") || !strings.Contains(body, "first note") {
+		t.Errorf("drawer missing the comment:\n%s", body)
+	}
+}
+
+// TestAddCommentReflects: a posted comment shows on the redrawn drawer, because
+// the re-read picked it up — the honest-write contract, applied to comments.
+func TestAddCommentReflects(t *testing.T) {
+	srv := newTestServer(t, oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"}))
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/comment", "text=looks+good")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST comment = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "looks good") {
+		t.Errorf("drawer missing the new comment:\n%s", rec.Body.String())
+	}
+}
+
+// TestAddEmptyCommentIsHonest: an empty comment surfaces bd's error and the
+// drawer still shows the bead, never claiming a comment that wasn't recorded.
+func TestAddEmptyCommentIsHonest(t *testing.T) {
+	srv := newTestServer(t, oneBead(&bd.Issue{ID: "demo-x", Title: "Keep me", Status: "open", IssueType: "task"}))
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/comment", "text=")
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "Keep me") {
+		t.Errorf("drawer dropped the bead on a failed comment:\n%s", body)
+	}
+	if !strings.Contains(body, bd.ErrEmptyText.Error()) {
+		t.Errorf("drawer hides the empty-comment error:\n%s", body)
+	}
+}
+
+// TestCreateFormRenders: the new-bead form opens with the type options.
+func TestCreateFormRenders(t *testing.T) {
+	srv := newTestServer(t, &stubBD{})
+	rec := do(t, srv, "/new")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /new = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `hx-post="/new"`) {
+		t.Errorf("create form missing its post target:\n%s", rec.Body.String())
+	}
+}
+
+// TestCreateReflects: a valid create shows the new bead's drawer and fires
+// refreshList so the list pane picks up the addition.
+func TestCreateReflects(t *testing.T) {
+	srv := newTestServer(t, &stubBD{show: map[string]*bd.Issue{}})
+	rec := send(t, srv, http.MethodPost, "/new", "title=Fresh+bead&type=task&priority=2")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /new = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Fresh bead") {
+		t.Errorf("drawer missing the created bead:\n%s", rec.Body.String())
+	}
+	if rec.Header().Get("HX-Trigger") != "refreshList" {
+		t.Errorf("create did not fire refreshList, got %q", rec.Header().Get("HX-Trigger"))
+	}
+}
+
+// TestCreateEmptyTitleIsHonest: a titleless create re-renders the form with bd's
+// error, not a half-made bead.
+func TestCreateEmptyTitleIsHonest(t *testing.T) {
+	srv := newTestServer(t, &stubBD{})
+	rec := send(t, srv, http.MethodPost, "/new", "title=&type=task&priority=2")
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `hx-post="/new"`) {
+		t.Errorf("failed create did not re-render the form:\n%s", body)
+	}
+	if !strings.Contains(body, bd.ErrEmptyTitle.Error()) {
+		t.Errorf("form hides the empty-title error:\n%s", body)
+	}
+}
+
+// TestDeletePreviewConfirms: the delete button shows bd's preview and a confirm
+// control, and destroys nothing yet.
+func TestDeletePreviewConfirms(t *testing.T) {
+	srv := newTestServer(t, oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"}))
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/delete", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST delete preview = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "DELETE PREVIEW") {
+		t.Errorf("confirm panel missing bd's preview:\n%s", body)
+	}
+	if !strings.Contains(body, `hx-delete="/bead/demo-x"`) {
+		t.Errorf("confirm panel missing the commit control:\n%s", body)
+	}
+}
+
+// TestDeleteRemoves: confirming the delete commits it and fires refreshList so
+// the gone bead leaves the list.
+func TestDeleteRemoves(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodDelete, "/bead/demo-x", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE /bead = %d, want 200", rec.Code)
+	}
+	if rec.Header().Get("HX-Trigger") != "refreshList" {
+		t.Errorf("delete did not fire refreshList, got %q", rec.Header().Get("HX-Trigger"))
+	}
+	if _, ok := stub.show["demo-x"]; ok {
+		t.Error("bead survived a confirmed delete")
 	}
 }
 

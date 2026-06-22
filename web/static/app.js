@@ -33,6 +33,20 @@ document.addEventListener("mouseover", (e) => {
 });
 document.querySelector(".treemap")?.addEventListener("mouseleave", idleHint);
 
+// ---- repo selector ----
+// The header button loads the menu fragment into #repoMenu over htmx; show it
+// once the fragment lands and dismiss it on an outside click. Picking a repo
+// responds with HX-Refresh, so the whole page reloads and the menu goes with it.
+const repoMenu = document.getElementById("repoMenu");
+document.body.addEventListener("htmx:afterSwap", (e) => {
+  if (e.detail.target.id === "repoMenu") repoMenu?.classList.add("show");
+});
+document.addEventListener("click", (e) => {
+  if (!repoMenu?.classList.contains("show")) return;
+  if (e.target.closest(".repo-wrap")) return; // clicks inside keep it open
+  repoMenu.classList.remove("show");
+});
+
 // ---- detail drawer ----
 const scrim = document.getElementById("scrim");
 const drawer = document.getElementById("drawer");

@@ -164,6 +164,47 @@ func TestCommentEmptyTextRejected(t *testing.T) {
 	}
 }
 
+func TestCommentsReadsThread(t *testing.T) {
+	c, log := fakeBD(t, `echo '[{"id":"c1","issue_id":"x-5","author":"ada","text":"hi"}]'`)
+	cs, err := c.Comments(context.Background(), "x-5")
+	if err != nil {
+		t.Fatalf("Comments: %v", err)
+	}
+	if len(cs) != 1 || cs[0].Author != "ada" || cs[0].Text != "hi" {
+		t.Fatalf("parsed comments = %+v, want one from ada", cs)
+	}
+	if line := readLog(t, log)[0]; !strings.Contains(line, "comments") || !strings.Contains(line, "x-5") || !strings.Contains(line, "--json") {
+		t.Errorf("args %q missing comments/id/--json", line)
+	}
+}
+
+func TestCommentsEmptyIsNotError(t *testing.T) {
+	c, _ := fakeBD(t, `echo '[]'`)
+	cs, err := c.Comments(context.Background(), "x-5")
+	if err != nil || cs != nil {
+		t.Fatalf("Comments empty = (%v, %v), want (nil, nil)", cs, err)
+	}
+}
+
+// DeletePreview runs bd's bare delete (no --force) and returns its text.
+func TestDeletePreviewIsBareAndDestroysNothing(t *testing.T) {
+	c, log := fakeBD(t, `echo 'DELETE PREVIEW: x-4'`)
+	out, err := c.DeletePreview(context.Background(), "x-4")
+	if err != nil {
+		t.Fatalf("DeletePreview: %v", err)
+	}
+	if !strings.Contains(out, "DELETE PREVIEW") {
+		t.Errorf("preview text = %q, want bd's preview", out)
+	}
+	line := readLog(t, log)[0]
+	if !strings.Contains(line, "delete") || !strings.Contains(line, "x-4") {
+		t.Errorf("args %q missing delete/id", line)
+	}
+	if strings.Contains(line, "--force") {
+		t.Errorf("preview must not pass --force, got %q", line)
+	}
+}
+
 // bd's error-object output (a JSON {"error":...}) must surface as a Go error,
 // not be swallowed as a successful no-op.
 func TestWriteSurfacesBdError(t *testing.T) {
