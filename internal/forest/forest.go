@@ -75,27 +75,27 @@ func Build(issues []bd.Issue, syn Synthesis) Forest {
 		byID[issues[i].ID] = issues[i]
 	}
 
-	// Group every live issue under its top-level ancestor (the story/epic).
+	// Group every live issue under its top-level ancestor (the story/epic),
+	// counting in-progress work in the same pass.
 	groups := make(map[string][]bd.Issue)
+	inProgress := 0
 	for i := range issues {
 		if !openish(issues[i].Status) {
 			continue
+		}
+		if issues[i].Status == "in_progress" {
+			inProgress++
 		}
 		root := rootOf(issues[i].ID, byID)
 		groups[root] = append(groups[root], issues[i])
 	}
 
-	f := Forest{NorthStar: syn.NorthStar}
+	f := Forest{NorthStar: syn.NorthStar, InProgress: inProgress}
 	epics := make([]Epic, 0, len(groups))
 	for rootID, members := range groups {
 		e := buildEpic(rootID, members, byID)
 		epics = append(epics, e)
 		f.Open += e.Open
-		for _, b := range e.Beads {
-			if b.Status == "in_progress" {
-				f.InProgress++
-			}
-		}
 	}
 	// Largest epics first: stable, weight-ordered, ties broken by id for a
 	// deterministic layout across requests.
@@ -124,9 +124,14 @@ func Build(issues []bd.Issue, syn Synthesis) Forest {
 // rootOf walks the parent chain to the top-level ancestor id. A missing or empty
 // parent (or a cycle hitting a seen id) stops the walk.
 func rootOf(id string, byID map[string]bd.Issue) string {
-	seen := map[string]bool{}
+	is, ok := byID[id]
+	if !ok || is.Parent == "" {
+		return id // common case: top-level or standalone, no map alloc
+	}
+	seen := map[string]bool{id: true}
+	id = is.Parent
 	for {
-		is, ok := byID[id]
+		is, ok = byID[id]
 		if !ok || is.Parent == "" || seen[id] {
 			return id
 		}
@@ -144,6 +149,7 @@ func buildEpic(rootID string, members []bd.Issue, byID map[string]bd.Issue) Epic
 	} else {
 		e.Name = rootID
 	}
+	e.Beads = make([]Bead, 0, len(members))
 	for i := range members {
 		if members[i].Priority <= 1 {
 			e.Flag = true

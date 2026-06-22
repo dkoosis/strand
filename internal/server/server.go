@@ -4,6 +4,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -127,12 +128,16 @@ func (s *Server) buildForest(ctx context.Context) (forest.Forest, error) {
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
-		// A template error mid-write can't change an already-sent status; log it
-		// so a broken template surfaces instead of failing silently.
+	// Render into a buffer first so a template failure becomes a clean 500
+	// instead of a 200 with a half-written body.
+	var buf bytes.Buffer
+	if err := s.tmpl.ExecuteTemplate(&buf, name, data); err != nil {
 		log.Printf("strand: render %q: %v", name, err)
+		s.renderError(w, err)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = buf.WriteTo(w)
 }
 
 // renderError sends an HTML error fragment with the status mapped from the bd
