@@ -56,6 +56,7 @@ type Issue struct {
 	Status          string    `json:"status"`
 	Priority        int       `json:"priority"`
 	IssueType       string    `json:"issue_type"`
+	Parent          string    `json:"parent,omitempty"`
 	Description     string    `json:"description,omitempty"`
 	Design          string    `json:"design,omitempty"`
 	Assignee        string    `json:"assignee,omitempty"`

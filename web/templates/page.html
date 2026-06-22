@@ -1,0 +1,62 @@
+{{define "page"}}<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>strand · the forest</title>
+<link rel="preconnect" href="https://fonts.bunny.net">
+<link href="https://fonts.bunny.net/css?family=geist:400,500,600,700|geist-mono:400,500" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/vendor/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header>
+  <span class="brand">strand</span>
+  <button class="repo" type="button"><span>{{.Forest.Regions | regionLabel}}</span><span class="caret">▾</span></button>
+  <span class="spacer"></span>
+  <button class="icon-btn" id="theme" type="button" title="Toggle theme">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></svg>
+  </button>
+</header>
+
+{{if .Forest.NorthStar}}
+<div class="masthead">
+  <div class="ns-left">
+    <div class="ns-label">North star</div>
+    <div class="northstar">{{.Forest.NorthStar}}</div>
+  </div>
+  <div class="ns-meta">
+    <span><b class="tnum">{{len .Forest.Regions}}</b> region{{if ne (len .Forest.Regions) 1}}s{{end}}</span>
+    <span><b class="tnum">{{.Forest.Open}}</b> open · <b class="tnum">{{.Forest.InProgress}}</b> in progress</span>
+  </div>
+</div>
+{{end}}
+
+<div class="split">
+  <section class="nav-pane">
+    <div class="pane-head">
+      <span class="pane-title">The forest</span>
+      <button class="groupby" type="button" aria-disabled="true" title="future: pivot the grouping — module · release · person">
+        group by <span class="k">module</span><span class="caret">▾</span>
+      </button>
+    </div>
+    <div class="hintbar idle" id="hintbar"><div class="hint-name">Hover a tile</div><div class="hint-meta"></div></div>
+    <div class="tmwrap">{{template "treemap" .Forest}}</div>
+  </section>
+
+  <section class="list-pane">
+    <div id="listPane">{{template "list" .List}}</div>
+  </section>
+</div>
+
+<footer>
+  <span><b>Pick a region or tile</b> → its beads list right</span>
+  <span><b>Click a bead</b> → detail</span>
+  <span style="margin-left:auto">forest landing · model A · tiles sized by live open beads · §1a/§4a</span>
+</footer>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer"></aside>
+</body>
+</html>{{end}}
