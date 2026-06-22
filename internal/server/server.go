@@ -11,6 +11,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -86,8 +87,10 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleForest)
 	mux.HandleFunc("GET /list", s.handleList)
+	mux.HandleFunc("GET /board", s.handleBoard)
 	mux.HandleFunc("GET /bead/{id}", s.handleBead)
 	mux.HandleFunc("PATCH /bead/{id}", s.handleEdit)
+	mux.HandleFunc("POST /bead/{id}/move", s.handleMove)
 	mux.HandleFunc("POST /bead/{id}/claim", s.handleClaim)
 	mux.HandleFunc("POST /bead/{id}/close", s.handleClose)
 	mux.HandleFunc("POST /bead/{id}/reopen", s.handleReopen)
@@ -177,6 +180,175 @@ func listViewFor(f forest.Forest, epicID string) listView {
 		}
 	}
 	return view
+}
+
+// pivotField is one kanban axis: its name (the bd field a drop writes), the
+// canonical ordered columns that always exist as drop targets, and how to read a
+// bead's value for it. Co-locating all three means a new pivot is added in one
+// place, not spread across a name list, a seed map, and a value switch.
+type pivotField struct {
+	Name  string
+	Seeds []boardColumn
+	value func(*forest.Bead) string
+}
+
+// pivotFields are the fields the kanban can pivot on, in pivot-bar order (the
+// first is the default). Type is omitted: bd has no `update --type`, so a type
+// column couldn't accept a drag. The seeds give canonical, ordered columns so
+// empty drop targets exist (e.g. an empty "in progress" to drag into); values bd
+// reports that aren't seeded (a named assignee) are appended. The assignee
+// "unassigned" column writes an empty value — dropping there clears the field.
+var pivotFields = []pivotField{
+	{"status", []boardColumn{{Key: "open", Label: "open"}, {Key: "in_progress", Label: "in progress"}, {Key: "blocked", Label: "blocked"}, {Key: "closed", Label: "closed"}}, func(b *forest.Bead) string { return b.Status }},
+	{"priority", []boardColumn{{Key: "0", Label: "P0"}, {Key: "1", Label: "P1"}, {Key: "2", Label: "P2"}, {Key: "3", Label: "P3"}, {Key: "4", Label: "P4"}}, func(b *forest.Bead) string { return strconv.Itoa(b.Priority) }},
+	{"assignee", []boardColumn{{Key: "", Label: "unassigned"}}, func(b *forest.Bead) string { return b.Assignee }},
+}
+
+// boardPivots is the pivot bar's name order, derived from pivotFields so the two
+// can't drift. The first name is the default pivot.
+var boardPivots = pivotNames()
+
+func pivotNames() []string {
+	names := make([]string, len(pivotFields))
+	for i := range pivotFields {
+		names[i] = pivotFields[i].Name
+	}
+	return names
+}
+
+// boardView is the kanban render: the same scope the table shows (a region or one
+// epic, embedded so the head reuses the list's scope markup), pivoted into columns
+// by Pivot. Pivots drives the pivot bar.
+type boardView struct {
+	listView
+	Pivot   string
+	Pivots  []string
+	Columns []boardColumn
+}
+
+// boardColumn is one kanban column: Key is the field value a drop writes (e.g.
+// "in_progress", "2", or "" to clear an assignee); Label is its caption.
+type boardColumn struct {
+	Key   string
+	Label string
+	Beads []forest.Bead
+}
+
+func (s *Server) handleBoard(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := reqContext(r)
+	defer cancel()
+	src, repo, ok := s.source()
+	if !ok {
+		s.render(w, "board", boardView{Pivots: boardPivots, Pivot: boardPivots[0]})
+		return
+	}
+	f, err := s.buildForest(ctx, src, repo)
+	if err != nil {
+		s.renderError(w, err)
+		return
+	}
+	view := listViewFor(f, r.URL.Query().Get("epic"))
+	s.render(w, "board", buildBoard(&view, r.URL.Query().Get("pivot")))
+}
+
+// buildBoard pivots the scope's beads into columns. Both the whole-region and
+// single-epic scopes flow through here, so the board can't diverge from the table.
+func buildBoard(v *listView, pivot string) boardView {
+	pivot = pivotOrDefault(pivot)
+	return boardView{
+		listView: *v,
+		Pivot:    pivot,
+		Pivots:   boardPivots,
+		Columns:  boardColumns(pivot, scopeBeads(v)),
+	}
+}
+
+// scopeBeads flattens the view's beads: one epic's, or every epic's in the region.
+func scopeBeads(v *listView) []forest.Bead {
+	if v.HasEpic {
+		return v.Epic.Beads
+	}
+	total := 0
+	for i := range v.Region.Epics {
+		total += len(v.Region.Epics[i].Beads)
+	}
+	all := make([]forest.Bead, 0, total)
+	for i := range v.Region.Epics {
+		all = append(all, v.Region.Epics[i].Beads...)
+	}
+	return all
+}
+
+// pivotOrDefault clamps an arbitrary query value to a known pivot, defaulting to
+// the first so a bad ?pivot= never yields an empty board.
+func pivotOrDefault(p string) string {
+	if slices.Contains(boardPivots, p) {
+		return p
+	}
+	return boardPivots[0]
+}
+
+// boardColumns buckets beads into the pivot's columns: the seeded columns first
+// (in order), then any unseeded value bd reports, appended. Every bead lands in
+// exactly one column. pivot must be a known field (callers pass pivotOrDefault).
+func boardColumns(pivot string, beads []forest.Bead) []boardColumn {
+	field := pivotByName(pivot)
+	cols := append([]boardColumn(nil), field.Seeds...)
+	idx := make(map[string]int, len(cols))
+	for i := range cols {
+		idx[cols[i].Key] = i
+	}
+	for i := range beads {
+		key := field.value(&beads[i])
+		col, ok := idx[key]
+		if !ok {
+			col = len(cols)
+			cols = append(cols, boardColumn{Key: key, Label: key})
+			idx[key] = col
+		}
+		cols[col].Beads = append(cols[col].Beads, beads[i])
+	}
+	return cols
+}
+
+// pivotByName returns the field for a known pivot name. Callers gate on
+// pivotOrDefault, so an unknown name (only from a bad caller) falls back to the
+// first field rather than a zero value with a nil reader.
+func pivotByName(name string) pivotField {
+	for i := range pivotFields {
+		if pivotFields[i].Name == name {
+			return pivotFields[i]
+		}
+	}
+	return pivotFields[0]
+}
+
+// handleMove writes the pivot field of a dragged card (SortableJS onEnd posts
+// field+value) through the same Update path the drawer edits use, then returns the
+// refreshed card so the board shows bd's truth. A write error renders the error
+// fragment at a non-2xx status, which the client reads as the signal to revert the
+// card to its old column (spec R0 V2: optimistic move, revert on error).
+func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := reqContext(r)
+	defer cancel()
+	src, _, ok := s.source()
+	if !ok {
+		s.renderError(w, errNoRepo)
+		return
+	}
+	id := r.PathValue("id")
+	issue, err := src.Update(ctx, id, r.FormValue("field"), r.FormValue("value"))
+	if err != nil {
+		s.renderError(w, wrapWrite("move", err))
+		return
+	}
+	if issue == nil { // bd wrote silently; re-read so the card reflects the change
+		if issue, err = src.Show(ctx, id); err != nil {
+			s.renderError(w, err)
+			return
+		}
+	}
+	s.render(w, "boardCard", forest.NewBead(issue))
 }
 
 // drawerData is the detail panel: a bead, its comments, and an optional write

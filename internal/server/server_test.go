@@ -29,6 +29,9 @@ type stubBD struct {
 	listErr  error
 	showErr  error
 	writeErr error // when set, every write fails with it; the show map stays put
+
+	lastField string // the field/value of the most recent Update — lets the board
+	lastValue string // move test assert it issued the right bd update.
 }
 
 func (s *stubBD) List(context.Context, ...string) ([]bd.Issue, error) {
@@ -103,6 +106,7 @@ func (s *stubBD) Delete(_ context.Context, id string) error {
 // returns the old value and the handler must surface the error, not the change.
 
 func (s *stubBD) Update(_ context.Context, id, field, value string) (*bd.Issue, error) {
+	s.lastField, s.lastValue = field, value
 	if s.writeErr != nil {
 		return nil, s.writeErr
 	}
@@ -225,6 +229,104 @@ func TestListFragmentNarrowsToEpic(t *testing.T) {
 	}
 	if !strings.Contains(body, `hx-get="/bead/demo-e1.a"`) {
 		t.Error("bead row missing drawer wiring")
+	}
+}
+
+// TestBoardRendersColumns: the kanban defaults to a status pivot, drawing the
+// canonical columns as drop targets and a draggable card per bead, wired for the
+// move POST and the drawer drill.
+func TestBoardRendersColumns(t *testing.T) {
+	srv := newTestServer(t, &stubBD{issues: sampleIssues})
+	rec := do(t, srv, "/board")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /board = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`class="board"`,
+		`data-pivot="status"`,
+		`data-value="open"`,        // seeded column
+		`data-value="in_progress"`, // demo-e1.b lives here
+		`data-value="closed"`,      // empty drop target still rendered
+		`class="bcard" data-id="demo-e1.a"`,
+		"Wire the thing",
+		`hx-get="/board?pivot=priority"`, // pivot bar switches the field
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("board missing %q", want)
+		}
+	}
+}
+
+// TestBoardPivotPriority: switching the pivot to priority lays the beads out in
+// P0..P4 columns whose drop values are the bare priority numbers.
+func TestBoardPivotPriority(t *testing.T) {
+	srv := newTestServer(t, &stubBD{issues: sampleIssues})
+	rec := do(t, srv, "/board?pivot=priority")
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-pivot="priority"`) {
+		t.Errorf("board did not pivot on priority:\n%s", body)
+	}
+	for _, want := range []string{`data-value="0"`, `data-value="2"`, `data-value="4"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("priority board missing column %q", want)
+		}
+	}
+}
+
+// TestBoardScopedToEpic: the epic param narrows the board to one epic's beads,
+// like the table view does.
+func TestBoardScopedToEpic(t *testing.T) {
+	srv := newTestServer(t, &stubBD{issues: sampleIssues})
+	rec := do(t, srv, "/board?epic=demo-e1")
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "Wire the thing") || !strings.Contains(body, "Test the thing") {
+		t.Errorf("epic board missing its beads:\n%s", body)
+	}
+	if strings.Contains(body, "Lone task") {
+		t.Error("epic board leaked a bead from another epic")
+	}
+}
+
+// TestBoardMoveUpdates: a column move issues the matching bd update and returns
+// the refreshed card showing bd's truth (spec Q0).
+func TestBoardMoveUpdates(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/move", "field=status&value=in_progress")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST move = %d, want 200", rec.Code)
+	}
+	if stub.lastField != "status" || stub.lastValue != "in_progress" {
+		t.Errorf("move issued update(%q,%q), want (status,in_progress)", stub.lastField, stub.lastValue)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `class="bcard"`) {
+		t.Errorf("move did not return a card:\n%s", body)
+	}
+	if !strings.Contains(body, "dot in_progress") {
+		t.Errorf("returned card does not show the new status:\n%s", body)
+	}
+}
+
+// TestBoardMoveErrorReverts: when bd rejects the move, the handler returns a
+// non-2xx so the client reverts the optimistic drop, with bd's message in the
+// error fragment.
+func TestBoardMoveErrorReverts(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	stub.writeErr = fmt.Errorf("bd update demo-x: %w", bd.ErrBD)
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/move", "field=status&value=in_progress")
+
+	if rec.Code == http.StatusOK {
+		t.Fatalf("rejected move returned 200; client would not revert")
+	}
+	if !strings.Contains(rec.Body.String(), "error-fragment") {
+		t.Errorf("rejected move missing the error fragment:\n%s", rec.Body.String())
 	}
 }
 

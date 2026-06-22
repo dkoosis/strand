@@ -21,6 +21,21 @@ type Bead struct {
 	Status   string
 	Priority int
 	Type     string
+	Assignee string
+}
+
+// NewBead projects a bd.Issue onto the render-facing Bead — the one place that
+// maps bd's field names (IssueType) to the view's, so the epic roll-up and the
+// board's single-card refresh can't drift.
+func NewBead(i *bd.Issue) Bead {
+	return Bead{
+		ID:       i.ID,
+		Title:    i.Title,
+		Status:   i.Status,
+		Priority: i.Priority,
+		Type:     i.IssueType,
+		Assignee: i.Assignee,
+	}
 }
 
 // Epic is a story tile: a root issue plus its open descendants. Open is the tile
@@ -154,13 +169,7 @@ func buildEpic(rootID string, members []bd.Issue, byID map[string]bd.Issue) Epic
 		if members[i].Priority <= 1 {
 			e.Flag = true
 		}
-		e.Beads = append(e.Beads, Bead{
-			ID:       members[i].ID,
-			Title:    members[i].Title,
-			Status:   members[i].Status,
-			Priority: members[i].Priority,
-			Type:     members[i].IssueType,
-		})
+		e.Beads = append(e.Beads, NewBead(&members[i]))
 	}
 	sort.SliceStable(e.Beads, func(a, b int) bool {
 		if e.Beads[a].Priority != e.Beads[b].Priority {

@@ -238,6 +238,56 @@ tbody tr:hover td { background: var(--bg-2); }
 .dot.blocked { background: var(--st-blocked); }
 .empty { padding: var(--s-8) var(--s-6); color: var(--ink-3); }
 
+/* ============================================================ view toggle (table | board) */
+.view-toggle { margin-left: auto; display: inline-flex; gap: 2px; padding: 2px; background: var(--bg-2); border-radius: 7px; }
+.vt {
+  font: inherit; font-size: var(--fs-9); font-weight: 500; padding: var(--s-2) var(--s-4);
+  border: 0; border-radius: 5px; background: none; color: var(--ink-3); cursor: pointer;
+}
+.vt:hover { color: var(--ink); }
+.vt.active { background: var(--bg-1); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); cursor: default; }
+.lp-stat { margin-left: var(--s-6); }
+
+/* ============================================================ kanban board */
+.board-bar {
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: var(--s-3) var(--s-6); border-bottom: 1px solid var(--line); flex: 0 0 auto;
+}
+.bb-label { font-size: var(--fs-9); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-4); margin-right: var(--s-3); }
+.bb-pivot {
+  font: inherit; font-size: var(--fs-8); padding: var(--s-1) var(--s-4);
+  border: 1px solid var(--line-2); border-radius: 6px; background: var(--bg); color: var(--ink-3); cursor: pointer;
+}
+.bb-pivot:hover { color: var(--ink); border-color: var(--st-open); }
+.bb-pivot.active { background: var(--sel); color: var(--ink); border-color: var(--st-open); }
+.board-err {
+  margin: var(--s-4) var(--s-6) 0; padding: var(--s-3) var(--s-4); border-radius: 6px;
+  background: color-mix(in srgb, var(--st-blocked) 12%, transparent); color: var(--st-blocked); font-size: var(--fs-8);
+}
+.board { flex: 1; display: flex; gap: var(--s-4); padding: var(--s-5) var(--s-6); overflow-x: auto; overflow-y: hidden; min-height: 0; }
+.bcol {
+  display: flex; flex-direction: column; min-width: 200px; flex: 1 1 0;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; min-height: 0;
+}
+.bcol-head {
+  display: flex; align-items: baseline; gap: var(--s-3); flex: 0 0 auto;
+  padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--line);
+  font-size: var(--fs-9); letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); font-weight: 600;
+}
+.bc-ct { margin-left: auto; color: var(--ink-2); }
+.bcol-body { flex: 1; overflow-y: auto; min-height: 40px; padding: var(--s-3); display: flex; flex-direction: column; gap: var(--s-3); }
+.bcard {
+  background: var(--card); border: 1px solid var(--line-2); border-radius: 7px;
+  padding: var(--s-3) var(--s-4); cursor: grab; transition: border-color .1s;
+}
+.bcard:hover { border-color: var(--st-open); }
+.bcard:active { cursor: grabbing; }
+.bc-title { font-size: var(--fs-base); font-weight: 500; color: var(--ink); line-height: 1.3; margin-bottom: var(--s-3); }
+.bc-foot { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; }
+.bc-id { font-size: var(--fs-9); color: var(--ink-4); }
+.bc-asg { font-size: var(--fs-9); color: var(--ink-3); margin-left: auto; }
+.card-ghost { opacity: .4; border-style: dashed; }
+
 /* ============================================================ bead detail drawer */
 .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.38); opacity: 0; pointer-events: none; transition: opacity .16s; z-index: 8; }
 .scrim.show { opacity: 1; pointer-events: auto; }
