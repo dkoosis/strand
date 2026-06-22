@@ -39,7 +39,20 @@ var funcs = template.FuncMap{
 	"cleanName":   cleanName,
 	"regionLabel": regionLabel,
 	"epicArgs":    epicArgs,
-	"priorities":  func() []int { return []int{0, 1, 2, 3, 4} },
+	"priorities":  priorities,
+}
+
+// maxPri is the highest bd priority (P0 is most urgent). One source for both the
+// clamp and the dropdown so the range can't drift.
+const maxPri = 4
+
+// priorities lists the selectable priority levels 0..maxPri for the edit dropdown.
+func priorities() []int {
+	ps := make([]int, maxPri+1)
+	for i := range ps {
+		ps[i] = i
+	}
+	return ps
 }
 
 // regionLabel is the repo-button caption: the first region's name, or a dash
@@ -86,8 +99,8 @@ func clampPri(p int) int {
 	if p < 0 {
 		return 0
 	}
-	if p > 4 {
-		return 4
+	if p > maxPri {
+		return maxPri
 	}
 	return p
 }

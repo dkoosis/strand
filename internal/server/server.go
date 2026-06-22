@@ -142,18 +142,18 @@ func (s *Server) handleBead(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	field, value := r.FormValue("field"), r.FormValue("value")
-	s.writeAndRefresh(w, r, id, func(ctx context.Context) error {
-		_, err := s.src.Update(ctx, id, field, value)
-		return wrapWrite("edit", err)
+	s.writeAndRefresh(w, r, id, func(ctx context.Context) (*bd.Issue, error) {
+		iss, err := s.src.Update(ctx, id, field, value)
+		return iss, wrapWrite("edit", err)
 	})
 }
 
 // handleClaim assigns the bead to the current user.
 func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	s.writeAndRefresh(w, r, id, func(ctx context.Context) error {
-		_, err := s.src.Claim(ctx, id)
-		return wrapWrite("claim", err)
+	s.writeAndRefresh(w, r, id, func(ctx context.Context) (*bd.Issue, error) {
+		iss, err := s.src.Claim(ctx, id)
+		return iss, wrapWrite("claim", err)
 	})
 }
 
@@ -161,9 +161,9 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	reason := r.FormValue("reason")
-	s.writeAndRefresh(w, r, id, func(ctx context.Context) error {
-		_, err := s.src.Close(ctx, id, reason)
-		return wrapWrite("close", err)
+	s.writeAndRefresh(w, r, id, func(ctx context.Context) (*bd.Issue, error) {
+		iss, err := s.src.Close(ctx, id, reason)
+		return iss, wrapWrite("close", err)
 	})
 }
 
@@ -171,9 +171,9 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 // write-client; a status write does it (O7: status goes through update -s).
 func (s *Server) handleReopen(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	s.writeAndRefresh(w, r, id, func(ctx context.Context) error {
-		_, err := s.src.Update(ctx, id, "status", "open")
-		return wrapWrite("reopen", err)
+	s.writeAndRefresh(w, r, id, func(ctx context.Context) (*bd.Issue, error) {
+		iss, err := s.src.Update(ctx, id, "status", "open")
+		return iss, wrapWrite("reopen", err)
 	})
 }
 
@@ -186,19 +186,23 @@ func wrapWrite(action string, err error) error {
 	return fmt.Errorf("%s: %w", action, err)
 }
 
-// writeAndRefresh runs a write, then re-reads the bead and redraws the drawer, so
-// the panel always shows bd's truth — never an optimistic guess (spec Q2). A
-// write error is shown inside the drawer next to the unchanged, re-read values:
-// the user sees bd's message and the UI never claims a change that didn't land.
-// If the re-read itself fails, fall back to the hard error page.
-func (s *Server) writeAndRefresh(w http.ResponseWriter, r *http.Request, id string, write func(context.Context) error) {
+// writeAndRefresh runs a write and redraws the drawer from bd's truth — never an
+// optimistic guess (spec Q2). A successful write hands back the fresh issue, so
+// the common path needs no second read. On failure (or a silent write that
+// returned no issue) it re-reads, so the drawer shows the unchanged value next
+// to bd's error message; the UI never claims a change that didn't land. If that
+// re-read also fails, fall back to the hard error page.
+func (s *Server) writeAndRefresh(w http.ResponseWriter, r *http.Request, id string, write func(context.Context) (*bd.Issue, error)) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	writeErr := write(ctx)
-	issue, showErr := s.src.Show(ctx, id)
-	if showErr != nil {
-		s.renderError(w, showErr)
-		return
+	issue, writeErr := write(ctx)
+	if writeErr != nil || issue == nil {
+		fresh, showErr := s.src.Show(ctx, id)
+		if showErr != nil {
+			s.renderError(w, showErr)
+			return
+		}
+		issue = fresh
 	}
 	data := drawerData{Issue: issue}
 	if writeErr != nil {
@@ -218,7 +222,7 @@ func (s *Server) buildForest(ctx context.Context) (forest.Forest, error) {
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {
 	if err := s.renderStatus(w, name, data, http.StatusOK); err != nil {
-		log.Printf("strand: render %q: %v", name, err)
+		log.Printf("strand: %v", err)
 		s.renderError(w, err)
 	}
 }
