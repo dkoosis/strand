@@ -346,3 +346,6 @@ input.dr-title:focus { border-color: var(--st-open); outline: none; background: 
 
 footer { flex: 0 0 auto; padding: var(--s-3) var(--s-7); border-top: 1px solid var(--line); background: var(--bg-1); color: var(--ink-4); font-size: var(--fs-9); display: flex; gap: var(--s-6); }
 footer b { color: var(--ink-3); font-weight: 500; }
+.quit-btn { background: none; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-3); font-size: var(--fs-9); padding: 1px var(--s-3); cursor: pointer; }
+.quit-btn:hover { border-color: var(--st-blocked); color: var(--st-blocked); }
+.stopped { color: var(--st-blocked); }

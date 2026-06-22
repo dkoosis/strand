@@ -1,0 +1,8 @@
+go vet ./...
+golangci-lint run ./...
+cmd/strand/main.go:86:23: net.Listen must not be called. use (*net.ListenConfig).Listen (noctx)
+	ln, err := net.Listen("tcp", *addr)
+	                     ^
+1 issues:
+* noctx: 1
+make: *** [lint] Error 1

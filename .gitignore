@@ -14,3 +14,5 @@
 
 # Local session capture artifacts
 .claude/tmp/
+# bd worktrees (nested siblings: strand-4fj/, strand-alg.2/, …)
+/strand-*/

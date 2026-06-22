@@ -70,6 +70,7 @@
   <span><b>Pick a region or tile</b> → its beads list right</span>
   <span><b>Click a bead</b> → detail</span>
   <span style="margin-left:auto">forest landing · model A · tiles sized by live open beads · §1a/§4a</span>
+  <button class="quit-btn" type="button" hx-post="/shutdown" hx-swap="outerHTML">Quit strand</button>
 </footer>
 {{end}}
 
@@ -77,3 +78,5 @@
 <aside class="drawer" id="drawer"></aside>
 </body>
 </html>{{end}}
+
+{{define "shutdown"}}<span class="stopped">strand stopped — you can close this tab.</span>{{end}}

@@ -11,6 +11,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"time"
@@ -57,11 +58,22 @@ type SourceFunc func(registry.Repo) IssueSource
 // issue source. The active repo (and the known-repo registry) live in reg;
 // srcFor turns the active repo into the source each request reads through.
 type Server struct {
-	srcFor SourceFunc
-	reg    *registry.Registry
-	tmpl   *template.Template
-	static http.Handler
-	syn    forest.Synthesis
+	srcFor   SourceFunc
+	reg      *registry.Registry
+	tmpl     *template.Template
+	static   http.Handler
+	syn      forest.Synthesis
+	shutdown func() // raised by POST /shutdown; a test seam over the interrupt hook
+}
+
+// defaultShutdown raises os.Interrupt at strand's own process, so the Quit button
+// flows through the same graceful path Ctrl-C does (signal.NotifyContext →
+// httpSrv.Shutdown in main) rather than a hard exit. os.Interrupt keeps this
+// portable (no syscall import); main already listens for it. Tests replace it.
+func defaultShutdown() {
+	if p, err := os.FindProcess(os.Getpid()); err == nil {
+		_ = p.Signal(os.Interrupt)
+	}
 }
 
 // New builds a Server. srcFor resolves the active repo to its bd source and reg
@@ -70,7 +82,7 @@ type Server struct {
 // server stays free of embed. syn is the human-shaped synthesis layer (north
 // star); the project label follows the active repo.
 func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, static http.Handler, syn forest.Synthesis) *Server {
-	return &Server{srcFor: srcFor, reg: reg, tmpl: tmpl, static: static, syn: syn}
+	return &Server{srcFor: srcFor, reg: reg, tmpl: tmpl, static: static, syn: syn, shutdown: defaultShutdown}
 }
 
 // source resolves the active repo's issue source. ok is false when no repo is
@@ -104,6 +116,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /repos/rescan", s.handleRescan)
 	mux.HandleFunc("POST /repo", s.handleSwitchRepo)
 	mux.HandleFunc("POST /repo/add", s.handleAddRepo)
+	mux.HandleFunc("POST /shutdown", s.handleShutdown)
 	mux.Handle("GET /static/", s.static)
 	return mux
 }
@@ -111,6 +124,15 @@ func (s *Server) Routes() http.Handler {
 // reqContext bounds every bd shell-out so a hung CLI can't wedge a request.
 func reqContext(r *http.Request) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(r.Context(), 10*time.Second)
+}
+
+// handleShutdown stops strand from the UI: it answers with the stopped fragment,
+// then raises the shutdown hook. The answer is written first and the real hook
+// only signals (non-blocking) — the graceful drain in main lets this response
+// flush before the listener closes. Local-only tool, so no confirm or auth guard.
+func (s *Server) handleShutdown(w http.ResponseWriter, _ *http.Request) {
+	s.render(w, "shutdown", nil)
+	s.shutdown()
 }
 
 // listView is the bead-list pane: a region, optionally narrowed to one epic.

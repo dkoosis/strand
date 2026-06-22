@@ -153,6 +153,10 @@ linters:
       - common-false-positives
       - legacy
       - std-error-handling
+    paths:
+      # bd nests its worktrees inside the repo (strand-4fj/, strand-alg.2/, …);
+      # each carries a copy of go.mod, so don't lint them as part of this module.
+      - (^|/)strand-[^/]+/
     rules:
       # Test files: relax security, complexity, context, and wrapping.
       - linters:
