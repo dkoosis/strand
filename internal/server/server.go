@@ -16,6 +16,7 @@ import (
 	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
@@ -188,7 +189,7 @@ func originMatchesHost(origin, host string) bool {
 	if err != nil || u.Host == "" {
 		return false
 	}
-	return u.Host == host
+	return strings.EqualFold(u.Host, host)
 }
 
 // renderForbidden answers a rejected cross-site write with the same error

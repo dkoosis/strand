@@ -704,6 +704,18 @@ func TestGuardAllowsMatchingOrigin(t *testing.T) {
 	}
 }
 
+// TestGuardAllowsCaseDifferingOrigin: hostnames are case-insensitive (RFC 3986),
+// so an Origin host differing only in case still counts as same-origin.
+func TestGuardAllowsCaseDifferingOrigin(t *testing.T) {
+	srv := newTestServer(t, oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"}))
+	rec := sendWithHeaders(t, srv, http.MethodPost, "/bead/demo-x/claim",
+		map[string]string{"Origin": "http://EXAMPLE.com"})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("case-differing-origin POST = %d, want 200", rec.Code)
+	}
+}
+
 // TestGuardAllowsNoHeaders: a request with neither Sec-Fetch-Site nor Origin (a
 // CLI client like curl, or same-origin htmx that omits both) is allowed — the
 // guard blocks cross-site browser forms, not local tooling.
