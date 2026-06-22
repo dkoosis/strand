@@ -2,11 +2,16 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
@@ -61,8 +66,35 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	log.Printf("strand %s: serving http://%s", Version, *addr)
-	if err := httpSrv.ListenAndServe(); err != nil {
+	// Shut down cleanly on Ctrl-C / kill so the user gets a goodbye instead of a
+	// silent drop, and in-flight requests get a moment to finish.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		<-ctx.Done()
+		log.Printf("strand: shutting down — bye")
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := httpSrv.Shutdown(shutCtx); err != nil {
+			log.Printf("strand: shutdown: %v", err)
+		}
+	}()
+
+	// Bind before announcing, so a failed bind reports the conflict instead of a
+	// misleading "serving" line followed by an error.
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		if errors.Is(err, syscall.EADDRINUSE) {
+			log.Fatalf("strand: %s is already in use — another strand is probably running.\n"+
+				"  stop it with:  pkill -f 'strand --addr'\n"+
+				"  or pick a different port:  strand --addr 127.0.0.1:7778", *addr)
+		}
+		log.Fatalf("strand: listen %s: %v", *addr, err)
+	}
+
+	log.Printf("strand %s: serving http://%s  (ctrl-c to stop)", Version, *addr)
+	if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("strand: %v", err)
 	}
 }
