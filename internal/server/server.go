@@ -22,7 +22,10 @@ import (
 // errNoRepo means no beads workspace is active. The landing turns it into an
 // actionable empty state (spec R1); other handlers shouldn't reach it, since the
 // UI offers no bead links until a repo is active.
-var errNoRepo = errors.New("no active repo")
+var (
+	errNoRepo  = errors.New("no active repo")
+	errNoIssue = errors.New("no issue to display")
+)
 
 // IssueSource is the slice of bd.Client the server needs: reads plus the V1
 // writes. An interface keeps the handlers testable with a stub and the bd CLI
@@ -205,6 +208,13 @@ func (s *Server) handleBead(w http.ResponseWriter, r *http.Request) {
 // comments, with an optional write error shown inline. A comments-read failure is
 // non-fatal — the panel still shows the issue, just without the thread.
 func (s *Server) renderDrawer(ctx context.Context, w http.ResponseWriter, src IssueSource, issue *bd.Issue, writeErr error) {
+	if issue == nil {
+		// bd can return (nil, nil) — a silent write or an empty Show (firstIssue's
+		// documented contract). No bead to draw, so fall back to the error panel
+		// rather than panic dereferencing issue.ID below.
+		s.renderError(w, errNoIssue)
+		return
+	}
 	data := drawerData{Issue: issue}
 	if writeErr != nil {
 		data.Err = writeErr.Error()

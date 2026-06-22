@@ -132,7 +132,10 @@ func (r *Registry) Switch(path string) (Repo, error) {
 // the path the user would type. A path with no .beads is ErrNoBeads — the empty
 // state's whole point is to keep an un-initialized directory out of the registry.
 func (r *Registry) Add(path string) (Repo, error) {
-	path = expandHome(filepath.Clean(path))
+	path, err := filepath.Abs(expandHome(filepath.Clean(path)))
+	if err != nil {
+		return Repo{}, fmt.Errorf("resolve absolute path: %w", err)
+	}
 	if !hasBeads(path) {
 		return Repo{}, fmt.Errorf("%w: %s", ErrNoBeads, path)
 	}
