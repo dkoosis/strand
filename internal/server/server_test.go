@@ -24,6 +24,7 @@ var errMarshal = errors.New("json: unsupported type")
 // (spec Q0: fake the bd boundary, assert on the rendered HTML).
 type stubBD struct {
 	issues   []bd.Issue
+	deps     []bd.DepEdge
 	show     map[string]*bd.Issue
 	comments map[string][]bd.Comment
 	listErr  error
@@ -36,6 +37,10 @@ type stubBD struct {
 
 func (s *stubBD) List(context.Context, ...string) ([]bd.Issue, error) {
 	return s.issues, s.listErr
+}
+
+func (s *stubBD) Deps(context.Context, ...string) ([]bd.DepEdge, error) {
+	return s.deps, s.listErr
 }
 
 func (s *stubBD) Show(_ context.Context, id string) (*bd.Issue, error) {

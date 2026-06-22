@@ -68,6 +68,16 @@ type Issue struct {
 	CommentCount    int       `json:"comment_count"`
 }
 
+// DepEdge is one dependency edge: IssueID depends on DependsOnID. Type tells the
+// real blocking dependency ("blocks") from epic hierarchy ("parent-child") and
+// soft links ("relates_to"); the graph view keeps only "blocks". The direction
+// matches bd's "down" sense: the issue depends on (is blocked by) the target.
+type DepEdge struct {
+	IssueID     string `json:"issue_id"`
+	DependsOnID string `json:"depends_on_id"`
+	Type        string `json:"type"`
+}
+
 // Comment is one note on an issue, as bd emits it from `comments <id> --json`.
 type Comment struct {
 	ID        string    `json:"id"`
@@ -162,22 +172,68 @@ func (c *Client) Comments(ctx context.Context, id string) ([]Comment, error) {
 	return cs, nil
 }
 
+// Deps returns the dependency edges touching the given issue IDs (direction
+// "down": what each issue depends on). With no IDs it returns nil — bd needs at
+// least one. Callers pass the full ID set to fetch the whole graph and filter by
+// Type themselves (the graph view wants "blocks", not "parent-child").
+//
+// bd's `dep list --json` has two output shapes: with several IDs it emits flat
+// edge records ({issue_id, depends_on_id, type}); with exactly one ID it emits
+// the dependency *issues* instead. decodeEdges handles both so a one-issue query
+// still yields edges.
+func (c *Client) Deps(ctx context.Context, ids ...string) ([]DepEdge, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	out, err := c.run(ctx, append([]string{"dep", "list", "--json"}, ids...)...)
+	if err != nil {
+		return nil, err
+	}
+	return decodeEdges(out, ids)
+}
+
+// decodeEdges parses `dep list --json` in either shape. The flat batch shape has
+// issue_id/depends_on_id; the single-ID shape returns dependency issues, which we
+// turn into edges from the one queried ID. An empty array (no deps) yields nil.
+func decodeEdges(out []byte, ids []string) ([]DepEdge, error) {
+	trimmed, err := trimForDecode(out)
+	if trimmed == nil || err != nil {
+		return nil, err
+	}
+	var rows []struct {
+		IssueID        string `json:"issue_id"`
+		DependsOnID    string `json:"depends_on_id"`
+		Type           string `json:"type"`
+		ID             string `json:"id"`              // single-ID shape: the dependency issue
+		DependencyType string `json:"dependency_type"` // single-ID shape
+	}
+	if err := json.Unmarshal(trimmed, &rows); err != nil {
+		return nil, fmt.Errorf("parse bd dep list: %w", err)
+	}
+	edges := make([]DepEdge, 0, len(rows))
+	for _, r := range rows {
+		switch {
+		case r.IssueID != "" && r.DependsOnID != "":
+			edges = append(edges, DepEdge{IssueID: r.IssueID, DependsOnID: r.DependsOnID, Type: r.Type})
+		case r.ID != "" && len(ids) == 1:
+			// Single-ID query: the row is a dependency of the one queried issue.
+			edges = append(edges, DepEdge{IssueID: ids[0], DependsOnID: r.ID, Type: r.DependencyType})
+		}
+	}
+	return edges, nil
+}
+
 // decodeIssues parses bd's JSON. List-style commands emit an array; `create`
 // emits a single bare issue object. bd reports its own errors as a JSON object
 // with an "error" key; surface those.
 func decodeIssues(out []byte) ([]Issue, error) {
-	trimmed := bytes.TrimSpace(out)
-	if len(trimmed) == 0 || string(trimmed) == "[]" {
-		return nil, nil
+	trimmed, err := trimForDecode(out)
+	if trimmed == nil || err != nil {
+		return nil, err
 	}
 	if trimmed[0] == '{' {
-		var e struct {
-			Error string `json:"error"`
-		}
-		if json.Unmarshal(trimmed, &e) == nil && e.Error != "" {
-			return nil, classify(e.Error)
-		}
-		// A non-error object is a single issue (bd create); wrap it.
+		// trimForDecode already ruled out the error object; a non-error object
+		// is a single issue (bd create), so wrap it.
 		var issue Issue
 		if err := json.Unmarshal(trimmed, &issue); err != nil {
 			return nil, fmt.Errorf("parse bd output: %w", err)
@@ -189,4 +245,25 @@ func decodeIssues(out []byte) ([]Issue, error) {
 		return nil, fmt.Errorf("parse bd output: %w", err)
 	}
 	return issues, nil
+}
+
+// trimForDecode trims bd's JSON output and short-circuits the two cases every
+// decoder shares: an empty or `[]` response (returns nil, nil) and a bd error
+// object {"error": ...} (returns the classified error). Otherwise it returns
+// the trimmed bytes for the caller to unmarshal. A nil return with nil error
+// means "nothing to decode".
+func trimForDecode(out []byte) ([]byte, error) {
+	trimmed := bytes.TrimSpace(out)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("[]")) {
+		return nil, nil
+	}
+	if trimmed[0] == '{' {
+		var e struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(trimmed, &e) == nil && e.Error != "" {
+			return nil, classify(e.Error)
+		}
+	}
+	return trimmed, nil
 }

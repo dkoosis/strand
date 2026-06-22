@@ -35,6 +35,7 @@ var (
 // repo is resolved per request through a SourceFunc the command wires.
 type IssueSource interface {
 	List(ctx context.Context, args ...string) ([]bd.Issue, error)
+	Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, error)
 	Show(ctx context.Context, id string) (*bd.Issue, error)
 	Comments(ctx context.Context, id string) ([]bd.Comment, error)
 	Update(ctx context.Context, id, field, value string) (*bd.Issue, error)
