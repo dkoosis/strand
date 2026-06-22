@@ -17,11 +17,16 @@ import (
 	"github.com/dkoosis/strand/internal/forest"
 )
 
-// issueSource is the slice of bd.Client the server needs. An interface keeps the
-// handlers testable with a stub and the bd CLI behind one seam (spec Q0).
+// issueSource is the slice of bd.Client the server needs: reads plus the V1
+// writes. An interface keeps the handlers testable with a stub and the bd CLI
+// behind one seam (spec Q0). Writes go through the write-client (spec D6) so the
+// bare-`bd update` footgun stays impossible.
 type issueSource interface {
 	List(ctx context.Context, args ...string) ([]bd.Issue, error)
 	Show(ctx context.Context, id string) (*bd.Issue, error)
+	Update(ctx context.Context, id, field, value string) (*bd.Issue, error)
+	Claim(ctx context.Context, id string) (*bd.Issue, error)
+	Close(ctx context.Context, id, reason string) (*bd.Issue, error)
 }
 
 // Server renders the forest landing and its htmx fragments over an issueSource.
@@ -45,6 +50,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /{$}", s.handleForest)
 	mux.HandleFunc("GET /list", s.handleList)
 	mux.HandleFunc("GET /bead/{id}", s.handleBead)
+	mux.HandleFunc("PATCH /bead/{id}", s.handleEdit)
+	mux.HandleFunc("POST /bead/{id}/claim", s.handleClaim)
+	mux.HandleFunc("POST /bead/{id}/close", s.handleClose)
+	mux.HandleFunc("POST /bead/{id}/reopen", s.handleReopen)
 	mux.Handle("GET /static/", s.static)
 	return mux
 }
@@ -110,6 +119,14 @@ func listViewFor(f forest.Forest, epicID string) listView {
 	return view
 }
 
+// drawerData is the detail panel: a bead plus an optional write error. Embedding
+// promotes the issue's fields, so the template reads .Title etc. directly, and
+// .Err carries a bd write failure to show inline (spec Q2).
+type drawerData struct {
+	*bd.Issue
+	Err string
+}
+
 func (s *Server) handleBead(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
@@ -118,7 +135,76 @@ func (s *Server) handleBead(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, err)
 		return
 	}
-	s.render(w, "drawer", issue)
+	s.render(w, "drawer", drawerData{Issue: issue})
+}
+
+// handleEdit writes one field from the detail panel (hx-patch with field+value).
+func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	field, value := r.FormValue("field"), r.FormValue("value")
+	s.writeAndRefresh(w, r, id, func(ctx context.Context) error {
+		_, err := s.src.Update(ctx, id, field, value)
+		return wrapWrite("edit", err)
+	})
+}
+
+// handleClaim assigns the bead to the current user.
+func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.writeAndRefresh(w, r, id, func(ctx context.Context) error {
+		_, err := s.src.Claim(ctx, id)
+		return wrapWrite("claim", err)
+	})
+}
+
+// handleClose closes the bead, with an optional reason.
+func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	reason := r.FormValue("reason")
+	s.writeAndRefresh(w, r, id, func(ctx context.Context) error {
+		_, err := s.src.Close(ctx, id, reason)
+		return wrapWrite("close", err)
+	})
+}
+
+// handleReopen flips a closed bead back to open. There is no bd `reopen` in the
+// write-client; a status write does it (O7: status goes through update -s).
+func (s *Server) handleReopen(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.writeAndRefresh(w, r, id, func(ctx context.Context) error {
+		_, err := s.src.Update(ctx, id, "status", "open")
+		return wrapWrite("reopen", err)
+	})
+}
+
+// wrapWrite tags a write failure with the action so the surfaced message names
+// what the user tried; nil stays nil. bd's own message is preserved via %w.
+func wrapWrite(action string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", action, err)
+}
+
+// writeAndRefresh runs a write, then re-reads the bead and redraws the drawer, so
+// the panel always shows bd's truth — never an optimistic guess (spec Q2). A
+// write error is shown inside the drawer next to the unchanged, re-read values:
+// the user sees bd's message and the UI never claims a change that didn't land.
+// If the re-read itself fails, fall back to the hard error page.
+func (s *Server) writeAndRefresh(w http.ResponseWriter, r *http.Request, id string, write func(context.Context) error) {
+	ctx, cancel := reqContext(r)
+	defer cancel()
+	writeErr := write(ctx)
+	issue, showErr := s.src.Show(ctx, id)
+	if showErr != nil {
+		s.renderError(w, showErr)
+		return
+	}
+	data := drawerData{Issue: issue}
+	if writeErr != nil {
+		data.Err = writeErr.Error()
+	}
+	s.render(w, "drawer", data)
 }
 
 // buildForest pulls the live issue list once and folds it into the landing model.
@@ -143,7 +229,7 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 func (s *Server) renderStatus(w http.ResponseWriter, name string, data any, code int) error {
 	var buf bytes.Buffer
 	if err := s.tmpl.ExecuteTemplate(&buf, name, data); err != nil {
-		return err
+		return fmt.Errorf("render %q: %w", name, err)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(code)
