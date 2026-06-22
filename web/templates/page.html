@@ -15,6 +15,7 @@
   <span class="brand">strand</span>
   <button class="repo" type="button"><span>{{.Forest.Regions | regionLabel}}</span><span class="caret">▾</span></button>
   <span class="spacer"></span>
+  <button class="newbead" id="newBead" type="button" hx-get="/new" hx-target="#drawer" title="New bead">+ New</button>
   <button class="icon-btn" id="theme" type="button" title="Toggle theme">
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></svg>
   </button>
@@ -46,7 +47,7 @@
   </section>
 
   <section class="list-pane">
-    <div id="listPane">{{template "list" .List}}</div>
+    <div id="listPane" hx-get="/list" hx-trigger="refreshList from:body">{{template "list" .List}}</div>
   </section>
 </div>
 

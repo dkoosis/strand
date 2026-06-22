@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // Static validation errors, wrapped with the calling op for context. Static so
@@ -128,6 +129,20 @@ func (c *Client) Comment(ctx context.Context, id, text string) error {
 	}
 	_, err := c.run(ctx, "comment", id, text, "--json")
 	return err
+}
+
+// DeletePreview runs bd's bare delete (no --force): bd validates the id and
+// returns a human-readable preview of what would be removed, deleting nothing.
+// strand shows this as the free confirm step before Delete (spec O5).
+func (c *Client) DeletePreview(ctx context.Context, id string) (string, error) {
+	if err := requireID(id, "delete preview"); err != nil {
+		return "", err
+	}
+	out, err := c.run(ctx, "delete", id)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // Delete removes an issue. bd needs --force to delete non-interactively; the UI

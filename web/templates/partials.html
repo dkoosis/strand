@@ -64,9 +64,11 @@
 </div>
 {{end}}
 
+{{define "drClose"}}<button class="icon-btn dr-close" id="drClose" type="button"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>{{end}}
+
 {{define "drawer"}}
 <div class="dr-head">
-  <button class="icon-btn dr-close" id="drClose" type="button"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  {{template "drClose"}}
   <div class="dr-eyebrow"><span class="dr-id mono">{{shortID .ID}}</span> · <span>{{.IssueType}}</span></div>
   {{if .Err}}<div class="dr-err" role="alert">{{.Err}}</div>{{end}}
   <form class="dr-title-edit" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change" onsubmit="event.preventDefault();">
@@ -85,6 +87,7 @@
     {{else}}
     <button type="button" hx-post="/bead/{{.ID}}/close" hx-target="#drawer">Close</button>
     {{end}}
+    <button type="button" class="danger" hx-post="/bead/{{.ID}}/delete" hx-target="#drawer">Delete</button>
   </div>
 </div>
 <div class="dr-body">
@@ -106,7 +109,68 @@
     <textarea name="value" rows="5" placeholder="No description recorded.">{{.Description}}</textarea>
   </form>
   {{if .Design}}<h3>Design</h3><pre>{{.Design}}</pre>{{end}}
+  <h3>Comments</h3>
+  {{range .Comments}}
+  <div class="dr-comment">
+    <div class="dc-meta"><span class="dc-author">{{.Author}}</span> · <span>{{.CreatedAt.Format "Jan 2 15:04"}}</span></div>
+    <div class="dc-text">{{.Text}}</div>
+  </div>
+  {{else}}
+  <p class="dr-note">No comments yet.</p>
+  {{end}}
+  <form class="dr-comment-add" hx-post="/bead/{{.ID}}/comment" hx-target="#drawer">
+    <textarea name="text" rows="2" placeholder="Add a comment…" required></textarea>
+    <button type="submit">Comment</button>
+  </form>
 </div>
+{{end}}
+
+{{define "createForm"}}
+<div class="dr-head">
+  {{template "drClose"}}
+  <div class="dr-eyebrow">new bead</div>
+  <h2 class="dr-title-static">Create a bead</h2>
+</div>
+<div class="dr-body">
+  {{if .Err}}<div class="dr-err" role="alert">{{.Err}}</div>{{end}}
+  <form hx-post="/new" hx-target="#drawer">
+    <div class="dr-field"><label>Title <input name="title" value="{{.Title}}" autofocus required></label></div>
+    <div class="dr-field"><label>Type
+      <select name="type">
+        {{$t := .Type}}{{range $v := beadTypes}}<option value="{{$v}}" {{if eq $v $t}}selected{{end}}>{{$v}}</option>{{end}}
+      </select></label></div>
+    <div class="dr-field"><label>Priority
+      <select name="priority">
+        {{$p := .Priority}}{{range $i := priorities}}<option value="{{$i}}" {{if eq (printf "%d" $i) $p}}selected{{end}}>P{{$i}}</option>{{end}}
+      </select></label></div>
+    <div class="dr-field"><label>Description <textarea name="description" rows="4" placeholder="Why this bead exists.">{{.Description}}</textarea></label></div>
+    <div class="dr-actions"><button type="submit">Create</button></div>
+  </form>
+</div>
+{{end}}
+
+{{define "deleteConfirm"}}
+<div class="dr-head">
+  {{template "drClose"}}
+  <div class="dr-eyebrow">delete</div>
+  <h2 class="dr-title-static">Delete this bead?</h2>
+</div>
+<div class="dr-body">
+  <pre>{{.Preview}}</pre>
+  <div class="dr-actions">
+    <button type="button" class="danger" hx-delete="/bead/{{.ID}}" hx-target="#drawer">Confirm delete</button>
+    <button type="button" hx-get="/bead/{{.ID}}" hx-target="#drawer">Cancel</button>
+  </div>
+</div>
+{{end}}
+
+{{define "deleted"}}
+<div class="dr-head">
+  {{template "drClose"}}
+  <div class="dr-eyebrow">deleted</div>
+  <h2 class="dr-title-static">Bead deleted.</h2>
+</div>
+<div class="dr-body"><p class="dr-note">The bead is gone. Close this panel.</p></div>
 {{end}}
 
 {{define "error"}}<div class="error-fragment">{{.}}</div>{{end}}

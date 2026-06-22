@@ -68,6 +68,15 @@ type Issue struct {
 	CommentCount    int       `json:"comment_count"`
 }
 
+// Comment is one note on an issue, as bd emits it from `comments <id> --json`.
+type Comment struct {
+	ID        string    `json:"id"`
+	IssueID   string    `json:"issue_id"`
+	Author    string    `json:"author"`
+	Text      string    `json:"text"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // Client runs bd commands against a single workspace directory.
 type Client struct {
 	// Dir is the working directory bd runs in (resolves the .beads workspace).
@@ -130,6 +139,27 @@ func (c *Client) Show(ctx context.Context, id string) (*Issue, error) {
 		return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
 	return iss, nil
+}
+
+// Comments returns an issue's comments, oldest-first, as bd lists them. An issue
+// with no comments yields nil (bd emits `[]`), not an error.
+func (c *Client) Comments(ctx context.Context, id string) ([]Comment, error) {
+	if err := requireID(id, "comments"); err != nil {
+		return nil, err
+	}
+	out, err := c.run(ctx, "comments", id, "--json")
+	if err != nil {
+		return nil, err
+	}
+	trimmed := bytes.TrimSpace(out)
+	if len(trimmed) == 0 || string(trimmed) == "[]" {
+		return nil, nil
+	}
+	var cs []Comment
+	if err := json.Unmarshal(trimmed, &cs); err != nil {
+		return nil, fmt.Errorf("parse bd comments: %w", err)
+	}
+	return cs, nil
 }
 
 // decodeIssues parses bd's JSON. List-style commands emit an array; `create`

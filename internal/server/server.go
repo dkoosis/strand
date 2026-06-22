@@ -11,6 +11,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
@@ -24,9 +25,14 @@ import (
 type issueSource interface {
 	List(ctx context.Context, args ...string) ([]bd.Issue, error)
 	Show(ctx context.Context, id string) (*bd.Issue, error)
+	Comments(ctx context.Context, id string) ([]bd.Comment, error)
 	Update(ctx context.Context, id, field, value string) (*bd.Issue, error)
 	Claim(ctx context.Context, id string) (*bd.Issue, error)
 	Close(ctx context.Context, id, reason string) (*bd.Issue, error)
+	Comment(ctx context.Context, id, text string) error
+	Create(ctx context.Context, opts bd.CreateOpts) (*bd.Issue, error)
+	DeletePreview(ctx context.Context, id string) (string, error)
+	Delete(ctx context.Context, id string) error
 }
 
 // Server renders the forest landing and its htmx fragments over an issueSource.
@@ -54,6 +60,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /bead/{id}/claim", s.handleClaim)
 	mux.HandleFunc("POST /bead/{id}/close", s.handleClose)
 	mux.HandleFunc("POST /bead/{id}/reopen", s.handleReopen)
+	mux.HandleFunc("POST /bead/{id}/comment", s.handleComment)
+	mux.HandleFunc("POST /bead/{id}/delete", s.handleDeletePreview)
+	mux.HandleFunc("DELETE /bead/{id}", s.handleDelete)
+	mux.HandleFunc("GET /new", s.handleNewForm)
+	mux.HandleFunc("POST /new", s.handleCreate)
 	mux.Handle("GET /static/", s.static)
 	return mux
 }
@@ -119,12 +130,13 @@ func listViewFor(f forest.Forest, epicID string) listView {
 	return view
 }
 
-// drawerData is the detail panel: a bead plus an optional write error. Embedding
-// promotes the issue's fields, so the template reads .Title etc. directly, and
-// .Err carries a bd write failure to show inline (spec Q2).
+// drawerData is the detail panel: a bead, its comments, and an optional write
+// error. Embedding promotes the issue's fields, so the template reads .Title etc.
+// directly; .Err carries a bd write failure to show inline (spec Q2).
 type drawerData struct {
 	*bd.Issue
-	Err string
+	Comments []bd.Comment
+	Err      string
 }
 
 func (s *Server) handleBead(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +147,21 @@ func (s *Server) handleBead(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, err)
 		return
 	}
-	s.render(w, "drawer", drawerData{Issue: issue})
+	s.renderDrawer(ctx, w, issue, nil)
+}
+
+// renderDrawer redraws the detail panel from bd's truth: the issue plus its
+// comments, with an optional write error shown inline. A comments-read failure is
+// non-fatal — the panel still shows the issue, just without the thread.
+func (s *Server) renderDrawer(ctx context.Context, w http.ResponseWriter, issue *bd.Issue, writeErr error) {
+	data := drawerData{Issue: issue}
+	if writeErr != nil {
+		data.Err = writeErr.Error()
+	}
+	if cs, err := s.src.Comments(ctx, issue.ID); err == nil {
+		data.Comments = cs
+	}
+	s.render(w, "drawer", data)
 }
 
 // handleEdit writes one field from the detail panel (hx-patch with field+value).
@@ -204,11 +230,95 @@ func (s *Server) writeAndRefresh(w http.ResponseWriter, r *http.Request, id stri
 		}
 		issue = fresh
 	}
-	data := drawerData{Issue: issue}
-	if writeErr != nil {
-		data.Err = writeErr.Error()
+	s.renderDrawer(ctx, w, issue, writeErr)
+}
+
+// handleComment adds a comment from the drawer's compose box. It routes through
+// writeAndRefresh like the other writes: a successful add returns no issue, so
+// the redraw re-reads the bead — and renderDrawer reloads the thread, now with
+// the new comment. An empty comment surfaces bd's error inline.
+func (s *Server) handleComment(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	text := r.FormValue("text")
+	s.writeAndRefresh(w, r, id, func(ctx context.Context) (*bd.Issue, error) {
+		return nil, wrapWrite("comment", s.src.Comment(ctx, id, text))
+	})
+}
+
+// handleNewForm renders the empty create form into the drawer. New beads default
+// to a task at P2 so the common case is one field (a title) away from created.
+func (s *Server) handleNewForm(w http.ResponseWriter, _ *http.Request) {
+	s.render(w, "createForm", createForm{Type: "task", Priority: "2"})
+}
+
+// createForm is the new-bead form's state: the raw field values (so a failed
+// submit re-renders with what the user typed) plus a bd error to show inline.
+type createForm struct {
+	Title       string
+	Type        string
+	Priority    string
+	Description string
+	Err         string
+}
+
+// handleCreate runs bd create from the form. On success it shows the new bead's
+// drawer and fires refreshList so the list pane picks up the addition; on failure
+// it re-renders the form with bd's message and the user's input intact.
+func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := reqContext(r)
+	defer cancel()
+	form := createForm{
+		Title:       r.FormValue("title"),
+		Type:        r.FormValue("type"),
+		Priority:    r.FormValue("priority"),
+		Description: r.FormValue("description"),
 	}
-	s.render(w, "drawer", data)
+	opts := bd.CreateOpts{Title: form.Title, Type: form.Type, Description: form.Description}
+	if p, err := strconv.Atoi(form.Priority); err == nil {
+		opts.Priority = &p
+	}
+	issue, err := s.src.Create(ctx, opts)
+	if err != nil {
+		form.Err = err.Error()
+		s.render(w, "createForm", form)
+		return
+	}
+	w.Header().Set("HX-Trigger", "refreshList")
+	s.renderDrawer(ctx, w, issue, nil)
+}
+
+// handleDeletePreview runs bd's bare delete — the free confirm step (O5). It
+// shows what would be removed and a button to commit the deletion; nothing is
+// destroyed yet.
+func (s *Server) handleDeletePreview(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := reqContext(r)
+	defer cancel()
+	id := r.PathValue("id")
+	preview, err := s.src.DeletePreview(ctx, id)
+	if err != nil {
+		s.renderError(w, err)
+		return
+	}
+	s.render(w, "deleteConfirm", deleteData{ID: id, Preview: preview})
+}
+
+// deleteData drives the confirm panel: the id to delete and bd's preview text.
+type deleteData struct {
+	ID      string
+	Preview string
+}
+
+// handleDelete commits the deletion (bd delete --force) after the confirm step,
+// then shows a tombstone and fires refreshList so the gone bead leaves the list.
+func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := reqContext(r)
+	defer cancel()
+	if err := s.src.Delete(ctx, r.PathValue("id")); err != nil {
+		s.renderError(w, err)
+		return
+	}
+	w.Header().Set("HX-Trigger", "refreshList")
+	s.render(w, "deleted", nil)
 }
 
 // buildForest pulls the live issue list once and folds it into the landing model.

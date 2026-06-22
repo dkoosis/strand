@@ -224,6 +224,24 @@ input.dr-title:focus { border-color: var(--st-open); outline: none; background: 
 .dr-field select, .dr-field input, .dr-field textarea { width: 100%; font: inherit; font-size: var(--fs-base); margin-top: var(--s-2); padding: var(--s-2) var(--s-3); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
 .dr-field textarea { resize: vertical; }
 .dr-field select { width: auto; }
+.dr-title-static { font-size: var(--fs-4); font-weight: 600; letter-spacing: -.01em; margin: var(--s-4) 0 0; line-height: 1.3; }
+
+/* destructive action: muted until hover, then the blocked-red signal */
+.dr-actions button.danger:hover { border-color: var(--st-blocked); color: var(--st-blocked); }
+
+/* comment thread + compose box */
+.dr-comment { margin: 0 0 var(--s-4); padding-bottom: var(--s-3); border-bottom: 1px solid var(--line); }
+.dc-meta { font-size: var(--fs-9); color: var(--ink-4); margin-bottom: var(--s-2); }
+.dc-author { color: var(--ink-3); font-weight: 500; }
+.dc-text { font-size: var(--fs-base); color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
+.dr-comment-add { margin-top: var(--s-4); }
+.dr-comment-add textarea { width: 100%; font: inherit; font-size: var(--fs-base); padding: var(--s-2) var(--s-3); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); resize: vertical; }
+.dr-comment-add button { margin-top: var(--s-2); font: inherit; font-size: var(--fs-8); padding: var(--s-2) var(--s-5); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; }
+.dr-comment-add button:hover { border-color: var(--st-open); color: var(--st-open); }
+
+/* header: new-bead button */
+.newbead { font: inherit; font-size: var(--fs-8); font-weight: 500; padding: var(--s-2) var(--s-5); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; }
+.newbead:hover { border-color: var(--st-open); color: var(--st-open); }
 
 .error-fragment { padding: var(--s-7); color: var(--st-blocked); font-size: var(--fs-2); }
 
