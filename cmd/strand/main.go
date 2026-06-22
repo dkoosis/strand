@@ -28,7 +28,8 @@ func main() {
 	}
 
 	client := &bd.Client{Dir: *dir, Bin: *bin}
-	syn := forest.Synthesis{Project: projectLabel(*dir), NorthStar: *northStar}
+	project := projectLabel(*dir)
+	syn := forest.Synthesis{Project: project, NorthStar: *northStar}
 	srv := server.New(client, tmpl, web.Static(), syn)
 
 	httpSrv := &http.Server{
@@ -40,7 +41,7 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	log.Printf("strand: serving http://%s (beads dir: %s)", *addr, projectLabel(*dir))
+	log.Printf("strand: serving http://%s (beads dir: %s)", *addr, project)
 	if err := httpSrv.ListenAndServe(); err != nil {
 		log.Fatalf("strand: %v", err)
 	}

@@ -2,7 +2,7 @@
 <div class="treemap">
   {{range .Regions}}
   <div class="region" style="--rc:{{.Color}};left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%">
-    <div class="rg-head" hx-get="/list" hx-target="#listPane" hx-swap="innerHTML">
+    <div class="rg-head" hx-get="/list" hx-target="#listPane">
       <span class="nm">{{.Name}}</span><span class="ct tnum">{{.Open}}</span>
     </div>
     <div class="rg-body">
@@ -10,7 +10,7 @@
       <div class="tile"
            style="left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%"
            data-name="{{cleanName .Name}}" data-open="{{.Open}}" data-flag="{{if .Flag}}1{{end}}"
-           hx-get="/list?epic={{.ID}}" hx-target="#listPane" hx-swap="innerHTML">
+           hx-get="/list?epic={{.ID}}" hx-target="#listPane">
         {{if .Flag}}<span class="flag"></span>{{end}}
         <div class="to tnum">{{.Open}}</div>
       </div>
@@ -46,13 +46,13 @@
 {{define "epicGroup"}}
 <div class="epic-group">
   {{if .Head}}
-  <div class="eg-head" hx-get="/list?epic={{.Epic.ID}}" hx-target="#listPane" hx-swap="innerHTML">
+  <div class="eg-head" hx-get="/list?epic={{.Epic.ID}}" hx-target="#listPane">
     <span>{{cleanName .Epic.Name}}</span><span class="eo tnum">{{.Epic.Open}}</span>
   </div>
   {{end}}
   <table><tbody>
     {{range .Epic.Beads}}
-    <tr hx-get="/bead/{{.ID}}" hx-target="#drawer" hx-swap="innerHTML">
+    <tr hx-get="/bead/{{.ID}}" hx-target="#drawer">
       <td class="r-id mono">{{shortID .ID}}</td>
       <td class="r-pri"><span class="pchip {{pclass .Priority}}">{{.Priority}}</span></td>
       <td class="r-title">{{.Title}}</td>

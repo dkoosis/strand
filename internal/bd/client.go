@@ -116,15 +116,6 @@ func (c *Client) List(ctx context.Context, args ...string) ([]Issue, error) {
 	return decodeIssues(out)
 }
 
-// Ready returns issues with no unmet blockers — the actionable queue.
-func (c *Client) Ready(ctx context.Context) ([]Issue, error) {
-	out, err := c.run(ctx, "ready", "--json")
-	if err != nil {
-		return nil, err
-	}
-	return decodeIssues(out)
-}
-
 // Show returns the full record for one issue ID.
 func (c *Client) Show(ctx context.Context, id string) (*Issue, error) {
 	out, err := c.run(ctx, "show", id, "--json")

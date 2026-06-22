@@ -75,11 +75,7 @@ func (s *Server) handleForest(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, err)
 		return
 	}
-	data := pageData{Forest: f}
-	if len(f.Regions) > 0 {
-		data.List = listView{Region: f.Regions[0]}
-	}
-	s.render(w, "page", data)
+	s.render(w, "page", pageData{Forest: f, List: listViewFor(f, "")})
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
@@ -90,21 +86,28 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, err)
 		return
 	}
+	// epic=<id> narrows the pane to a single tile; absent means the whole region.
+	s.render(w, "list", listViewFor(f, r.URL.Query().Get("epic")))
+}
+
+// listViewFor builds the bead-list pane from the forest: its first region,
+// optionally narrowed to one epic by id. An empty forest yields an empty view.
+// Both the full-page render and the htmx list swap go through here, so the two
+// panes can't diverge.
+func listViewFor(f forest.Forest, epicID string) listView {
 	if len(f.Regions) == 0 {
-		s.render(w, "list", listView{})
-		return
+		return listView{}
 	}
 	view := listView{Region: f.Regions[0]}
-	// epic=<id> narrows the pane to a single tile; absent means the whole region.
-	if id := r.URL.Query().Get("epic"); id != "" {
+	if epicID != "" {
 		for _, e := range view.Region.Epics {
-			if e.ID == id {
+			if e.ID == epicID {
 				view.Epic, view.HasEpic = e, true
 				break
 			}
 		}
 	}
-	s.render(w, "list", view)
+	return view
 }
 
 func (s *Server) handleBead(w http.ResponseWriter, r *http.Request) {
@@ -128,24 +131,35 @@ func (s *Server) buildForest(ctx context.Context) (forest.Forest, error) {
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {
-	// Render into a buffer first so a template failure becomes a clean 500
-	// instead of a 200 with a half-written body.
-	var buf bytes.Buffer
-	if err := s.tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+	if err := s.renderStatus(w, name, data, http.StatusOK); err != nil {
 		log.Printf("strand: render %q: %v", name, err)
 		s.renderError(w, err)
-		return
+	}
+}
+
+// renderStatus renders a template into a buffer first, then writes it with the
+// given status — so a template failure becomes a clean error instead of a 200
+// with a half-written body. On failure it writes nothing and returns the error.
+func (s *Server) renderStatus(w http.ResponseWriter, name string, data any, code int) error {
+	var buf bytes.Buffer
+	if err := s.tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+		return err
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(code)
 	_, _ = buf.WriteTo(w)
+	return nil
 }
 
 // renderError sends an HTML error fragment with the status mapped from the bd
-// error, so htmx and a plain browser both show something legible.
+// error, so htmx and a plain browser both show something legible. If the error
+// template itself fails, it falls back to a plaintext error.
 func (s *Server) renderError(w http.ResponseWriter, err error) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(statusForError(err))
-	_ = s.tmpl.ExecuteTemplate(w, "error", err.Error())
+	code := statusForError(err)
+	if rerr := s.renderStatus(w, "error", err.Error(), code); rerr != nil {
+		log.Printf("strand: render error page: %v", rerr)
+		http.Error(w, err.Error(), code)
+	}
 }
 
 // statusForError maps a bd error to an HTTP status so the UI can tell a missing
