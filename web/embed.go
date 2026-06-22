@@ -39,6 +39,7 @@ var funcs = template.FuncMap{
 	"cleanName":   cleanName,
 	"regionLabel": regionLabel,
 	"epicArgs":    epicArgs,
+	"priorities":  func() []int { return []int{0, 1, 2, 3, 4} },
 }
 
 // regionLabel is the repo-button caption: the first region's name, or a dash

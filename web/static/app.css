@@ -210,6 +210,21 @@ tbody tr:hover td { background: var(--bg-2); }
 .dr-body pre { white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: var(--fs-base); margin: 0; color: var(--ink-2); }
 .dr-note { color: var(--ink-3); font-size: var(--fs-8); }
 
+/* editable detail panel (V1 writes) */
+.dr-title-edit { margin: var(--s-4) 0 0; }
+input.dr-title { width: 100%; border: 1px solid transparent; border-radius: 6px; background: transparent; padding: var(--s-2) var(--s-3); margin-left: calc(-1 * var(--s-3)); }
+input.dr-title:hover { border-color: var(--line); }
+input.dr-title:focus { border-color: var(--st-open); outline: none; background: var(--bg); }
+.dr-err { margin: var(--s-4) 0 0; padding: var(--s-3) var(--s-4); border-radius: 6px; background: color-mix(in srgb, var(--st-blocked) 12%, transparent); color: var(--st-blocked); font-size: var(--fs-8); }
+.dr-actions { display: flex; gap: var(--s-3); margin-top: var(--s-5); }
+.dr-actions button { font: inherit; font-size: var(--fs-8); padding: var(--s-2) var(--s-5); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; }
+.dr-actions button:hover { border-color: var(--st-open); color: var(--st-open); }
+.dr-field { display: block; margin: 0 0 var(--s-4); }
+.dr-field label { display: block; font-size: var(--fs-9); letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
+.dr-field select, .dr-field input, .dr-field textarea { width: 100%; font: inherit; font-size: var(--fs-base); margin-top: var(--s-2); padding: var(--s-2) var(--s-3); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+.dr-field textarea { resize: vertical; }
+.dr-field select { width: auto; }
+
 .error-fragment { padding: var(--s-7); color: var(--st-blocked); font-size: var(--fs-2); }
 
 footer { flex: 0 0 auto; padding: var(--s-3) var(--s-7); border-top: 1px solid var(--line); background: var(--bg-1); color: var(--ink-4); font-size: var(--fs-9); display: flex; gap: var(--s-6); }
