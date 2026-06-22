@@ -171,9 +171,7 @@ func depths(g *simple.DirectedGraph, id *idMap) (map[string]int, []string) {
 		it := g.From(n)
 		for it.Next() {
 			s := it.Node().ID()
-			// Tie-break successors on ID name so the critical path is stable
-			// across runs (gonum's From() iteration order is nondeterministic).
-			if d := walk(s); d > best || (d == best && (bestNext < 0 || id.name(s) < id.name(bestNext))) {
+			if d := walk(s); betterSucc(d, best, s, bestNext, id) {
 				best, bestNext = d, s
 			}
 		}
@@ -201,6 +199,20 @@ func depths(g *simple.DirectedGraph, id *idMap) (map[string]int, []string) {
 		path = append(path, id.name(n))
 	}
 	return depth, path
+}
+
+// betterSucc reports whether successor s (chain depth d) should replace the
+// current best (bestNext, depth best) when picking the critical-path branch out
+// of a node. A deeper chain wins; on a tie the lower-ID branch wins, so the path
+// is deterministic regardless of gonum's map-backed successor iteration order.
+func betterSucc(d, best int, s, bestNext int64, id *idMap) bool {
+	if d == 0 {
+		return false // back-edge into the active DFS stack — don't follow it; a real leaf returns depth 1
+	}
+	if d != best {
+		return d > best
+	}
+	return bestNext < 0 || id.name(s) < id.name(bestNext)
 }
 
 // idMap assigns each string bead ID a stable int64 (gonum nodes are int64) and
