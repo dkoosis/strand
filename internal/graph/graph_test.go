@@ -3,6 +3,7 @@ package graph
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 // diamond is a DAG with a single chokepoint D and a shared leaf E:
@@ -93,6 +94,30 @@ func TestEmptyGraph(t *testing.T) {
 	}
 	if len(m.PageRank) != 0 || len(m.CriticalPath) != 0 || len(m.Cycles) != 0 {
 		t.Errorf("empty graph should yield empty metrics, got %+v", m)
+	}
+}
+
+// TestNodesNoEdgesTerminates is the regression for strand-d6f: a scope with
+// nodes but zero in-scope edges (every dependency filtered out) drove gonum's
+// HITS to divide by a zero link norm and spin forever, hanging /graph and
+// /insights past their request deadline. Compute must return promptly with
+// zeroed hub/authority for every node.
+func TestNodesNoEdgesTerminates(t *testing.T) {
+	done := make(chan Metrics, 1)
+	go func() { done <- Compute([]string{"A", "B", "C"}, nil) }()
+
+	select {
+	case m := <-done:
+		for _, n := range []string{"A", "B", "C"} {
+			if m.Hub[n] != 0 || m.Authority[n] != 0 {
+				t.Errorf("node %s: Hub=%g Authority=%g, want 0/0", n, m.Hub[n], m.Authority[n])
+			}
+		}
+		if len(m.Hub) != 3 || len(m.Authority) != 3 {
+			t.Errorf("Hub/Authority should cover all 3 nodes, got %d/%d", len(m.Hub), len(m.Authority))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Compute hung on an edgeless graph (HITS non-convergence regression)")
 	}
 }
 
