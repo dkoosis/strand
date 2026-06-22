@@ -18,8 +18,28 @@ import (
 // HTTP layer) can map it to a 404 with errors.Is.
 var ErrNotFound = errors.New("issue not found")
 
-// ErrBD wraps any non-zero bd exit or bd-reported error.
+// ErrInvalidArg means bd rejected an argument (e.g. an unknown --status value).
+// Callers can map it to a 400 with errors.Is.
+var ErrInvalidArg = errors.New("invalid argument")
+
+// ErrBD wraps any non-zero bd exit or bd-reported error not otherwise classified.
 var ErrBD = errors.New("bd command failed")
+
+// classify maps a bd error message to a typed sentinel so the HTTP layer can
+// choose the right status code. bd gives us only message text — no codes — so we
+// match the stable phrases bd emits ("no issue found", "invalid status …").
+// Anything unrecognized is a true bd failure (ErrBD -> 502).
+func classify(msg string) error {
+	low := strings.ToLower(msg)
+	switch {
+	case strings.Contains(low, "no issue found"), strings.Contains(low, "no issues found"):
+		return fmt.Errorf("%w: %s", ErrNotFound, msg)
+	case strings.Contains(low, "invalid "):
+		return fmt.Errorf("%w: %s", ErrInvalidArg, msg)
+	default:
+		return fmt.Errorf("%w: %s", ErrBD, msg)
+	}
+}
 
 // execMu serializes every bd invocation process-wide. beads' embedded Dolt store
 // is a single-writer lock — concurrent bd calls collide and can corrupt or error
@@ -80,7 +100,7 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return nil, fmt.Errorf("%w: %s: %s", ErrBD, strings.Join(args, " "), msg)
+		return nil, fmt.Errorf("bd %s: %w", strings.Join(args, " "), classify(msg))
 	}
 	return out.Bytes(), nil
 }
@@ -133,7 +153,7 @@ func decodeIssues(out []byte) ([]Issue, error) {
 			Error string `json:"error"`
 		}
 		if json.Unmarshal(trimmed, &e) == nil && e.Error != "" {
-			return nil, fmt.Errorf("%w: %s", ErrBD, e.Error)
+			return nil, classify(e.Error)
 		}
 		// A non-error object is a single issue (bd create); wrap it.
 		var issue Issue
