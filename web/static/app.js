@@ -118,6 +118,9 @@ function initGraph() {
   } catch {
     return; // a malformed model shows the empty container, not a thrown page
   }
+  if (!model || !Array.isArray(model.nodes) || !Array.isArray(model.edges)) {
+    return; // a null/shapeless model shows the empty container, not a TypeError
+  }
 
   // Normalize PageRank to a node-size range so the largest visibly dominates; raw
   // scores (~sub-1, near-equal) would all render as same-size dots.
@@ -165,8 +168,11 @@ function initGraph() {
       },
       { selector: 'node[status = "in_progress"]', style: { "background-color": "#3b82f6" } },
       { selector: 'node[status = "closed"]', style: { "background-color": "#4b5563" } },
-      { selector: "node[cycle = 1]", style: { "border-width": 3, "border-color": "#ef4444" } },
+      // path first, cycle last: equal-specificity selectors resolve last-wins, so a
+      // node that is both on the critical path and in a cycle keeps the red cycle
+      // border — the cycle is the warning users must not miss.
       { selector: "node[path = 1]", style: { "border-width": 3, "border-color": "#eab308" } },
+      { selector: "node[cycle = 1]", style: { "border-width": 3, "border-color": "#ef4444" } },
       {
         selector: "edge",
         style: {

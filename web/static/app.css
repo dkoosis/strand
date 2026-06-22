@@ -360,5 +360,5 @@ footer b { color: var(--ink-3); font-weight: 500; }
 .gl-key { width: 12px; height: 12px; border-radius: 50%; background: var(--ink-3); }
 .gl-size { width: 14px; height: 14px; }
 .gl-cycle { background: none; border: 2px solid var(--st-blocked); }
-.gl-path { background: none; border: 2px solid var(--st-prog); }
+.gl-path { background: none; border: 2px solid #eab308; } /* matches the graph's critical-path border */
 #cy { flex: 1; min-height: 0; width: 100%; background: var(--bg); }
