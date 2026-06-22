@@ -16,6 +16,9 @@ import (
 	"github.com/dkoosis/strand/web"
 )
 
+// Version is stamped at build time via -ldflags '-X main.Version=...' (see Makefile).
+var Version = "dev"
+
 func main() {
 	addr := flag.String("addr", "127.0.0.1:7777", "address to listen on")
 	dir := flag.String("dir", "", "seed this beads workspace into the registry and make it active")
@@ -58,7 +61,7 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	log.Printf("strand: serving http://%s", *addr)
+	log.Printf("strand %s: serving http://%s", Version, *addr)
 	if err := httpSrv.ListenAndServe(); err != nil {
 		log.Fatalf("strand: %v", err)
 	}

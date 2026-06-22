@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Strand web UI LaunchAgent (macOS).
+
+  Runs `strand --addr 127.0.0.1:7777` as a persistent local web server over a
+  beads workspace. No secrets, no DB — strand shells out to `bd` per-request.
+
+  Template: __REPLACE_*__ markers are substituted by deploy/launchd/install.sh.
+  Never edit the installed copy in ~/Library/LaunchAgents directly; re-run
+  `make deploy` so the template stays the source of truth.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.strand.web</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REPLACE_STRAND_BIN__</string>
+        <string>--addr</string>
+        <string>__REPLACE_ADDR__</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <!--
+      ThrottleInterval: minimum 30s between restarts so the TCP listener's
+      TIME_WAIT can drain and a crash-loop can't hammer the port.
+    -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>__REPLACE_LOG_DIR__/serve.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__REPLACE_LOG_DIR__/serve.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- strand shells out to `bd`; ensure the daemon's PATH finds it. -->
+        <key>PATH</key>
+        <string>__REPLACE_PATH__</string>
+    </dict>
+</dict>
+</plist>
