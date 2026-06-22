@@ -14,7 +14,6 @@ import (
 	"os"
 	"slices"
 	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
@@ -64,13 +63,18 @@ type Server struct {
 	tmpl     *template.Template
 	static   http.Handler
 	syn      forest.Synthesis
-	shutdown func() // raised by POST /shutdown; a test seam over the SIGTERM hook
+	shutdown func() // raised by POST /shutdown; a test seam over the interrupt hook
 }
 
-// defaultShutdown raises SIGTERM at strand's own process, so the Quit button
+// defaultShutdown raises os.Interrupt at strand's own process, so the Quit button
 // flows through the same graceful path Ctrl-C does (signal.NotifyContext →
-// httpSrv.Shutdown in main) rather than a hard exit. Tests replace it.
-func defaultShutdown() { _ = syscall.Kill(os.Getpid(), syscall.SIGTERM) }
+// httpSrv.Shutdown in main) rather than a hard exit. os.Interrupt keeps this
+// portable (no syscall import); main already listens for it. Tests replace it.
+func defaultShutdown() {
+	if p, err := os.FindProcess(os.Getpid()); err == nil {
+		_ = p.Signal(os.Interrupt)
+	}
+}
 
 // New builds a Server. srcFor resolves the active repo to its bd source and reg
 // holds the registry + active selection. tmpl holds the parsed UI templates and

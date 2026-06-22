@@ -171,7 +171,9 @@ func depths(g *simple.DirectedGraph, id *idMap) (map[string]int, []string) {
 		it := g.From(n)
 		for it.Next() {
 			s := it.Node().ID()
-			if d := walk(s); d > best {
+			// Tie-break successors on ID name so the critical path is stable
+			// across runs (gonum's From() iteration order is nondeterministic).
+			if d := walk(s); d > best || (d == best && (bestNext < 0 || id.name(s) < id.name(bestNext))) {
 				best, bestNext = d, s
 			}
 		}
