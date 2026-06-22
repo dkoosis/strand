@@ -173,4 +173,26 @@
 <div class="dr-body"><p class="dr-note">The bead is gone. Close this panel.</p></div>
 {{end}}
 
+{{define "repoMenu"}}
+<div class="rm-list">
+  {{range .Items}}
+  <button class="rm-item{{if .Active}} active{{end}}" type="button"
+          hx-post="/repo" hx-vals='{"path":"{{.Path}}"}'>
+    <span class="rm-name">{{.Name}}</span>
+    <span class="rm-path mono">{{.Path}}</span>
+  </button>
+  {{else}}
+  <p class="rm-empty">No repos registered yet.</p>
+  {{end}}
+</div>
+{{if .Err}}<div class="rm-err" role="alert">{{.Err}}</div>{{end}}
+<form class="rm-add" hx-post="/repo/add" hx-target="#repoMenu" hx-swap="innerHTML">
+  <input name="path" placeholder="/path/to/repo with .beads" aria-label="repo path" required>
+  <button type="submit">Add</button>
+</form>
+<button class="rm-rescan" type="button" hx-post="/repos/rescan" hx-target="#repoMenu" hx-swap="innerHTML">
+  Rescan ~/Projects
+</button>
+{{end}}
+
 {{define "error"}}<div class="error-fragment">{{.}}</div>{{end}}

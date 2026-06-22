@@ -13,13 +13,27 @@
 <body>
 <header>
   <span class="brand">strand</span>
-  <button class="repo" type="button"><span>{{.Forest.Regions | regionLabel}}</span><span class="caret">▾</span></button>
+  <div class="repo-wrap">
+    <button class="repo" type="button" hx-get="/repos" hx-target="#repoMenu" hx-swap="innerHTML">
+      <span>{{.Repos.ActiveName}}</span><span class="caret">▾</span>
+    </button>
+    <div class="repo-menu" id="repoMenu"></div>
+  </div>
   <span class="spacer"></span>
   <button class="newbead" id="newBead" type="button" hx-get="/new" hx-target="#drawer" title="New bead">+ New</button>
   <button class="icon-btn" id="theme" type="button" title="Toggle theme">
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></svg>
   </button>
 </header>
+
+{{if .Empty}}
+<div class="empty-state">
+  <h1>No active beads workspace</h1>
+  <p>strand scans <code>~/Projects/*/.beads</code> on launch. None is active yet —
+     pick or add one from the <b>repo selector</b> in the header above.</p>
+  <p class="hint">New to a project? Run <code>bd init</code> in its directory, then add its path here.</p>
+</div>
+{{else}}
 
 {{if .Forest.NorthStar}}
 <div class="masthead">
@@ -56,6 +70,7 @@
   <span><b>Click a bead</b> → detail</span>
   <span style="margin-left:auto">forest landing · model A · tiles sized by live open beads · §1a/§4a</span>
 </footer>
+{{end}}
 
 <div class="scrim" id="scrim"></div>
 <aside class="drawer" id="drawer"></aside>

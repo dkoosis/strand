@@ -12,6 +12,7 @@ import (
 
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/forest"
+	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/web"
 )
 
@@ -137,13 +138,21 @@ func (s *stubBD) Close(_ context.Context, id, _ string) (*bd.Issue, error) {
 	return s.show[id], nil
 }
 
-func newTestServer(t *testing.T, src issueSource) *Server {
+// demoRepo is the active repo every test server scopes to; its name labels the
+// forest region the way the active repo's name does in production.
+var demoRepo = registry.Repo{Name: "demo", Path: "/demo"}
+
+// newTestServer wires a server whose only repo is demoRepo, so srcFor always
+// hands back the one stub regardless of the (single) active repo.
+func newTestServer(t *testing.T, src IssueSource) *Server {
 	t.Helper()
 	tmpl, err := web.Templates()
 	if err != nil {
 		t.Fatalf("parse templates: %v", err)
 	}
-	return New(src, tmpl, web.Static(), forest.Synthesis{Project: "demo", NorthStar: "remember across sessions"})
+	reg := registry.InMemory(demoRepo)
+	srcFor := func(registry.Repo) IssueSource { return src }
+	return New(srcFor, reg, tmpl, web.Static(), forest.Synthesis{NorthStar: "remember across sessions"})
 }
 
 func do(t *testing.T, srv *Server, path string) *httptest.ResponseRecorder {

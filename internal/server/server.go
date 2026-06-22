@@ -16,13 +16,20 @@ import (
 
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/forest"
+	"github.com/dkoosis/strand/internal/registry"
 )
 
-// issueSource is the slice of bd.Client the server needs: reads plus the V1
+// errNoRepo means no beads workspace is active. The landing turns it into an
+// actionable empty state (spec R1); other handlers shouldn't reach it, since the
+// UI offers no bead links until a repo is active.
+var errNoRepo = errors.New("no active repo")
+
+// IssueSource is the slice of bd.Client the server needs: reads plus the V1
 // writes. An interface keeps the handlers testable with a stub and the bd CLI
 // behind one seam (spec Q0). Writes go through the write-client (spec D6) so the
-// bare-`bd update` footgun stays impossible.
-type issueSource interface {
+// bare-`bd update` footgun stays impossible. It is exported because the active
+// repo is resolved per request through a SourceFunc the command wires.
+type IssueSource interface {
 	List(ctx context.Context, args ...string) ([]bd.Issue, error)
 	Show(ctx context.Context, id string) (*bd.Issue, error)
 	Comments(ctx context.Context, id string) ([]bd.Comment, error)
@@ -35,19 +42,40 @@ type issueSource interface {
 	Delete(ctx context.Context, id string) error
 }
 
-// Server renders the forest landing and its htmx fragments over an issueSource.
+// SourceFunc builds the bd-backed issue source for a repo. It is the seam the
+// command wires (a real bd.Client scoped to the repo's path) and tests stub (an
+// in-memory fake), so switching the active repo re-scopes every read and write
+// without the server knowing how a source is made.
+type SourceFunc func(registry.Repo) IssueSource
+
+// Server renders the forest landing and its htmx fragments over the active repo's
+// issue source. The active repo (and the known-repo registry) live in reg;
+// srcFor turns the active repo into the source each request reads through.
 type Server struct {
-	src    issueSource
+	srcFor SourceFunc
+	reg    *registry.Registry
 	tmpl   *template.Template
 	static http.Handler
 	syn    forest.Synthesis
 }
 
-// New builds a Server. tmpl holds the parsed UI templates and static serves the
-// embedded assets, both wired in by the caller so package server stays free of
-// embed. syn is the human-shaped synthesis layer (project label, north star).
-func New(src issueSource, tmpl *template.Template, static http.Handler, syn forest.Synthesis) *Server {
-	return &Server{src: src, tmpl: tmpl, static: static, syn: syn}
+// New builds a Server. srcFor resolves the active repo to its bd source and reg
+// holds the registry + active selection. tmpl holds the parsed UI templates and
+// static serves the embedded assets, both wired in by the caller so package
+// server stays free of embed. syn is the human-shaped synthesis layer (north
+// star); the project label follows the active repo.
+func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, static http.Handler, syn forest.Synthesis) *Server {
+	return &Server{srcFor: srcFor, reg: reg, tmpl: tmpl, static: static, syn: syn}
+}
+
+// source resolves the active repo's issue source. ok is false when no repo is
+// active, which the landing renders as the empty state.
+func (s *Server) source() (IssueSource, registry.Repo, bool) {
+	repo, ok := s.reg.Active()
+	if !ok {
+		return nil, registry.Repo{}, false
+	}
+	return s.srcFor(repo), repo, true
 }
 
 // Routes returns the mux: the forest page, its htmx fragments, and static assets.
@@ -65,6 +93,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("DELETE /bead/{id}", s.handleDelete)
 	mux.HandleFunc("GET /new", s.handleNewForm)
 	mux.HandleFunc("POST /new", s.handleCreate)
+	mux.HandleFunc("GET /repos", s.handleRepos)
+	mux.HandleFunc("POST /repos/rescan", s.handleRescan)
+	mux.HandleFunc("POST /repo", s.handleSwitchRepo)
+	mux.HandleFunc("POST /repo/add", s.handleAddRepo)
 	mux.Handle("GET /static/", s.static)
 	return mux
 }
@@ -81,27 +113,41 @@ type listView struct {
 	HasEpic bool // false = show the whole region
 }
 
-// pageData is the full landing render.
+// pageData is the full landing render: the forest, the list pane, and the repo
+// selector chrome (the active repo's name and the known repos). Empty is true
+// when no repo is active, switching the landing to its actionable empty state.
 type pageData struct {
 	Forest forest.Forest
 	List   listView
+	Repos  repoMenu
+	Empty  bool
 }
 
 func (s *Server) handleForest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	f, err := s.buildForest(ctx)
+	src, repo, ok := s.source()
+	if !ok {
+		s.render(w, "page", pageData{Empty: true, Repos: s.repoMenu("")})
+		return
+	}
+	f, err := s.buildForest(ctx, src, repo)
 	if err != nil {
 		s.renderError(w, err)
 		return
 	}
-	s.render(w, "page", pageData{Forest: f, List: listViewFor(f, "")})
+	s.render(w, "page", pageData{Forest: f, List: listViewFor(f, ""), Repos: s.repoMenu("")})
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	f, err := s.buildForest(ctx)
+	src, repo, ok := s.source()
+	if !ok {
+		s.render(w, "list", listView{})
+		return
+	}
+	f, err := s.buildForest(ctx, src, repo)
 	if err != nil {
 		s.renderError(w, err)
 		return
@@ -142,23 +188,28 @@ type drawerData struct {
 func (s *Server) handleBead(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	issue, err := s.src.Show(ctx, r.PathValue("id"))
+	src, _, ok := s.source()
+	if !ok {
+		s.renderError(w, errNoRepo)
+		return
+	}
+	issue, err := src.Show(ctx, r.PathValue("id"))
 	if err != nil {
 		s.renderError(w, err)
 		return
 	}
-	s.renderDrawer(ctx, w, issue, nil)
+	s.renderDrawer(ctx, w, src, issue, nil)
 }
 
 // renderDrawer redraws the detail panel from bd's truth: the issue plus its
 // comments, with an optional write error shown inline. A comments-read failure is
 // non-fatal — the panel still shows the issue, just without the thread.
-func (s *Server) renderDrawer(ctx context.Context, w http.ResponseWriter, issue *bd.Issue, writeErr error) {
+func (s *Server) renderDrawer(ctx context.Context, w http.ResponseWriter, src IssueSource, issue *bd.Issue, writeErr error) {
 	data := drawerData{Issue: issue}
 	if writeErr != nil {
 		data.Err = writeErr.Error()
 	}
-	if cs, err := s.src.Comments(ctx, issue.ID); err == nil {
+	if cs, err := src.Comments(ctx, issue.ID); err == nil {
 		data.Comments = cs
 	}
 	s.render(w, "drawer", data)
@@ -168,8 +219,8 @@ func (s *Server) renderDrawer(ctx context.Context, w http.ResponseWriter, issue 
 func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	field, value := r.FormValue("field"), r.FormValue("value")
-	s.writeAndRefresh(w, r, id, func(ctx context.Context) (*bd.Issue, error) {
-		iss, err := s.src.Update(ctx, id, field, value)
+	s.writeAndRefresh(w, r, id, func(ctx context.Context, src IssueSource) (*bd.Issue, error) {
+		iss, err := src.Update(ctx, id, field, value)
 		return iss, wrapWrite("edit", err)
 	})
 }
@@ -177,8 +228,8 @@ func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
 // handleClaim assigns the bead to the current user.
 func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	s.writeAndRefresh(w, r, id, func(ctx context.Context) (*bd.Issue, error) {
-		iss, err := s.src.Claim(ctx, id)
+	s.writeAndRefresh(w, r, id, func(ctx context.Context, src IssueSource) (*bd.Issue, error) {
+		iss, err := src.Claim(ctx, id)
 		return iss, wrapWrite("claim", err)
 	})
 }
@@ -187,8 +238,8 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	reason := r.FormValue("reason")
-	s.writeAndRefresh(w, r, id, func(ctx context.Context) (*bd.Issue, error) {
-		iss, err := s.src.Close(ctx, id, reason)
+	s.writeAndRefresh(w, r, id, func(ctx context.Context, src IssueSource) (*bd.Issue, error) {
+		iss, err := src.Close(ctx, id, reason)
 		return iss, wrapWrite("close", err)
 	})
 }
@@ -197,8 +248,8 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 // write-client; a status write does it (O7: status goes through update -s).
 func (s *Server) handleReopen(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	s.writeAndRefresh(w, r, id, func(ctx context.Context) (*bd.Issue, error) {
-		iss, err := s.src.Update(ctx, id, "status", "open")
+	s.writeAndRefresh(w, r, id, func(ctx context.Context, src IssueSource) (*bd.Issue, error) {
+		iss, err := src.Update(ctx, id, "status", "open")
 		return iss, wrapWrite("reopen", err)
 	})
 }
@@ -218,19 +269,24 @@ func wrapWrite(action string, err error) error {
 // returned no issue) it re-reads, so the drawer shows the unchanged value next
 // to bd's error message; the UI never claims a change that didn't land. If that
 // re-read also fails, fall back to the hard error page.
-func (s *Server) writeAndRefresh(w http.ResponseWriter, r *http.Request, id string, write func(context.Context) (*bd.Issue, error)) {
+func (s *Server) writeAndRefresh(w http.ResponseWriter, r *http.Request, id string, write func(context.Context, IssueSource) (*bd.Issue, error)) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	issue, writeErr := write(ctx)
+	src, _, ok := s.source()
+	if !ok {
+		s.renderError(w, errNoRepo)
+		return
+	}
+	issue, writeErr := write(ctx, src)
 	if writeErr != nil || issue == nil {
-		fresh, showErr := s.src.Show(ctx, id)
+		fresh, showErr := src.Show(ctx, id)
 		if showErr != nil {
 			s.renderError(w, showErr)
 			return
 		}
 		issue = fresh
 	}
-	s.renderDrawer(ctx, w, issue, writeErr)
+	s.renderDrawer(ctx, w, src, issue, writeErr)
 }
 
 // handleComment adds a comment from the drawer's compose box. It routes through
@@ -240,8 +296,8 @@ func (s *Server) writeAndRefresh(w http.ResponseWriter, r *http.Request, id stri
 func (s *Server) handleComment(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	text := r.FormValue("text")
-	s.writeAndRefresh(w, r, id, func(ctx context.Context) (*bd.Issue, error) {
-		return nil, wrapWrite("comment", s.src.Comment(ctx, id, text))
+	s.writeAndRefresh(w, r, id, func(ctx context.Context, src IssueSource) (*bd.Issue, error) {
+		return nil, wrapWrite("comment", src.Comment(ctx, id, text))
 	})
 }
 
@@ -267,6 +323,11 @@ type createForm struct {
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
+	src, _, ok := s.source()
+	if !ok {
+		s.renderError(w, errNoRepo)
+		return
+	}
 	form := createForm{
 		Title:       r.FormValue("title"),
 		Type:        r.FormValue("type"),
@@ -277,14 +338,14 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if p, err := strconv.Atoi(form.Priority); err == nil {
 		opts.Priority = &p
 	}
-	issue, err := s.src.Create(ctx, opts)
+	issue, err := src.Create(ctx, opts)
 	if err != nil {
 		form.Err = err.Error()
 		s.render(w, "createForm", form)
 		return
 	}
 	w.Header().Set("HX-Trigger", "refreshList")
-	s.renderDrawer(ctx, w, issue, nil)
+	s.renderDrawer(ctx, w, src, issue, nil)
 }
 
 // handleDeletePreview runs bd's bare delete — the free confirm step (O5). It
@@ -293,8 +354,13 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeletePreview(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
+	src, _, ok := s.source()
+	if !ok {
+		s.renderError(w, errNoRepo)
+		return
+	}
 	id := r.PathValue("id")
-	preview, err := s.src.DeletePreview(ctx, id)
+	preview, err := src.DeletePreview(ctx, id)
 	if err != nil {
 		s.renderError(w, err)
 		return
@@ -313,7 +379,12 @@ type deleteData struct {
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	if err := s.src.Delete(ctx, r.PathValue("id")); err != nil {
+	src, _, ok := s.source()
+	if !ok {
+		s.renderError(w, errNoRepo)
+		return
+	}
+	if err := src.Delete(ctx, r.PathValue("id")); err != nil {
 		s.renderError(w, err)
 		return
 	}
@@ -321,13 +392,17 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "deleted", nil)
 }
 
-// buildForest pulls the live issue list once and folds it into the landing model.
-func (s *Server) buildForest(ctx context.Context) (forest.Forest, error) {
-	issues, err := s.src.List(ctx)
+// buildForest pulls the active repo's live issue list once and folds it into the
+// landing model, labeling the region with the active repo's name (the synthesis
+// project follows the active repo, so a switch re-labels every view).
+func (s *Server) buildForest(ctx context.Context, src IssueSource, repo registry.Repo) (forest.Forest, error) {
+	issues, err := src.List(ctx)
 	if err != nil {
 		return forest.Forest{}, fmt.Errorf("list issues: %w", err)
 	}
-	return forest.Build(issues, s.syn), nil
+	syn := s.syn
+	syn.Project = repo.Name
+	return forest.Build(issues, syn), nil
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {
