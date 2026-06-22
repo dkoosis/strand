@@ -19,6 +19,7 @@ func TestClassifyMapsBDMessages(t *testing.T) {
 		{"list missing ids", "no issues found matching the provided IDs", ErrNotFound},
 		{"bad status", `invalid status "bogus" (valid: open, closed)`, ErrInvalidArg},
 		{"unknown failure", "dolt: connection refused", ErrBD},
+		{"invalid mid-string is not arg error", "dolt: invalid connection handle", ErrBD},
 		{"empty", "", ErrBD},
 	}
 	for _, tt := range tests {

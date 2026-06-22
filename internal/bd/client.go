@@ -34,7 +34,7 @@ func classify(msg string) error {
 	switch {
 	case strings.Contains(low, "no issue found"), strings.Contains(low, "no issues found"):
 		return fmt.Errorf("%w: %s", ErrNotFound, msg)
-	case strings.Contains(low, "invalid "):
+	case strings.HasPrefix(low, "invalid "):
 		return fmt.Errorf("%w: %s", ErrInvalidArg, msg)
 	default:
 		return fmt.Errorf("%w: %s", ErrBD, msg)
