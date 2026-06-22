@@ -618,6 +618,130 @@ func TestShutdownRoute(t *testing.T) {
 	}
 }
 
+// --- cross-site write guard (strand-a7w) ---
+
+// sendWithHeaders issues a write request with extra headers, modelling what a
+// browser (Sec-Fetch-Site / Origin) versus a CLI client sends.
+func sendWithHeaders(t *testing.T, srv *Server, method, path string, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(method, path, strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	srv.Routes().ServeHTTP(rec, req)
+	return rec
+}
+
+// TestGuardRejectsCrossSitePost: a browser form POSTing from another site
+// (Sec-Fetch-Site: cross-site) is rejected at 403 with the error fragment — the
+// write handler never runs, so no bead changes.
+func TestGuardRejectsCrossSitePost(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	srv := newTestServer(t, stub)
+	rec := sendWithHeaders(t, srv, http.MethodPost, "/bead/demo-x/claim",
+		map[string]string{"Sec-Fetch-Site": "cross-site"})
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-site POST = %d, want 403", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "error-fragment") {
+		t.Errorf("rejected request missing the error fragment:\n%s", rec.Body.String())
+	}
+	if stub.show["demo-x"].Assignee != "" {
+		t.Error("cross-site POST reached the write handler")
+	}
+}
+
+// TestGuardRejectsCrossSiteDelete: delete is the worst vector (data loss), so it
+// must be guarded too — a cross-site DELETE is rejected and the bead survives.
+func TestGuardRejectsCrossSiteDelete(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	srv := newTestServer(t, stub)
+	rec := sendWithHeaders(t, srv, http.MethodDelete, "/bead/demo-x",
+		map[string]string{"Sec-Fetch-Site": "cross-site"})
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-site DELETE = %d, want 403", rec.Code)
+	}
+	if _, ok := stub.show["demo-x"]; !ok {
+		t.Error("cross-site DELETE destroyed the bead")
+	}
+}
+
+// TestGuardRejectsForeignOrigin: an older browser (no Sec-Fetch-Site) sending an
+// Origin whose host differs from the request Host is cross-site, so rejected.
+func TestGuardRejectsForeignOrigin(t *testing.T) {
+	srv := newTestServer(t, oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"}))
+	rec := sendWithHeaders(t, srv, http.MethodPost, "/bead/demo-x/claim",
+		map[string]string{"Origin": "http://evil.example"})
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("foreign-origin POST = %d, want 403", rec.Code)
+	}
+}
+
+// TestGuardAllowsSameOrigin: a same-origin browser request (Sec-Fetch-Site:
+// same-origin) passes through to the handler.
+func TestGuardAllowsSameOrigin(t *testing.T) {
+	srv := newTestServer(t, oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"}))
+	rec := sendWithHeaders(t, srv, http.MethodPost, "/bead/demo-x/claim",
+		map[string]string{"Sec-Fetch-Site": "same-origin"})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("same-origin POST = %d, want 200", rec.Code)
+	}
+}
+
+// TestGuardAllowsMatchingOrigin: an Origin whose host equals the request Host
+// (httptest defaults Host to example.com) is same-origin, so it passes.
+func TestGuardAllowsMatchingOrigin(t *testing.T) {
+	srv := newTestServer(t, oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"}))
+	rec := sendWithHeaders(t, srv, http.MethodPost, "/bead/demo-x/claim",
+		map[string]string{"Origin": "http://example.com"})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("matching-origin POST = %d, want 200", rec.Code)
+	}
+}
+
+// TestGuardAllowsCaseDifferingOrigin: hostnames are case-insensitive (RFC 3986),
+// so an Origin host differing only in case still counts as same-origin.
+func TestGuardAllowsCaseDifferingOrigin(t *testing.T) {
+	srv := newTestServer(t, oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"}))
+	rec := sendWithHeaders(t, srv, http.MethodPost, "/bead/demo-x/claim",
+		map[string]string{"Origin": "http://EXAMPLE.com"})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("case-differing-origin POST = %d, want 200", rec.Code)
+	}
+}
+
+// TestGuardAllowsNoHeaders: a request with neither Sec-Fetch-Site nor Origin (a
+// CLI client like curl, or same-origin htmx that omits both) is allowed — the
+// guard blocks cross-site browser forms, not local tooling.
+func TestGuardAllowsNoHeaders(t *testing.T) {
+	srv := newTestServer(t, oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"}))
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/claim", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("no-header POST = %d, want 200", rec.Code)
+	}
+}
+
+// TestGuardNeverGatesGET: read routes must never be gated — a GET carrying a
+// cross-site signal still renders, so the guard can't break navigation.
+func TestGuardNeverGatesGET(t *testing.T) {
+	srv := newTestServer(t, &stubBD{issues: sampleIssues})
+	rec := sendWithHeaders(t, srv, http.MethodGet, "/list",
+		map[string]string{"Sec-Fetch-Site": "cross-site"})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cross-site GET /list = %d, want 200 (reads are never gated)", rec.Code)
+	}
+}
+
 // --- V3 dependency-graph view (strand-alg.2) ---
 
 // graphIssues is the fixture DAG for the graph view: epic demo-g holds a chain
