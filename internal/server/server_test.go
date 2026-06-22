@@ -589,3 +589,26 @@ func TestStatusForError(t *testing.T) {
 		})
 	}
 }
+
+// --- exit button / graceful shutdown (strand-4fj) ---
+
+// TestShutdownRoute: POST /shutdown answers 200 with the stopped fragment and
+// fires the shutdown hook exactly once. The hook is stubbed so the real SIGTERM
+// never reaches the test process.
+func TestShutdownRoute(t *testing.T) {
+	srv := newTestServer(t, &stubBD{})
+	called := 0
+	srv.shutdown = func() { called++ }
+
+	rec := send(t, srv, http.MethodPost, "/shutdown", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /shutdown = %d, want 200", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "strand stopped") {
+		t.Errorf("shutdown fragment missing stopped message:\n%s", body)
+	}
+	if called != 1 {
+		t.Errorf("shutdown hook fired %d times, want 1", called)
+	}
+}

@@ -1,0 +1,11 @@
+go vet ./...
+golangci-lint run ./...
+0 issues.
+go test -race -count=1 ./...
+?   	github.com/dkoosis/strand/cmd/strand	[no test files]
+ok  	github.com/dkoosis/strand/internal/bd	3.308s
+ok  	github.com/dkoosis/strand/internal/forest	1.356s
+ok  	github.com/dkoosis/strand/internal/graph	1.504s
+ok  	github.com/dkoosis/strand/internal/registry	1.621s
+ok  	github.com/dkoosis/strand/internal/server	1.848s
+?   	github.com/dkoosis/strand/web	[no test files]

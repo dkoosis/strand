@@ -83,7 +83,8 @@ func main() {
 
 	// Bind before announcing, so a failed bind reports the conflict instead of a
 	// misleading "serving" line followed by an error.
-	ln, err := net.Listen("tcp", *addr)
+	lc := net.ListenConfig{}
+	ln, err := lc.Listen(ctx, "tcp", *addr)
 	if err != nil {
 		if errors.Is(err, syscall.EADDRINUSE) {
 			log.Fatalf("strand: %s is already in use — another strand is probably running.\n"+
