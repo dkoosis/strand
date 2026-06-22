@@ -838,6 +838,17 @@ func TestTriageAbsentBlockerIsResolved(t *testing.T) {
 	}
 }
 
+// TestTriageExplicitlyBlocked: a bead bd reports with status "blocked" (not just
+// dependency-blocked) lands in Blocked, not lost between the open/in-progress cases.
+func TestTriageExplicitlyBlocked(t *testing.T) {
+	beads := []forest.Bead{{ID: "b1", Status: statusBlocked}}
+	idx := map[string]bd.Issue{"b1": {ID: "b1", Status: statusBlocked}}
+	got := triage(beads, nil, idx, insightsNow)
+	if got.Total != 1 || got.Blocked != 1 {
+		t.Errorf("explicitly blocked bead: got %+v, want Total=1 Blocked=1", got)
+	}
+}
+
 // TestIsStale: only live work past the cutoff is stale; a zero timestamp isn't.
 func TestIsStale(t *testing.T) {
 	cases := []struct {

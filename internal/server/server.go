@@ -37,6 +37,7 @@ var (
 const (
 	statusOpen       = "open"
 	statusInProgress = "in_progress"
+	statusBlocked    = "blocked"
 	statusClosed     = "closed"
 	statusDeferred   = "deferred"
 )
@@ -237,7 +238,7 @@ type pivotField struct {
 // reports that aren't seeded (a named assignee) are appended. The assignee
 // "unassigned" column writes an empty value — dropping there clears the field.
 var pivotFields = []pivotField{
-	{"status", []boardColumn{{Key: statusOpen, Label: "open"}, {Key: statusInProgress, Label: "in progress"}, {Key: "blocked", Label: "blocked"}, {Key: statusClosed, Label: "closed"}}, func(b *forest.Bead) string { return b.Status }},
+	{"status", []boardColumn{{Key: statusOpen, Label: "open"}, {Key: statusInProgress, Label: "in progress"}, {Key: statusBlocked, Label: "blocked"}, {Key: statusClosed, Label: "closed"}}, func(b *forest.Bead) string { return b.Status }},
 	{"priority", []boardColumn{{Key: "0", Label: "P0"}, {Key: "1", Label: "P1"}, {Key: "2", Label: "P2"}, {Key: "3", Label: "P3"}, {Key: "4", Label: "P4"}}, func(b *forest.Bead) string { return strconv.Itoa(b.Priority) }},
 	{"assignee", []boardColumn{{Key: "", Label: "unassigned"}}, func(b *forest.Bead) string { return b.Assignee }},
 }
@@ -697,6 +698,8 @@ func triage(beads []forest.Bead, deps []bd.DepEdge, idx map[string]bd.Issue, now
 			} else {
 				c.Ready++
 			}
+		case statusBlocked:
+			c.Blocked++
 		}
 		if isStale(b.Status, idx[b.ID].UpdatedAt, now) {
 			c.Stale++
