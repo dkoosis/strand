@@ -11,3 +11,6 @@
 # bv (beads viewer) local config and caches
 .bv/
 .snipe/
+
+# Local session capture artifacts
+.claude/tmp/
