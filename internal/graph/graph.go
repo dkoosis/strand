@@ -92,9 +92,24 @@ func Compute(nodes []string, edges []Edge) Metrics {
 	for k, v := range network.Betweenness(g) {
 		m.Betweenness[id.name(k)] = v
 	}
-	for k, ha := range network.HITS(g, hitsTol) {
-		m.Hub[id.name(k)] = ha.Hub
-		m.Authority[id.name(k)] = ha.Authority
+	// HITS normalizes hub/authority by the link norm; an edgeless graph drives
+	// that norm to zero, so every score becomes NaN and the tolerance check
+	// (|new-old| < tol) never settles — gonum's HITS spins forever. This is the
+	// same degeneracy the node-less guard above dodges, one rung down. A region
+	// or epic scope whose in-scope "blocks" edges are all filtered out hits it.
+	// With no links every hub/authority is zero, so fill them and skip the call.
+	if g.Edges().Len() == 0 {
+		graphNodes := g.Nodes()
+		for graphNodes.Next() {
+			name := id.name(graphNodes.Node().ID())
+			m.Hub[name] = 0
+			m.Authority[name] = 0
+		}
+	} else {
+		for k, ha := range network.HITS(g, hitsTol) {
+			m.Hub[id.name(k)] = ha.Hub
+			m.Authority[id.name(k)] = ha.Authority
+		}
 	}
 
 	m.Cycles = cyclesOf(g, id, selfLoops(edges))
