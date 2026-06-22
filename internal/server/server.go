@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -93,6 +94,22 @@ func writeError(w http.ResponseWriter, err error) {
 		buf = []byte(`{"error":"internal error"}`)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadGateway)
+	w.WriteHeader(statusForError(err))
 	_, _ = w.Write(buf)
+}
+
+// statusForError maps a bd error to an HTTP status so the UI can tell a missing
+// issue (404) from bad input (400) from a real upstream failure (502). An error
+// from no bd sentinel (e.g. a JSON marshal failure in writeJSON) is ours: 500.
+func statusForError(err error) int {
+	switch {
+	case errors.Is(err, bd.ErrNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, bd.ErrInvalidArg):
+		return http.StatusBadRequest
+	case errors.Is(err, bd.ErrBD):
+		return http.StatusBadGateway
+	default:
+		return http.StatusInternalServerError
+	}
 }
