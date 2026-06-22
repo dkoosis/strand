@@ -94,8 +94,96 @@ document.body.addEventListener("htmx:responseError", (e) => {
 });
 // The board arrives over htmx; (re)bind Sortable once its fragment lands.
 document.body.addEventListener("htmx:afterSwap", (e) => {
-  if (e.detail.target.id === "listPane") initBoard();
+  if (e.detail.target.id === "listPane") {
+    initBoard();
+    initGraph();
+  }
 });
+
+// ---- dependency graph (V3) ----
+// The server computes the DAG and its metrics and serializes them into #cy's
+// data-graph attribute (spec D8: server renders, client only draws). Cytoscape
+// lays the nodes out top-down with dagre so blocks→blocked-by reads as depth;
+// node size is normalized PageRank so foundational beads loom; cycles and the
+// critical path are outlined. A node tap loads the bead into the same #drawer a
+// card click does, so there's no second open path.
+if (window.cytoscape && window.cytoscapeDagre) cytoscape.use(window.cytoscapeDagre);
+let cy;
+function initGraph() {
+  const el = document.getElementById("cy");
+  if (!el || !window.cytoscape) return;
+  let model;
+  try {
+    model = JSON.parse(el.dataset.graph);
+  } catch {
+    return; // a malformed model shows the empty container, not a thrown page
+  }
+
+  // Normalize PageRank to a node-size range so the largest visibly dominates; raw
+  // scores (~sub-1, near-equal) would all render as same-size dots.
+  let lo = Infinity, hi = -Infinity;
+  for (const n of model.nodes) {
+    if (n.score < lo) lo = n.score;
+    if (n.score > hi) hi = n.score;
+  }
+  const sizeOf = (s) => (hi > lo ? 22 + ((s - lo) / (hi - lo)) * 40 : 30);
+
+  const elements = [
+    ...model.nodes.map((n) => ({
+      data: {
+        id: n.id,
+        label: n.label,
+        size: sizeOf(n.score),
+        status: n.status,
+        cycle: n.inCycle ? 1 : 0,
+        path: n.onPath ? 1 : 0,
+      },
+    })),
+    ...model.edges.map((e) => ({ data: { source: e.source, target: e.target } })),
+  ];
+
+  cy?.destroy();
+  cy = cytoscape({
+    container: el,
+    elements,
+    layout: { name: window.cytoscapeDagre ? "dagre" : "breadthfirst", rankDir: "TB", padding: 18 },
+    style: [
+      {
+        selector: "node",
+        style: {
+          width: "data(size)",
+          height: "data(size)",
+          label: "data(label)",
+          "font-size": 10,
+          "text-wrap": "ellipsis",
+          "text-max-width": 96,
+          "text-valign": "bottom",
+          "text-margin-y": 4,
+          "background-color": "#7a7f87",
+          color: "#aab",
+        },
+      },
+      { selector: 'node[status = "in_progress"]', style: { "background-color": "#3b82f6" } },
+      { selector: 'node[status = "closed"]', style: { "background-color": "#4b5563" } },
+      { selector: "node[cycle = 1]", style: { "border-width": 3, "border-color": "#ef4444" } },
+      { selector: "node[path = 1]", style: { "border-width": 3, "border-color": "#eab308" } },
+      {
+        selector: "edge",
+        style: {
+          width: 1.5,
+          "line-color": "#5b6068",
+          "target-arrow-color": "#5b6068",
+          "target-arrow-shape": "triangle",
+          "arrow-scale": 0.9,
+          "curve-style": "bezier",
+        },
+      },
+    ],
+  });
+  cy.on("tap", "node", (evt) => {
+    htmx.ajax("GET", "/bead/" + evt.target.id(), { target: "#drawer" });
+  });
+}
 
 // ---- detail drawer ----
 const scrim = document.getElementById("scrim");

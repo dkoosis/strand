@@ -349,3 +349,16 @@ footer b { color: var(--ink-3); font-weight: 500; }
 .quit-btn { background: none; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-3); font-size: var(--fs-9); padding: 1px var(--s-3); cursor: pointer; }
 .quit-btn:hover { border-color: var(--st-blocked); color: var(--st-blocked); }
 .stopped { color: var(--st-blocked); }
+
+/* ============================================================ dependency graph (V3) */
+.graph-legend {
+  display: flex; gap: var(--s-5); align-items: center; flex: 0 0 auto;
+  padding: var(--s-3) var(--s-6); border-bottom: 1px solid var(--line);
+  font-size: var(--fs-9); color: var(--ink-3);
+}
+.gl { display: inline-flex; align-items: center; gap: var(--s-2); }
+.gl-key { width: 12px; height: 12px; border-radius: 50%; background: var(--ink-3); }
+.gl-size { width: 14px; height: 14px; }
+.gl-cycle { background: none; border: 2px solid var(--st-blocked); }
+.gl-path { background: none; border: 2px solid var(--st-prog); }
+#cy { flex: 1; min-height: 0; width: 100%; background: var(--bg); }
