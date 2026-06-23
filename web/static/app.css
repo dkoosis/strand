@@ -404,9 +404,18 @@ footer b { color: var(--ink-3); font-weight: 500; }
 .count.warn b { color: #e0746e; }
 
 .lboard { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-4); }
+.lb-item { cursor: pointer; border-radius: 5px; padding: var(--s-2) var(--s-3); margin: 0 calc(-1 * var(--s-3)); transition: background .1s; }
+.lb-item:hover, .lb-item:focus-visible { background: var(--bg-2); outline: none; }
 .lb-row { display: flex; align-items: baseline; gap: var(--s-4); }
 .lb-title { flex: 1; min-width: 0; font-size: var(--fs-8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lb-mag { font-size: var(--fs-9); color: var(--ink-3); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 .lb-id { font-size: var(--fs-9); color: var(--ink-3); flex: 0 0 auto; }
+/* act-now cross-flag: a high-rank row that's also blocked/stale */
+.lb-flag {
+  flex: 0 0 auto; font-size: var(--fs-9); font-weight: 600; line-height: 1;
+  text-transform: uppercase; letter-spacing: .04em; padding: 1px var(--s-2);
+  border-radius: 3px; background: rgba(224,116,110,.16); color: #e0746e;
+}
 .lb-bar { height: 4px; margin-top: var(--s-2); background: var(--bg-2); border-radius: 2px; overflow: hidden; }
 .lb-bar span { display: block; height: 100%; background: var(--p2); border-radius: 2px; }
 

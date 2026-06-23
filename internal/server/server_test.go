@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1147,7 +1148,7 @@ func insScope(t *testing.T) ([]forest.Bead, map[string]bd.Issue) {
 // in-progress and stale are split out, and Total counts only live beads.
 func TestTriageCounts(t *testing.T) {
 	beads, idx := insScope(t)
-	got := triage(beads, insightsDeps, idx, insightsNow)
+	got := triage(beads, blockerCounts(insightsDeps, idx), idx, insightsNow)
 	want := triageCounts{Total: 5, Open: 4, InProgress: 1, Ready: 2, Blocked: 2, Stale: 1}
 	if got != want {
 		t.Errorf("triage = %+v, want %+v", got, want)
@@ -1160,7 +1161,7 @@ func TestTriageAbsentBlockerIsResolved(t *testing.T) {
 	beads, idx := insScope(t)
 	deps := append(append([]bd.DepEdge(nil), insightsDeps...),
 		bd.DepEdge{IssueID: "demo-i.1", DependsOnID: "demo-gone", Type: "blocks"})
-	got := triage(beads, deps, idx, insightsNow)
+	got := triage(beads, blockerCounts(deps, idx), idx, insightsNow)
 	if got.Ready != 2 || got.Blocked != 2 {
 		t.Errorf("absent blocker changed triage: ready=%d blocked=%d, want 2/2", got.Ready, got.Blocked)
 	}
@@ -1171,7 +1172,7 @@ func TestTriageAbsentBlockerIsResolved(t *testing.T) {
 func TestTriageExplicitlyBlocked(t *testing.T) {
 	beads := []forest.Bead{{ID: "b1", Status: bd.StatusBlocked}}
 	idx := map[string]bd.Issue{"b1": {ID: "b1", Status: bd.StatusBlocked}}
-	got := triage(beads, nil, idx, insightsNow)
+	got := triage(beads, blockerCounts(nil, idx), idx, insightsNow)
 	if got.Total != 1 || got.Blocked != 1 {
 		t.Errorf("explicitly blocked bead: got %+v, want Total=1 Blocked=1", got)
 	}
@@ -1231,6 +1232,69 @@ func TestLeaderboardEmptyWithoutEdges(t *testing.T) {
 	}
 }
 
+// TestReadyQueue: the dispatch queue lists only ready beads (open, no open blocker),
+// ranked by influence (PageRank) descending, sized against the leader. In the fixture
+// demo-i.1 (foundational) and demo-i.5 (stale, no deps) are ready; the chained i.2/i.3
+// are blocked and the in-progress i.4 is not ready.
+func TestReadyQueue(t *testing.T) {
+	beads, idx := insScope(t)
+	m := graph.Compute(
+		[]string{"demo-i.1", "demo-i.2", "demo-i.3", "demo-i.4", "demo-i.5"},
+		[]graph.Edge{
+			{Dependent: "demo-i.2", Dependency: "demo-i.1"},
+			{Dependent: "demo-i.3", Dependency: "demo-i.2"},
+		})
+	q := readyQueue(beads, blockerCounts(insightsDeps, idx), idx, m.PageRank, insightsNow)
+	ids := make([]string, len(q))
+	for i := range q {
+		ids[i] = q[i].ID
+	}
+	if !slices.Contains(ids, "demo-i.1") || !slices.Contains(ids, "demo-i.5") {
+		t.Fatalf("ready queue = %v, want demo-i.1 and demo-i.5", ids)
+	}
+	if slices.Contains(ids, "demo-i.2") || slices.Contains(ids, "demo-i.3") || slices.Contains(ids, "demo-i.4") {
+		t.Errorf("ready queue leaked a non-ready bead: %v", ids)
+	}
+	if q[0].ID != "demo-i.1" {
+		t.Errorf("ready queue top = %s, want demo-i.1 (most influence)", q[0].ID)
+	}
+	if q[0].Width != 100 {
+		t.Errorf("ready leader bar = %d%%, want 100%%", q[0].Width)
+	}
+	// The stale ready bead carries the stale cross-flag.
+	for _, b := range q {
+		if b.ID == "demo-i.5" && !b.Stale {
+			t.Error("ready bead demo-i.5 should carry the stale cross-flag")
+		}
+	}
+}
+
+// TestCrossFlag: a leaderboard row whose bead is also blocked/stale gets marked —
+// the one act-now signal. demo-i.2 tops betweenness and is blocked by demo-i.1, so
+// it carries the Blocked flag.
+func TestCrossFlag(t *testing.T) {
+	beads, idx := insScope(t)
+	m := graph.Compute(
+		[]string{"demo-i.1", "demo-i.2", "demo-i.3", "demo-i.4", "demo-i.5"},
+		[]graph.Edge{
+			{Dependent: "demo-i.2", Dependency: "demo-i.1"},
+			{Dependent: "demo-i.3", Dependency: "demo-i.2"},
+		})
+	board := crossFlag(leaderboard(beads, m.Betweenness), blockerCounts(insightsDeps, idx), idx, insightsNow)
+	var mid *rankedBead
+	for i := range board {
+		if board[i].ID == "demo-i.2" {
+			mid = &board[i]
+		}
+	}
+	if mid == nil {
+		t.Fatal("demo-i.2 not in bottleneck board")
+	}
+	if !mid.Blocked {
+		t.Error("demo-i.2 is dependency-blocked; want Blocked cross-flag set")
+	}
+}
+
 // TestLabelHealth: counts labels over open beads (in-progress excluded), descending
 // by count then name, and flags untagged open beads.
 func TestLabelHealth(t *testing.T) {
@@ -1274,15 +1338,26 @@ func TestInsightsFragmentRenders(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"Triage", "Influence", "Bottlenecks", "Critical path", "Label health",
+		"Triage", "Critical path", "Label health",
+		"Move these",              // influence headline (consequence, not algorithm)
+		"Unblock these",           // bottleneck headline
+		"PageRank", "betweenness", // method survives as small provenance
+		"Ready to dispatch",           // the new READY-by-influence card
 		`hx-get="/list?epic=demo-i"`,  // toggle back to Table
 		`hx-get="/board?epic=demo-i"`, // and Board
+		`hx-get="/bead/demo-i.1"`,     // ranked rows click → drawer
+		`hx-target="#drawer"`,         // ...into the detail panel
 		"Foundation",                  // top influence bead title
 		"untagged",                    // hygiene warning (demo-i.5)
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("insights fragment missing %q", want)
 		}
+	}
+	// The bottleneck leader demo-i.2 is dependency-blocked: its row carries the
+	// act-now cross-flag marker.
+	if !strings.Contains(body, "lb-flag") {
+		t.Error("insights fragment missing cross-flag marker on a blocked ranked row")
 	}
 }
 

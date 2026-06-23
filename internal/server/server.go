@@ -719,6 +719,7 @@ type insightsView struct {
 // (a bead can be blocked from outside the scope).
 type insights struct {
 	Counts     triageCounts
+	Ready      []rankedBead // ready beads ranked by influence — the dispatch queue
 	Influence  []rankedBead // top PageRank — foundational beads
 	Bottleneck []rankedBead // top betweenness — chokepoints
 	CritPath   []forest.Bead
@@ -733,10 +734,14 @@ type triageCounts struct {
 
 // rankedBead is one leaderboard row: a bead, its raw metric score, and a 0–100 bar
 // width normalized to the panel's top score (computed in Go so the template is dumb).
+// Blocked/Stale are the act-now cross-flags: a high-rank row that ALSO sits in the
+// blocked or stale set is the one item worth acting on now (spec §3, cross-flag).
 type rankedBead struct {
 	forest.Bead
-	Score float64
-	Width int
+	Score   float64
+	Width   int
+	Blocked bool
+	Stale   bool
 }
 
 // labelCount is one row of the label-health distribution.
@@ -798,17 +803,25 @@ func (s *Server) insightsModel(ctx context.Context, src readSource, v *listView,
 	m := graph.Compute(ids, compEdges)
 
 	idx := indexIssues(issues)
+	// One blocker scan per request: triage, the ready queue, and both leaderboards
+	// all read the same open-blocker tallies, so compute once and share the map.
+	openBlockers := blockerCounts(deps, idx)
 	out := insights{
-		Counts:   triage(beads, deps, idx, s.now()),
+		Counts:   triage(beads, openBlockers, idx, s.now()),
 		CritPath: beadPath(m.CriticalPath, beadByID(beads)),
 		Labels:   labelHealth(beads, idx),
 		Untagged: untaggedOpen(beads, idx),
 	}
+	// The dispatch queue: ready beads ranked by influence, so the count→actionable
+	// gap closes (triage says "2 ready"; this says WHICH, most-impactful first). Ranks
+	// even without edges — every ready bead is dispatchable, ordered by PageRank base.
+	out.Ready = readyQueue(beads, openBlockers, idx, m.PageRank, s.now())
 	// The leaderboards rank by graph position; with no dependencies every bead ties
 	// at PageRank's base rank, so a ranking would be noise. Show them only with edges.
+	// crossFlag marks the rows that ALSO sit in the blocked/stale sets — the act-now signal.
 	if len(compEdges) > 0 {
-		out.Influence = leaderboard(beads, m.PageRank)
-		out.Bottleneck = leaderboard(beads, m.Betweenness)
+		out.Influence = crossFlag(leaderboard(beads, m.PageRank), openBlockers, idx, s.now())
+		out.Bottleneck = crossFlag(leaderboard(beads, m.Betweenness), openBlockers, idx, s.now())
 	}
 	return out, nil
 }
@@ -847,8 +860,7 @@ func beadByID(beads []forest.Bead) map[string]forest.Bead {
 // triage counts the scope's queue shape. ready/blocked weigh ALL of a bead's
 // blocks-dependencies (resolved against the full-repo index), since a blocker can
 // live outside the visible scope; stale flags live work untouched past the cut.
-func triage(beads []forest.Bead, deps []bd.DepEdge, idx map[string]bd.Issue, now time.Time) triageCounts {
-	openBlockers := blockerCounts(deps, idx)
+func triage(beads []forest.Bead, openBlockers map[string]int, idx map[string]bd.Issue, now time.Time) triageCounts {
 	var c triageCounts
 	for i := range beads {
 		b := &beads[i]
@@ -928,6 +940,55 @@ func leaderboard(beads []forest.Bead, score map[string]float64) []rankedBead {
 		}
 	}
 	return ranked
+}
+
+// readyQueue is the dispatch queue: the scope's ready beads (open, no unmet blocker),
+// ranked by influence (PageRank) descending so the most-impactful dispatch sits on top.
+// It closes the count→actionable gap — triage says how many are ready, this says which.
+// Rows carry the stale cross-flag (a ready bead can still have gone cold); ready beads
+// are by definition not blocked, so Blocked stays false here.
+func readyQueue(beads []forest.Bead, openBlockers map[string]int, idx map[string]bd.Issue, score map[string]float64, now time.Time) []rankedBead {
+	ready := make([]rankedBead, 0, len(beads))
+	for i := range beads {
+		b := &beads[i]
+		if b.Status != bd.StatusOpen || openBlockers[b.ID] > 0 {
+			continue
+		}
+		ready = append(ready, rankedBead{
+			Bead:  *b,
+			Score: score[b.ID],
+			Stale: isStale(b.Status, idx[b.ID].UpdatedAt, now),
+		})
+	}
+	slices.SortFunc(ready, func(a, b rankedBead) int {
+		if a.Score != b.Score {
+			return cmp.Compare(b.Score, a.Score) // descending
+		}
+		return cmp.Compare(a.ID, b.ID) // stable tiebreak
+	})
+	if len(ready) > leaderboardSize {
+		ready = ready[:leaderboardSize]
+	}
+	if len(ready) > 0 && ready[0].Score > 0 {
+		top := ready[0].Score
+		for i := range ready {
+			ready[i].Width = int(ready[i].Score / top * 100)
+		}
+	}
+	return ready
+}
+
+// crossFlag marks each ranked row that ALSO sits in the blocked or stale set — the
+// act-now signal (spec §3): a high-rank bottleneck that is itself blocked/stale is the
+// one item worth acting on now. Blocked weighs unmet blocks-dependencies (a bd-reported
+// "blocked" status also counts); stale reuses the triage cutoff.
+func crossFlag(board []rankedBead, openBlockers map[string]int, idx map[string]bd.Issue, now time.Time) []rankedBead {
+	for i := range board {
+		id := board[i].ID
+		board[i].Blocked = openBlockers[id] > 0 || board[i].Status == bd.StatusBlocked
+		board[i].Stale = isStale(board[i].Status, idx[id].UpdatedAt, now)
+	}
+	return board
 }
 
 // beadPath resolves the critical-path ids to scope beads (for their titles),
