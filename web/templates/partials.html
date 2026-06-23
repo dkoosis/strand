@@ -80,10 +80,12 @@
 {{end}}
 
 {{define "boardCard"}}
-<div class="bcard" data-id="{{.ID}}" hx-get="/bead/{{.ID}}" hx-target="#drawer">
+<div class="bcard" data-id="{{.ID}}" role="button" tabindex="0"
+     hx-get="/bead/{{.ID}}" hx-target="#drawer"
+     hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']">
   <div class="bc-title">{{.Title}}</div>
   <div class="bc-foot">
-    <span class="pchip {{pclass .Priority}}">{{.Priority}}</span>
+    <span class="pchip {{pclass .Priority}}" title="Priority {{.Priority}}" aria-label="Priority {{.Priority}}">{{.Priority}}</span>
     <span class="bc-id mono">{{shortID .ID}}</span>
     <span class="status"><span class="dot {{.Status}}"></span>{{statusLabel .Status}}</span>
     {{if .Assignee}}<span class="bc-asg">{{.Assignee}}</span>{{end}}
@@ -132,7 +134,7 @@
     <div class="ip-head">Critical path <span class="ip-sub">longest chain</span></div>
     {{if .CritPath}}
     <ol class="critpath">
-      {{range .CritPath}}<li><span class="pchip {{pclass .Priority}}">{{.Priority}}</span> {{.Title}} <span class="cp-id mono">{{shortID .ID}}</span></li>{{end}}
+      {{range .CritPath}}<li><span class="pchip {{pclass .Priority}}" title="Priority {{.Priority}}" aria-label="Priority {{.Priority}}">{{.Priority}}</span> {{.Title}} <span class="cp-id mono">{{shortID .ID}}</span></li>{{end}}
     </ol>
     {{else}}<p class="ip-empty">No dependency chain in scope.</p>{{end}}
   </div>
@@ -186,8 +188,10 @@
      forest.Epic. */}}
 {{define "epicGroupHead"}}
 <div class="epic-group">
-  <div class="eg-head" hx-get="/list?epic={{.ID}}" hx-target="#listPane">
-    <span>{{cleanName .Name}}</span><span class="eo tnum">{{.Open}}</span>
+  <div class="eg-head" role="button" tabindex="0"
+       hx-get="/list?epic={{.ID}}" hx-target="#listPane"
+       hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']">
+    <span class="eg-name">{{cleanName .Name}}</span><span class="eo tnum">{{.Open}}</span>
   </div>
   {{template "epicRows" .}}
 </div>
@@ -198,9 +202,11 @@
 {{define "epicRows"}}
 <table><tbody class="bead-rows" data-epic="{{.ID}}">
     {{range .Beads}}
-    <tr data-id="{{.ID}}" hx-get="/bead/{{.ID}}" hx-target="#drawer">
+    <tr data-id="{{.ID}}" role="button" tabindex="0"
+        hx-get="/bead/{{.ID}}" hx-target="#drawer"
+        hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']">
       <td class="r-id mono">{{shortID .ID}}</td>
-      <td class="r-pri"><span class="pchip {{pclass .Priority}}">{{.Priority}}</span></td>
+      <td class="r-pri"><span class="pchip {{pclass .Priority}}" title="Priority {{.Priority}}" aria-label="Priority {{.Priority}}">{{.Priority}}</span></td>
       <td class="r-title">{{.Title}}</td>
       <td class="r-type">{{.Type}}</td>
       <td class="r-stat"><span class="status"><span class="dot {{.Status}}"></span>{{statusLabel .Status}}</span></td>
