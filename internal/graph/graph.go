@@ -15,11 +15,8 @@
 package graph
 
 import (
-	"sort"
-
 	"gonum.org/v1/gonum/graph/network"
 	"gonum.org/v1/gonum/graph/simple"
-	"gonum.org/v1/gonum/graph/topo"
 )
 
 // Edge is one directed dependency: Dependent is blocked by Dependency.
@@ -29,11 +26,10 @@ type Edge struct {
 }
 
 // Metrics holds the per-node graph metrics, each keyed by bead ID, plus the
-// graph-wide cycle and critical-path findings.
+// graph-wide critical-path finding.
 type Metrics struct {
 	PageRank     map[string]float64 // importance: foundational beads rank high
 	Betweenness  map[string]float64 // bottleneck: beads many chains route through
-	Cycles       [][]string         // dependency cycles (SCCs >1 node, or self-loops)
 	CriticalPath []string           // the single longest dependency chain
 }
 
@@ -60,7 +56,7 @@ func Compute(nodes []string, edges []Edge) Metrics {
 		ensure(g, f)
 		ensure(g, t)
 		if f == t {
-			continue // self-loop: surfaced as a cycle below, never an edge
+			continue // self-loop carries no dependency depth; drop it
 		}
 		// Skip a duplicate edge; SetEdge would panic on a re-add of the same pair.
 		if g.HasEdgeFromTo(f, t) {
@@ -86,7 +82,6 @@ func Compute(nodes []string, edges []Edge) Metrics {
 		m.Betweenness[id.name(k)] = v
 	}
 
-	m.Cycles = cyclesOf(g, id, selfLoops(edges))
 	// depths' per-node map is the critical-path pass's by-product; only the
 	// chain is surfaced, so the map is discarded (it has no consumer — api-surface F1).
 	_, m.CriticalPath = depths(g, id)
@@ -102,42 +97,6 @@ func ensure(g *simple.DirectedGraph, n int64) {
 	if g.Node(n) == nil {
 		g.AddNode(simple.Node(n))
 	}
-}
-
-// cyclesOf returns the dependency cycles: strongly-connected components with more
-// than one node, plus any self-loop (a bead depending on itself), which Tarjan
-// reports only as a singleton SCC. Each cycle's IDs are sorted for deterministic
-// output.
-func cyclesOf(g *simple.DirectedGraph, id *idMap, self map[string]bool) [][]string {
-	var out [][]string
-	for _, comp := range topo.TarjanSCC(g) {
-		if len(comp) < 2 {
-			continue
-		}
-		ids := make([]string, len(comp))
-		for i, n := range comp {
-			ids[i] = id.name(n.ID())
-		}
-		sort.Strings(ids)
-		out = append(out, ids)
-	}
-	for s := range self {
-		out = append(out, []string{s})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i][0] < out[j][0] })
-	return out
-}
-
-// selfLoops collects beads that depend on themselves — a degenerate cycle Tarjan
-// won't flag as a multi-node SCC.
-func selfLoops(edges []Edge) map[string]bool {
-	s := map[string]bool{}
-	for _, e := range edges {
-		if e.Dependent == e.Dependency {
-			s[e.Dependent] = true
-		}
-	}
-	return s
 }
 
 // depths computes, for each node, the length of the longest dependency chain

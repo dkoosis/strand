@@ -31,7 +31,6 @@
   <div class="view-toggle">
     <button class="vt active" type="button" disabled>Table</button>
     <button class="vt" type="button" hx-get="/board{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Board</button>
-    <button class="vt" type="button" hx-get="/graph{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Graph</button>
     <button class="vt" type="button" hx-get="/insights{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Insights</button>
   </div>
   <div class="lp-stat">
@@ -59,7 +58,6 @@
   <div class="view-toggle">
     <button class="vt" type="button" hx-get="/list{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Table</button>
     <button class="vt active" type="button" disabled>Board</button>
-    <button class="vt" type="button" hx-get="/graph{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Graph</button>
     <button class="vt" type="button" hx-get="/insights{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Insights</button>
   </div>
 </div>
@@ -100,32 +98,6 @@
 </div>
 {{end}}
 
-{{define "graph"}}
-{{if .Region.Epics}}
-<div class="pane-head">
-  <div class="lp-scope">
-    <span class="lp-dot" style="background:{{.Region.Color}}"></span>
-    <span class="lp-name">{{if .HasEpic}}{{cleanName .Epic.Name}}{{else}}{{.Region.Name}}{{end}}</span>
-  </div>
-  <div class="view-toggle">
-    <button class="vt" type="button" hx-get="/list{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Table</button>
-    <button class="vt" type="button" hx-get="/board{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Board</button>
-    <button class="vt active" type="button" disabled>Graph</button>
-    <button class="vt" type="button" hx-get="/insights{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Insights</button>
-  </div>
-</div>
-<div class="graph-legend">
-  <span class="gl"><span class="gl-key gl-size"></span>size = influence</span>
-  <span class="gl"><span class="gl-key gl-cycle"></span>cycle</span>
-  <span class="gl"><span class="gl-key gl-path"></span>critical path</span>
-</div>
-<div id="cy" data-graph="{{.JSON}}"></div>
-{{else}}
-<div class="pane-head"><div class="lp-scope"><span class="lp-name">—</span></div></div>
-<div class="list-body"><p class="empty">No live work. The forest is quiet.</p></div>
-{{end}}
-{{end}}
-
 {{define "insights"}}
 {{if .Region.Epics}}
 <div class="pane-head">
@@ -136,7 +108,6 @@
   <div class="view-toggle">
     <button class="vt" type="button" hx-get="/list{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Table</button>
     <button class="vt" type="button" hx-get="/board{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Board</button>
-    <button class="vt" type="button" hx-get="/graph{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Graph</button>
     <button class="vt active" type="button" disabled>Insights</button>
   </div>
 </div>
@@ -171,15 +142,6 @@
       {{range .CritPath}}<li><span class="pchip {{pclass .Priority}}">{{.Priority}}</span> {{.Title}} <span class="cp-id mono">{{shortID .ID}}</span></li>{{end}}
     </ol>
     {{else}}<p class="ip-empty">No dependency chain in scope.</p>{{end}}
-  </div>
-
-  <div class="ipanel">
-    <div class="ip-head">Cycles</div>
-    {{if .Cycles}}
-    <ul class="cycles">
-      {{range .Cycles}}<li class="warn">{{range $i, $id := .}}{{if $i}} → {{end}}<span class="mono">{{shortID $id}}</span>{{end}}</li>{{end}}
-    </ul>
-    {{else}}<p class="ip-ok">No cycles — the graph is acyclic.</p>{{end}}
   </div>
 
   <div class="ipanel">

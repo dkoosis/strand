@@ -2,14 +2,11 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -1023,162 +1020,6 @@ func TestGuardNeverGatesGET(t *testing.T) {
 	}
 }
 
-// --- V3 dependency-graph view (strand-alg.2) ---
-
-// graphIssues is the fixture DAG for the graph view: epic demo-g holds a chain
-// (g.4→g.2→g.1, the critical path) and a 2-node cycle (g.5↔g.6); epic demo-h
-// holds one unrelated bead so the epic-scoping test has something to exclude.
-var graphIssues = []bd.Issue{
-	{ID: "demo-root", Title: "DEMO trunk", IssueType: "epic", Status: "open"}, // region; epics below are tiles
-	{ID: "demo-g", Parent: "demo-root", Title: "Graph epic", IssueType: "epic", Status: "open", Priority: 1},
-	{ID: "demo-g.1", Parent: "demo-g", Title: "Foundation", Status: "open", Priority: 1},
-	{ID: "demo-g.2", Parent: "demo-g", Title: "Mid", Status: "open", Priority: 2},
-	{ID: "demo-g.4", Parent: "demo-g", Title: "Leaf", Status: "in_progress", Priority: 2},
-	{ID: "demo-g.5", Parent: "demo-g", Title: "CycleA", Status: "open", Priority: 2},
-	{ID: "demo-g.6", Parent: "demo-g", Title: "CycleB", Status: "open", Priority: 2},
-	{ID: "demo-h", Parent: "demo-root", Title: "Other epic", IssueType: "epic", Status: "open", Priority: 2},
-	{ID: "demo-h.1", Parent: "demo-h", Title: "Elsewhere", Status: "open", Priority: 2},
-}
-
-// graphDeps mixes the kept "blocks" edges with noise the model must drop: a
-// parent-child edge (wrong type) and a blocks edge to an out-of-scope bead.
-var graphDeps = []bd.DepEdge{
-	{IssueID: "demo-g.2", DependsOnID: "demo-g.1", Type: "blocks"},
-	{IssueID: "demo-g.4", DependsOnID: "demo-g.2", Type: "blocks"},
-	{IssueID: "demo-g.5", DependsOnID: "demo-g.6", Type: "blocks"},
-	{IssueID: "demo-g.6", DependsOnID: "demo-g.5", Type: "blocks"},
-	{IssueID: "demo-g.1", DependsOnID: "demo-g", Type: "parent-child"}, // dropped: not a blocks edge
-	{IssueID: "demo-g.1", DependsOnID: "demo-out", Type: "blocks"},     // dropped: endpoint out of scope
-}
-
-var dataGraphRe = regexp.MustCompile(`data-graph="([^"]*)"`)
-
-// graphModelFromHTML pulls the serialized graph model back out of the rendered
-// fragment's data-graph attribute, so the test asserts on the exact node/edge
-// data the client will draw — not on pixels (spec Q0).
-func graphModelFromHTML(t *testing.T, body string) graphData {
-	t.Helper()
-	m := dataGraphRe.FindStringSubmatch(body)
-	if m == nil {
-		t.Fatalf("no data-graph attribute in fragment:\n%s", body)
-	}
-	var gd graphData
-	if err := json.Unmarshal([]byte(html.UnescapeString(m[1])), &gd); err != nil {
-		t.Fatalf("data-graph is not valid JSON (%v): %s", err, m[1])
-	}
-	return gd
-}
-
-func nodeIDs(gd graphData) map[string]graphNode {
-	m := make(map[string]graphNode, len(gd.Nodes))
-	for _, n := range gd.Nodes {
-		m[n.ID] = n
-	}
-	return m
-}
-
-// TestGraphFragmentRenders: the whole-region graph view returns a node per
-// in-scope bead and one edge per kept "blocks" dependency, with the view-toggle
-// and a Cytoscape mount point.
-func TestGraphFragmentRenders(t *testing.T) {
-	srv := newTestServer(t, &stubBD{issues: graphIssues, deps: graphDeps})
-	rec := do(t, srv, "/graph")
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /graph = %d, want 200", rec.Code)
-	}
-	body := rec.Body.String()
-	for _, want := range []string{
-		`id="cy"`,         // Cytoscape mounts here
-		`hx-get="/list"`,  // view-toggle back to Table
-		`hx-get="/board"`, // and Board
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("graph fragment missing %q", want)
-		}
-	}
-
-	gd := graphModelFromHTML(t, body)
-	nodes := nodeIDs(gd)
-	for _, id := range []string{"demo-g.1", "demo-g.2", "demo-g.4", "demo-g.5", "demo-g.6", "demo-h.1"} {
-		if _, ok := nodes[id]; !ok {
-			t.Errorf("graph model missing node %q", id)
-		}
-	}
-	// Four kept blocks edges; the parent-child and out-of-scope edges are gone.
-	if len(gd.Edges) != 4 {
-		t.Errorf("got %d edges, want 4 (blocks only, in-scope): %+v", len(gd.Edges), gd.Edges)
-	}
-	for _, e := range gd.Edges {
-		if e.Source == "demo-g.1" { // its only out-edges were both droppable
-			t.Errorf("kept a droppable edge from demo-g.1: %+v", e)
-		}
-	}
-}
-
-// TestGraphDropsOutOfScopeEdge: the load-bearing filter — a blocks edge to a bead
-// outside the scope must not smuggle that bead in as a node (Deps' single-ID
-// branch can synthesize such an edge).
-func TestGraphDropsOutOfScopeEdge(t *testing.T) {
-	srv := newTestServer(t, &stubBD{issues: graphIssues, deps: graphDeps})
-	gd := graphModelFromHTML(t, do(t, srv, "/graph").Body.String())
-	if _, leaked := nodeIDs(gd)["demo-out"]; leaked {
-		t.Error("out-of-scope bead leaked into the graph as a node")
-	}
-}
-
-// TestGraphScopedToEpic: the epic param narrows the graph to one epic's beads,
-// like Table and Board.
-func TestGraphScopedToEpic(t *testing.T) {
-	srv := newTestServer(t, &stubBD{issues: graphIssues, deps: graphDeps})
-	gd := graphModelFromHTML(t, do(t, srv, "/graph?epic=demo-g").Body.String())
-	nodes := nodeIDs(gd)
-	if _, ok := nodes["demo-g.1"]; !ok {
-		t.Error("epic graph missing its own bead demo-g.1")
-	}
-	if _, leaked := nodes["demo-h.1"]; leaked {
-		t.Error("epic graph leaked a bead from another epic")
-	}
-}
-
-// TestGraphMetricFlags: the server-side metric wiring — the critical path is the
-// g.4→g.2→g.1 chain, the cycle is {g.5,g.6}, and the foundational bead outranks a
-// leaf on PageRank.
-func TestGraphMetricFlags(t *testing.T) {
-	srv := newTestServer(t, &stubBD{issues: graphIssues, deps: graphDeps})
-	nodes := nodeIDs(graphModelFromHTML(t, do(t, srv, "/graph?epic=demo-g").Body.String()))
-
-	onPath := map[string]bool{"demo-g.1": true, "demo-g.2": true, "demo-g.4": true}
-	inCycle := map[string]bool{"demo-g.5": true, "demo-g.6": true}
-	for id, n := range nodes {
-		if n.OnPath != onPath[id] {
-			t.Errorf("%s OnPath = %v, want %v", id, n.OnPath, onPath[id])
-		}
-		if n.InCycle != inCycle[id] {
-			t.Errorf("%s InCycle = %v, want %v", id, n.InCycle, inCycle[id])
-		}
-	}
-	if nodes["demo-g.1"].Score <= nodes["demo-g.4"].Score {
-		t.Errorf("foundational g.1 (%v) should outrank leaf g.4 (%v) on PageRank",
-			nodes["demo-g.1"].Score, nodes["demo-g.4"].Score)
-	}
-}
-
-// TestGraphNoRepo: with no active repo the graph view degrades to the empty pane
-// at 200, like Board.
-func TestGraphNoRepo(t *testing.T) {
-	tmpl, err := web.Templates()
-	if err != nil {
-		t.Fatalf("parse templates: %v", err)
-	}
-	srv := New(func(registry.Repo) IssueSource { return &stubBD{} },
-		registry.InMemory(), tmpl, web.Static(), forest.Synthesis{})
-	rec := do(t, srv, "/graph")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /graph (no repo) = %d, want 200", rec.Code)
-	}
-}
-
 // --- V4 insights (strand-alg.3) ---
 
 // insightsNow is the fixed clock the insights tests pin Server.now to, so the stale
@@ -1341,7 +1182,7 @@ func TestBeadPath(t *testing.T) {
 	}
 }
 
-// TestInsightsFragmentRenders: the dashboard returns the six panels, the view-toggle
+// TestInsightsFragmentRenders: the dashboard returns its panels, the view-toggle
 // (with Insights active and links back to the other views), and the computed values.
 func TestInsightsFragmentRenders(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: insightsIssues, deps: insightsDeps})
@@ -1353,11 +1194,10 @@ func TestInsightsFragmentRenders(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"Triage", "Influence", "Bottlenecks", "Critical path", "Cycles", "Label health",
+		"Triage", "Influence", "Bottlenecks", "Critical path", "Label health",
 		`hx-get="/list?epic=demo-i"`,  // toggle back to Table
-		`hx-get="/graph?epic=demo-i"`, // and Graph
+		`hx-get="/board?epic=demo-i"`, // and Board
 		"Foundation",                  // top influence bead title
-		"No cycles",                   // acyclic fixture
 		"untagged",                    // hygiene warning (demo-i.5)
 	} {
 		if !strings.Contains(body, want) {
@@ -1377,20 +1217,6 @@ func TestInsightsScopedToEpic(t *testing.T) {
 	body := do(t, srv, "/insights?epic=demo-i").Body.String()
 	if strings.Contains(body, "Elsewhere") {
 		t.Error("epic-scoped insights leaked a bead from another epic")
-	}
-}
-
-// TestInsightsCycleWarning: a scope with a dependency cycle surfaces it instead of
-// the all-clear (reuses the graph fixture's {g.5,g.6} cycle).
-func TestInsightsCycleWarning(t *testing.T) {
-	srv := newTestServer(t, &stubBD{issues: graphIssues, deps: graphDeps})
-	srv.now = func() time.Time { return insightsNow }
-	body := do(t, srv, "/insights?epic=demo-g").Body.String()
-	if strings.Contains(body, "No cycles") {
-		t.Error("cyclic scope reported as acyclic")
-	}
-	if !strings.Contains(body, `class="cycles"`) {
-		t.Error("cycle panel missing the cycle list")
 	}
 }
 
@@ -1479,24 +1305,24 @@ func (c *countingBD) Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, err
 	return c.stubBD.Deps(ctx, ids...)
 }
 
-// TestSnapshotCacheCrossView: navigating forest→list→board→graph→insights on one
-// repo fetches List and Deps once each; every later view is served from the
-// in-process snapshot (acceptance: cross-view nav hits memory after first load).
+// TestSnapshotCacheCrossView: navigating forest→list→board→insights on one repo
+// fetches List and Deps once each; every later view is served from the in-process
+// snapshot (acceptance: cross-view nav hits memory after first load).
 func TestSnapshotCacheCrossView(t *testing.T) {
 	src := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
 	srv := newTestServer(t, src)
 	srv.now = func() time.Time { return cacheNow }
 
-	for _, p := range []string{"/", "/list", "/board", "/graph", "/insights"} {
+	for _, p := range []string{"/", "/list", "/board", "/insights"} {
 		if rec := do(t, srv, p); rec.Code != http.StatusOK {
 			t.Fatalf("GET %s = %d, want 200", p, rec.Code)
 		}
 	}
 	if src.listCalls != 1 {
-		t.Errorf("List spawned %d times across five views, want 1 (cache miss only on first load)", src.listCalls)
+		t.Errorf("List spawned %d times across the views, want 1 (cache miss only on first load)", src.listCalls)
 	}
 	if src.depsCalls != 1 {
-		t.Errorf("Deps spawned %d times, want 1 (graph+insights share one fetch)", src.depsCalls)
+		t.Errorf("Deps spawned %d times, want 1 (insights' fetch is cached)", src.depsCalls)
 	}
 }
 

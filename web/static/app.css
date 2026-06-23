@@ -378,19 +378,6 @@ footer b { color: var(--ink-3); font-weight: 500; }
 .quit-btn:hover { border-color: var(--st-blocked); color: var(--st-blocked); }
 .stopped { color: var(--st-blocked); }
 
-/* ============================================================ dependency graph (V3) */
-.graph-legend {
-  display: flex; gap: var(--s-5); align-items: center; flex: 0 0 auto;
-  padding: var(--s-3) var(--s-6); border-bottom: 1px solid var(--line);
-  font-size: var(--fs-9); color: var(--ink-3);
-}
-.gl { display: inline-flex; align-items: center; gap: var(--s-2); }
-.gl-key { width: 12px; height: 12px; border-radius: 50%; background: var(--ink-3); }
-.gl-size { width: 14px; height: 14px; }
-.gl-cycle { background: none; border: 2px solid var(--st-blocked); }
-.gl-path { background: none; border: 2px solid #eab308; } /* matches the graph's critical-path border */
-#cy { flex: 1; min-height: 0; width: 100%; background: var(--bg); }
-
 /* V4 insights — Tufte panels over in-process metrics (§10) */
 .insights {
   flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-6);
@@ -407,8 +394,7 @@ footer b { color: var(--ink-3); font-weight: 500; }
   text-transform: uppercase; letter-spacing: .06em; margin-bottom: var(--s-5);
 }
 .ip-sub { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--ink-3); }
-.ip-empty, .ip-ok, .ip-warn { font-size: var(--fs-8); color: var(--ink-3); margin: 0; }
-.ip-ok { color: var(--ink-2); }
+.ip-empty, .ip-warn { font-size: var(--fs-8); color: var(--ink-3); margin: 0; }
 .ip-warn { margin-top: var(--s-4); color: #e0746e; }
 
 .counts { display: flex; flex-wrap: wrap; gap: var(--s-8); }
@@ -427,9 +413,6 @@ footer b { color: var(--ink-3); font-weight: 500; }
 .critpath { margin: 0; padding-left: var(--s-7); display: flex; flex-direction: column; gap: var(--s-3); }
 .critpath li { font-size: var(--fs-8); }
 .cp-id { font-size: var(--fs-9); color: var(--ink-3); }
-
-.cycles { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-3); }
-.cycles li.warn { font-size: var(--fs-8); color: #e0746e; }
 
 .labels { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-3); }
 .labels li { display: flex; justify-content: space-between; font-size: var(--fs-8); }

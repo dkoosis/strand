@@ -33,13 +33,6 @@ func TestCriticalPath(t *testing.T) {
 	}
 }
 
-func TestNoCyclesInDAG(t *testing.T) {
-	m := Compute(diamond())
-	if len(m.Cycles) != 0 {
-		t.Errorf("Cycles = %v, want none", m.Cycles)
-	}
-}
-
 func TestPageRankRanksFoundationOverLeaf(t *testing.T) {
 	m := Compute(diamond())
 	if len(m.PageRank) != 5 {
@@ -70,15 +63,17 @@ func TestBetweennessPeaksAtChokepoint(t *testing.T) {
 	}
 }
 
-func TestCycleDetected(t *testing.T) {
-	// A 3-cycle plus a self-loop; depth must still terminate.
+// TestCycleTerminates pins that a cyclic graph (a 3-cycle plus a self-loop) no
+// longer hangs the critical-path walk, even though cycles are no longer surfaced
+// as a finding (strand-6k0.1). The depth memo's visiting-guard is what guarantees
+// termination on a back-edge.
+func TestCycleTerminates(t *testing.T) {
 	m := Compute(
 		[]string{"X", "Y", "Z", "S"},
 		[]Edge{{"X", "Y"}, {"Y", "Z"}, {"Z", "X"}, {"S", "S"}},
 	)
-	wantCycles := [][]string{{"S"}, {"X", "Y", "Z"}}
-	if !reflect.DeepEqual(m.Cycles, wantCycles) {
-		t.Errorf("Cycles = %v, want %v", m.Cycles, wantCycles)
+	if len(m.PageRank) != 4 {
+		t.Errorf("PageRank should cover all 4 nodes, got %d", len(m.PageRank))
 	}
 }
 
@@ -87,15 +82,15 @@ func TestEmptyGraph(t *testing.T) {
 	if m.PageRank == nil || m.Betweenness == nil {
 		t.Error("metric maps must be non-nil even when empty")
 	}
-	if len(m.PageRank) != 0 || len(m.CriticalPath) != 0 || len(m.Cycles) != 0 {
+	if len(m.PageRank) != 0 || len(m.CriticalPath) != 0 {
 		t.Errorf("empty graph should yield empty metrics, got %+v", m)
 	}
 }
 
 // TestNodesNoEdgesTerminates is the regression for strand-d6f: a scope with
 // nodes but zero in-scope edges (every dependency filtered out) once drove
-// gonum's HITS to divide by a zero link norm and spin forever, hanging /graph
-// and /insights past their request deadline. HITS is gone (api-surface F1), but
+// gonum's HITS to divide by a zero link norm and spin forever, hanging the
+// /insights request past its deadline. HITS is gone (api-surface F1), but
 // the edgeless-scope path stays pinned: Compute must return promptly and cover
 // every node in PageRank.
 func TestNodesNoEdgesTerminates(t *testing.T) {
