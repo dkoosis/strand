@@ -2,8 +2,6 @@ package bd
 
 import "testing"
 
-func pi(n int) *int { return &n }
-
 // TestDecodeIssuePriority pins the Priority decode contract now that Issue.Priority
 // is *int. A present field decodes to a non-nil pointer (0 included); an absent
 // field decodes to nil — no longer collapsing to a false P0.
@@ -13,9 +11,9 @@ func TestDecodeIssuePriority(t *testing.T) {
 		json string
 		want *int
 	}{
-		{name: "present zero is P0", json: `[{"id":"a-1","priority":0}]`, want: pi(0)},
-		{name: "present nonzero round-trips", json: `[{"id":"a-2","priority":2}]`, want: pi(2)},
-		{name: "present highest boundary", json: `[{"id":"a-3","priority":4}]`, want: pi(4)},
+		{name: "present zero is P0", json: `[{"id":"a-1","priority":0}]`, want: new(0)},
+		{name: "present nonzero round-trips", json: `[{"id":"a-2","priority":2}]`, want: new(2)},
+		{name: "present highest boundary", json: `[{"id":"a-3","priority":4}]`, want: new(4)},
 		{name: "absent decodes to nil (no false P0)", json: `[{"id":"a-4"}]`, want: nil},
 	}
 	for _, tc := range cases {
