@@ -75,6 +75,12 @@ func TestCycleTerminates(t *testing.T) {
 	if len(m.PageRank) != 4 {
 		t.Errorf("PageRank should cover all 4 nodes, got %d", len(m.PageRank))
 	}
+	// The walk must still yield a path through the broken cycle. Its length is
+	// deterministic (the 3-cycle, cut once, is a chain of 3); the content is not —
+	// the depth-3 node is whichever gonum's map-backed iterator visits first.
+	if len(m.CriticalPath) != 3 {
+		t.Errorf("CriticalPath through the 3-cycle = %v, want length 3", m.CriticalPath)
+	}
 }
 
 func TestEmptyGraph(t *testing.T) {

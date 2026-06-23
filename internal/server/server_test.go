@@ -1313,7 +1313,10 @@ func TestSnapshotCacheCrossView(t *testing.T) {
 	srv := newTestServer(t, src)
 	srv.now = func() time.Time { return cacheNow }
 
-	for _, p := range []string{"/", "/list", "/board", "/insights"} {
+	// /insights is the only view that fetches Deps; request it twice so the
+	// depsCalls==1 assertion proves the second hit is served from the snapshot,
+	// not just that one view fetched once.
+	for _, p := range []string{"/", "/list", "/board", "/insights", "/insights"} {
 		if rec := do(t, srv, p); rec.Code != http.StatusOK {
 			t.Fatalf("GET %s = %d, want 200", p, rec.Code)
 		}
