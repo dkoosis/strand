@@ -310,8 +310,10 @@ var sampleIssues = []bd.Issue{
 	{ID: "demo-e2", Parent: "demo-root", Title: "Lone task", IssueType: "task", Status: "open", Priority: 3},
 }
 
-// TestForestPageRenders pins the landing: the page renders the north star, the
-// treemap, and a sized tile per epic with htmx wiring to the list pane.
+// TestForestPageRenders pins the view-centric landing: the page renders the north
+// star, the loud primary view-switcher (Table/Board/Insights tabs), the minimap
+// treemap with a tile per epic carrying its filter identity (data-epic, routed to
+// the active view by app.js), and the centerpiece list.
 func TestForestPageRenders(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: sampleIssues})
 	rec := do(t, srv, "/")
@@ -322,9 +324,14 @@ func TestForestPageRenders(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"remember across sessions", // north star
+		`class="viewbar"`,          // loud primary view switcher
+		`class="viewtab active" type="button" data-view="list"`, // Table is the default loud tab
+		`data-view="board"`,    // Board tab present
+		`data-view="insights"`, // Insights tab present
+		`class="minimap"`,      // treemap demoted to ambient minimap rail
 		`class="treemap"`,
-		`hx-get="/list?epic=demo-e1"`, // tile drills into its epic
-		`hx-get="/list?epic=demo-e2"`,
+		`data-epic="demo-e1"`, // tile carries its filter identity (app.js routes the click)
+		`data-epic="demo-e2"`,
 		`class="flag"`, // demo-e1 holds P0/P1 work
 	} {
 		if !strings.Contains(body, want) {
@@ -444,6 +451,11 @@ func TestBoardScopedToEpic(t *testing.T) {
 	}
 	if strings.Contains(body, "Lone task") {
 		t.Error("epic board leaked a bead from another epic")
+	}
+	// The board head carries the scope marker app.js reads to keep the top tab strip
+	// on Board at this epic, so a minimap click filters the active (board) view.
+	if !strings.Contains(body, `data-view="board"`) || !strings.Contains(body, `data-epic="demo-e1"`) {
+		t.Error("board fragment missing data-view/data-epic scope marker")
 	}
 }
 
@@ -1326,8 +1338,9 @@ func TestBeadPath(t *testing.T) {
 	}
 }
 
-// TestInsightsFragmentRenders: the dashboard returns its panels, the view-toggle
-// (with Insights active and links back to the other views), and the computed values.
+// TestInsightsFragmentRenders: the dashboard returns its panels, the scope marker
+// app.js reads to keep the top tab strip on Insights at this epic, and the computed
+// values. The view switcher itself is now top-level page chrome, not per-fragment.
 func TestInsightsFragmentRenders(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: insightsIssues, deps: insightsDeps})
 	srv.now = func() time.Time { return insightsNow }
@@ -1342,13 +1355,13 @@ func TestInsightsFragmentRenders(t *testing.T) {
 		"Move these",              // influence headline (consequence, not algorithm)
 		"Unblock these",           // bottleneck headline
 		"PageRank", "betweenness", // method survives as small provenance
-		"Ready to dispatch",           // the new READY-by-influence card
-		`hx-get="/list?epic=demo-i"`,  // toggle back to Table
-		`hx-get="/board?epic=demo-i"`, // and Board
-		`hx-get="/bead/demo-i.1"`,     // ranked rows click → drawer
-		`hx-target="#drawer"`,         // ...into the detail panel
-		"Foundation",                  // top influence bead title
-		"untagged",                    // hygiene warning (demo-i.5)
+		"Ready to dispatch",       // the new READY-by-influence card
+		`data-view="insights"`,    // scope marker: app.js syncs the Insights tab as active
+		`data-epic="demo-i"`,      // ...scoped to this epic, so a tab switch keeps the scope
+		`hx-get="/bead/demo-i.1"`, // ranked rows click → drawer
+		`hx-target="#drawer"`,     // ...into the detail panel
+		"Foundation",              // top influence bead title
+		"untagged",                // hygiene warning (demo-i.5)
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("insights fragment missing %q", want)
