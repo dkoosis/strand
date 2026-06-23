@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -71,16 +72,6 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	go func() {
-		<-ctx.Done()
-		log.Printf("strand: shutting down — bye")
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := httpSrv.Shutdown(shutCtx); err != nil {
-			log.Printf("strand: shutdown: %v", err)
-		}
-	}()
-
 	// Bind before announcing, so a failed bind reports the conflict instead of a
 	// misleading "serving" line followed by an error.
 	lc := net.ListenConfig{}
@@ -95,9 +86,39 @@ func main() {
 	}
 
 	log.Printf("strand %s: serving http://%s  (ctrl-c to stop)", Version, *addr)
-	if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := serve(ctx, httpSrv, ln); err != nil {
 		log.Fatalf("strand: %v", err)
 	}
+}
+
+// serve runs httpSrv on ln until ctx is cancelled, then drains in-flight
+// requests before returning. The shutdownDone handshake is the point: Serve
+// unblocks at the START of Shutdown, so without waiting on it the caller would
+// return mid-drain and drop the very in-flight requests graceful shutdown is
+// meant to protect. Returns nil on a clean shutdown; a non-nil error only for a
+// genuine Serve failure (e.g. the listener dies).
+func serve(ctx context.Context, httpSrv *http.Server, ln net.Listener) error {
+	shutdownDone := make(chan struct{})
+	// Detached from ctx on purpose: by the time this drains, ctx is already
+	// cancelled, so the grace period must come from a fresh context.
+	go func() { //nolint:gosec // G118: the drain's shutdown context is deliberately detached from the cancelled ctx
+		defer close(shutdownDone)
+		<-ctx.Done()
+		log.Printf("strand: shutting down — bye")
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := httpSrv.Shutdown(shutCtx); err != nil {
+			log.Printf("strand: shutdown: %v", err)
+		}
+	}()
+
+	if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("serve: %w", err)
+	}
+	// Serve returned ErrServerClosed — a shutdown is in progress. Wait for the
+	// goroutine to finish draining before returning, so in-flight requests land.
+	<-shutdownDone
+	return nil
 }
 
 // seedDir resolves the workspace to seed at launch: the -dir flag if set, else
