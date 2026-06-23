@@ -76,7 +76,10 @@ function syncChrome() {
   const clear = document.getElementById("mmClear");
   if (clear) clear.hidden = !epic;
   document.querySelectorAll(".mm-filter").forEach((el) => {
-    el.classList.toggle("on", !!epic && el.dataset.epic === epic);
+    // Region heads carry no data-epic — they represent "whole forest", so they
+    // light up when nothing is filtered. Tiles light up when their epic matches.
+    const isRegion = el.classList.contains("rg-head");
+    el.classList.toggle("on", isRegion ? !epic : (!!epic && el.dataset.epic === epic));
   });
 }
 // A tab click loads its view at the CURRENT scope. The button's hx-get is static

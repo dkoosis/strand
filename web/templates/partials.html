@@ -12,6 +12,7 @@
     <div class="rg-body">
       {{range .Epics}}
       <div class="tile mm-filter" role="button" tabindex="0"
+           aria-label="{{cleanName .Name}}"
            style="--rc:{{.Color}};left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%"
            data-name="{{cleanName .Name}}" data-epic="{{.ID}}" data-open="{{.Open}}" data-flag="{{if .Flag}}1{{end}}">
         {{if .Flag}}<span class="flag"></span>{{end}}
