@@ -8,7 +8,7 @@
     <div class="rg-body">
       {{range .Epics}}
       <div class="tile"
-           style="left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%"
+           style="--rc:{{.Color}};left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%"
            data-name="{{cleanName .Name}}" data-open="{{.Open}}" data-flag="{{if .Flag}}1{{end}}"
            hx-get="/list?epic={{.ID}}" hx-target="#listPane">
         {{if .Flag}}<span class="flag"></span>{{end}}
