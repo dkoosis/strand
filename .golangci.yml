@@ -85,6 +85,13 @@ linters:
     - wsl
 
   settings:
+    wrapcheck:
+      # cachingSource transparently decorates the IssueSource interface; its
+      # passthrough/memoize methods return the underlying error as-is (already
+      # surfaced at the bd boundary). Re-wrapping a same-interface decorator
+      # would only double-prefix, so exempt the decorated interface.
+      ignore-interface-regexps:
+        - IssueSource
     errcheck:
       exclude-functions:
         - (io.Closer).Close

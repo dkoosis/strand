@@ -23,7 +23,9 @@ import (
 // out so a tile's color never collides with the status/priority signals
 // (blocked, in-progress, P0/P1). Each entry is a vivid mid-tone that reads as a
 // gentle tint once mixed into the card at --tile-mix.
-var tilePalette = []string{
+const nTrunkHues = 8
+
+var tilePalette = [nTrunkHues]string{
 	"#3e63dd", // indigo
 	"#6e56cf", // violet
 	"#ab4aba", // plum
@@ -40,7 +42,9 @@ var tilePalette = []string{
 func trunkColor(id string) string {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(id))
-	return tilePalette[h.Sum32()%uint32(len(tilePalette))]
+	// Modulo by the untyped const keeps the math in uint32 with no int->uint32
+	// conversion, and the array size ties to nTrunkHues so the index can't escape.
+	return tilePalette[h.Sum32()%nTrunkHues]
 }
 
 // Bead is one issue as the bead-list renders it.
