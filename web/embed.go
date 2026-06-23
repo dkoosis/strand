@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/forest"
 )
 
@@ -33,7 +34,7 @@ func Templates() (*template.Template, error) {
 }
 
 var funcs = template.FuncMap{
-	"statusLabel": func(s string) string { return strings.ReplaceAll(s, "_", " ") },
+	"statusLabel": func(s bd.Status) string { return strings.ReplaceAll(string(s), "_", " ") },
 	"pclass":      func(p int) string { return "p" + strconv.Itoa(clampPri(p)) },
 	"shortID":     shortID,
 	"cleanName":   cleanName,

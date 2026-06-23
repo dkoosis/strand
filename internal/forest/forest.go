@@ -18,7 +18,7 @@ import (
 type Bead struct {
 	ID       string
 	Title    string
-	Status   string
+	Status   bd.Status
 	Priority int
 	Type     string
 	Assignee string
@@ -84,8 +84,8 @@ type Synthesis struct {
 
 // openish reports whether a status counts as live work. Closed and deferred
 // issues are not part of the forest — it shows what's in motion.
-func openish(status string) bool {
-	return status != "closed" && status != "deferred"
+func openish(status bd.Status) bool {
+	return status != bd.StatusClosed && status != bd.StatusDeferred
 }
 
 // Build assembles the forest from a flat issue list and the synthesis layer.
@@ -103,7 +103,7 @@ func Build(issues []bd.Issue, syn Synthesis) Forest {
 		if !openish(issues[i].Status) {
 			continue
 		}
-		if issues[i].Status == "in_progress" {
+		if issues[i].Status == bd.StatusInProgress {
 			inProgress++
 		}
 		root := rootOf(issues[i].ID, byID)
