@@ -110,10 +110,16 @@ type CreateOpts struct {
 	Type        string // task | bug | feature | epic
 	Priority    *int   // 0–4; nil leaves bd's default
 	Assignee    string
+	// Parent is the parent issue id for the forest's tree axis. Empty means the
+	// bead is created off-trunk (no --parent); the create handler enforces that
+	// an empty Parent is a deliberate off-trunk choice, never an accidental
+	// parentless bead.
+	Parent string
 }
 
-// Create makes a new issue and returns it.
-func (c *Client) Create(ctx context.Context, opts CreateOpts) (*Issue, error) {
+// Create makes a new issue and returns it. opts is taken by pointer (it grew
+// past the by-value lint threshold once Parent was added); callers pass &opts.
+func (c *Client) Create(ctx context.Context, opts *CreateOpts) (*Issue, error) {
 	if opts.Title == "" {
 		return nil, fmt.Errorf("create: %w", ErrEmptyTitle)
 	}
@@ -129,6 +135,9 @@ func (c *Client) Create(ctx context.Context, opts CreateOpts) (*Issue, error) {
 	}
 	if opts.Assignee != "" {
 		args = append(args, "--assignee", opts.Assignee)
+	}
+	if opts.Parent != "" {
+		args = append(args, "--parent", opts.Parent)
 	}
 	out, err := c.run(ctx, append(args, "--json")...)
 	if err != nil {

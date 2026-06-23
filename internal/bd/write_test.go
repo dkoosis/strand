@@ -162,7 +162,7 @@ func TestRankAccessorParsesStringAndRejectsGarbage(t *testing.T) {
 func TestCreateSendsSetFieldsOnly(t *testing.T) {
 	c, log := fakeBD(t, `echo '{"id":"x-9","title":"hi","status":"open"}'`)
 	p := 1
-	got, err := c.Create(context.Background(), CreateOpts{Title: "hi", Type: "task", Priority: &p})
+	got, err := c.Create(context.Background(), &CreateOpts{Title: "hi", Type: "task", Priority: &p})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -178,11 +178,30 @@ func TestCreateSendsSetFieldsOnly(t *testing.T) {
 	if strings.Contains(line, "--description") || strings.Contains(line, "--assignee") {
 		t.Errorf("args %q sent an unset field", line)
 	}
+	if strings.Contains(line, "--parent") {
+		t.Errorf("args %q sent --parent for an unset Parent", line)
+	}
+}
+
+// Create emits --parent when Parent is set, so the forest's tree axis is wired
+// at birth (str-6k0.6.2 forced-parent contract). An empty Parent omits the flag
+// — that's the deliberate off-trunk path, covered by TestCreateSendsSetFieldsOnly.
+func TestCreateSendsParentWhenSet(t *testing.T) {
+	c, log := fakeBD(t, `echo '{"id":"x-9","title":"hi","status":"open"}'`)
+	if _, err := c.Create(context.Background(), &CreateOpts{Title: "hi", Parent: "epic-7"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	line := readLog(t, log)[0]
+	for _, want := range []string{"create", "--title", "hi", "--parent", "epic-7"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("args %q missing %q", line, want)
+		}
+	}
 }
 
 func TestCreateEmptyTitleRejected(t *testing.T) {
 	c, _ := fakeBD(t, `echo '[]'`)
-	if _, err := c.Create(context.Background(), CreateOpts{}); err == nil {
+	if _, err := c.Create(context.Background(), &CreateOpts{}); err == nil {
 		t.Fatal("want error for empty title, got nil")
 	}
 }
