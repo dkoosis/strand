@@ -146,7 +146,10 @@ function showBoardError(msg) {
   el.hidden = false;
 }
 // A bead move that bd rejected: revert the optimistic drop and show the reason.
+// Gate on POST: the dragged card/row also carries hx-get (opens the drawer), so a
+// drawer GET failing mid-drag must not fire the revert against a live _revert slot.
 document.body.addEventListener("htmx:responseError", (e) => {
+  if (e.detail.requestConfig?.verb !== "post") return;
   const card = e.detail.elt;
   if (card && card._revert) {
     card._revert();
@@ -158,6 +161,10 @@ document.body.addEventListener("htmx:responseError", (e) => {
 // froze for the duration of the request and drop the now-consumed revert slot,
 // so the next drag starts from a clean state (strand-vd2).
 document.body.addEventListener("htmx:afterRequest", (e) => {
+  // Only the drag POSTs froze anything. The same card/row also has hx-get for the
+  // drawer; a GET completing mid-drag would otherwise thaw and clear _revert early,
+  // defeating the guard if the POST then errors (strand-vd2).
+  if (e.detail.requestConfig?.verb !== "post") return;
   const elt = e.detail.elt;
   if (!elt) return;
   thawSortables(elt);
