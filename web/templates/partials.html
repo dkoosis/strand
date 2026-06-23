@@ -12,7 +12,6 @@
            data-name="{{cleanName .Name}}" data-open="{{.Open}}" data-flag="{{if .Flag}}1{{end}}"
            hx-get="/list?epic={{.ID}}" hx-target="#listPane">
         {{if .Flag}}<span class="flag"></span>{{end}}
-        <div class="to tnum">{{.Open}}</div>
       </div>
       {{end}}
     </div>
