@@ -59,16 +59,26 @@ type Bead struct {
 	HasRank  bool
 }
 
+// defaultPriority is the render priority for a bead whose bd.Issue omitted the
+// field (Issue.Priority == nil). It matches bd's own default (P2) and keeps an
+// absent-priority bead off the P0/P1 active-work flag and the top of priority-asc
+// sort — never a false P0 (str-zvh).
+const defaultPriority = 2
+
 // NewBead projects a bd.Issue onto the render-facing Bead — the one place that
 // maps bd's field names (IssueType) to the view's, so the epic roll-up and the
 // board's single-card refresh can't drift.
 func NewBead(i *bd.Issue) Bead {
 	rank, hasRank := i.Rank()
+	priority := defaultPriority
+	if i.Priority != nil {
+		priority = *i.Priority
+	}
 	return Bead{
 		ID:       i.ID,
 		Title:    i.Title,
 		Status:   i.Status,
-		Priority: i.Priority,
+		Priority: priority,
 		Type:     i.IssueType,
 		Assignee: i.Assignee,
 		Rank:     rank,
@@ -337,10 +347,11 @@ func buildEpic(rootID string, members []bd.Issue, byID map[string]bd.Issue) Epic
 	}
 	e.Beads = make([]Bead, 0, len(members))
 	for i := range members {
-		if members[i].Priority <= 1 {
+		b := NewBead(&members[i])
+		if b.Priority <= 1 {
 			e.Flag = true
 		}
-		e.Beads = append(e.Beads, NewBead(&members[i]))
+		e.Beads = append(e.Beads, b)
 	}
 	sortBeads(e.Beads)
 	return e
