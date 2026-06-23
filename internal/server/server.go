@@ -924,22 +924,29 @@ func leaderboard(beads []forest.Bead, score map[string]float64) []rankedBead {
 			ranked = append(ranked, rankedBead{Bead: beads[i], Score: s})
 		}
 	}
-	slices.SortFunc(ranked, func(a, b rankedBead) int {
+	return rankBoard(ranked)
+}
+
+// rankBoard is the shared tail of every insights board: sort by score (descending,
+// ID tiebreak), cap at leaderboardSize, and size each row's bar against the leader.
+// The top>0 guard makes it safe for the ready queue, whose rows can score zero.
+func rankBoard(board []rankedBead) []rankedBead {
+	slices.SortFunc(board, func(a, b rankedBead) int {
 		if a.Score != b.Score {
 			return cmp.Compare(b.Score, a.Score) // descending
 		}
 		return cmp.Compare(a.ID, b.ID) // stable tiebreak
 	})
-	if len(ranked) > leaderboardSize {
-		ranked = ranked[:leaderboardSize]
+	if len(board) > leaderboardSize {
+		board = board[:leaderboardSize]
 	}
-	if len(ranked) > 0 {
-		top := ranked[0].Score
-		for i := range ranked {
-			ranked[i].Width = int(ranked[i].Score / top * 100)
+	if len(board) > 0 && board[0].Score > 0 {
+		top := board[0].Score
+		for i := range board {
+			board[i].Width = int(board[i].Score / top * 100)
 		}
 	}
-	return ranked
+	return board
 }
 
 // readyQueue is the dispatch queue: the scope's ready beads (open, no unmet blocker),
@@ -960,22 +967,7 @@ func readyQueue(beads []forest.Bead, openBlockers map[string]int, idx map[string
 			Stale: isStale(b.Status, idx[b.ID].UpdatedAt, now),
 		})
 	}
-	slices.SortFunc(ready, func(a, b rankedBead) int {
-		if a.Score != b.Score {
-			return cmp.Compare(b.Score, a.Score) // descending
-		}
-		return cmp.Compare(a.ID, b.ID) // stable tiebreak
-	})
-	if len(ready) > leaderboardSize {
-		ready = ready[:leaderboardSize]
-	}
-	if len(ready) > 0 && ready[0].Score > 0 {
-		top := ready[0].Score
-		for i := range ready {
-			ready[i].Width = int(ready[i].Score / top * 100)
-		}
-	}
-	return ready
+	return rankBoard(ready)
 }
 
 // crossFlag marks each ranked row that ALSO sits in the blocked or stale set — the
