@@ -353,6 +353,40 @@ func TestListFragmentNarrowsToEpic(t *testing.T) {
 	}
 }
 
+// TestEpicGroupHeadBranches pins both epic-group renders after the epicArgs
+// bool-trap split: the region view (every epic) draws a group header per epic,
+// while the epic-scoped view drops the header (the pane already names the epic).
+func TestEpicGroupHeadBranches(t *testing.T) {
+	srv := newTestServer(t, &stubBD{issues: sampleIssues})
+
+	// Region view: no epic param ranges over Region.Epics with a head per group.
+	recRegion := do(t, srv, "/list")
+	if recRegion.Code != http.StatusOK {
+		t.Fatalf("GET /list = %d, want 200", recRegion.Code)
+	}
+	region := recRegion.Body.String()
+	if !strings.Contains(region, `class="eg-head"`) {
+		t.Error("region list missing per-epic group header")
+	}
+	if !strings.Contains(region, `hx-get="/list?epic=demo-e1"`) {
+		t.Error("group header missing drill-in wiring")
+	}
+
+	// Epic-scoped view: the header is redundant (the pane head already names it).
+	recEpic := do(t, srv, "/list?epic=demo-e1")
+	if recEpic.Code != http.StatusOK {
+		t.Fatalf("GET /list?epic=demo-e1 = %d, want 200", recEpic.Code)
+	}
+	epic := recEpic.Body.String()
+	if strings.Contains(epic, `class="eg-head"`) {
+		t.Error("epic-scoped list drew a redundant group header")
+	}
+	// The body (bead rows) must still render in both branches.
+	if !strings.Contains(epic, `class="bead-rows" data-epic="demo-e1"`) {
+		t.Error("epic-scoped list missing its bead rows")
+	}
+}
+
 // TestBoardRendersColumns: the kanban defaults to a status pivot, drawing the
 // canonical columns as drop targets and a draggable card per bead, wired for the
 // move POST and the drawer drill.
