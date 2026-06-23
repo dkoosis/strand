@@ -58,8 +58,12 @@ type Issue struct {
 	// Priority is 0–4 (0=highest); bd's `list`/`show` JSON always emits it,
 	// defaulting to 2, so a plain 0 means P0 unambiguously — there is no
 	// absent-vs-zero hazard on the read path (zero-sentinel F1, verified against
-	// bd's contract). The write path still uses *int (CreateOpts) where omission
-	// is a real option.
+	// bd's contract). This contract is pinned by TestDecodeIssuePriority /
+	// TestDecodeIssueAbsentPriorityIsIndistinguishable: as a plain int, absent
+	// would collapse to 0 (false P0), so those tests document the dependence on
+	// bd always emitting the field — change the type to *int if bd ever may omit
+	// it. The write path already uses *int (CreateOpts) where omission is a real
+	// option.
 	Priority        int       `json:"priority"`
 	IssueType       string    `json:"issue_type"`
 	Parent          string    `json:"parent,omitempty"`

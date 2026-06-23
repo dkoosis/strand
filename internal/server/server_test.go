@@ -222,6 +222,50 @@ func (s *stubBD) Close(_ context.Context, id, _ string) (*bd.Issue, error) {
 // forest region the way the active repo's name does in production.
 var demoRepo = registry.Repo{Name: "demo", Path: "/demo"}
 
+// readOnlyStub implements ONLY the readSource methods (List/Deps/Comments) — no
+// writes. It pins the narrowed seam (strand-8zg): the read helpers must depend on
+// readSource, not the fat IssueSource, so a source with no write methods drives
+// them. If a read helper grew a write call, buildForest/insightsModel/renderDrawer
+// would no longer accept this type and the package would not compile.
+type readOnlyStub struct{ inner *stubBD }
+
+func (r *readOnlyStub) List(ctx context.Context, args ...string) ([]bd.Issue, error) {
+	return r.inner.List(ctx, args...)
+}
+
+func (r *readOnlyStub) Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, error) {
+	return r.inner.Deps(ctx, ids...)
+}
+
+func (r *readOnlyStub) Comments(ctx context.Context, id string) ([]bd.Comment, error) {
+	return r.inner.Comments(ctx, id)
+}
+
+// readOnlyStub satisfies the narrow seam but NOT the fat IssueSource.
+var _ readSource = (*readOnlyStub)(nil)
+
+// TestReadHelpersTakeReadSource drives the three read helpers through a source
+// that has no write methods, proving they bind to readSource (strand-8zg).
+func TestReadHelpersTakeReadSource(t *testing.T) {
+	srv := newTestServer(t, &stubBD{issues: sampleIssues, deps: sampleDeps})
+	src := &readOnlyStub{inner: &stubBD{issues: sampleIssues, deps: sampleDeps}}
+	ctx := context.Background()
+
+	f, err := srv.buildForest(ctx, src, demoRepo)
+	if err != nil {
+		t.Fatalf("buildForest: %v", err)
+	}
+	view := listViewFor(f, "")
+	if _, err := srv.insightsModel(ctx, src, &view, sampleIssues); err != nil {
+		t.Fatalf("insightsModel: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	srv.renderDrawer(ctx, rec, src, &sampleIssues[0], nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("renderDrawer status = %d, want 200", rec.Code)
+	}
+}
+
 // newTestServer wires a server whose only repo is demoRepo, so srcFor always
 // hands back the one stub regardless of the (single) active repo.
 func newTestServer(t *testing.T, src IssueSource) *Server {

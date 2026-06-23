@@ -66,6 +66,25 @@ type IssueSource interface {
 	Delete(ctx context.Context, id string) error
 }
 
+// readSource is the read-only slice of IssueSource the pure-read helpers need:
+// the full-repo List (buildForest), the dependency edges (insightsModel,
+// renderDrawer), and the comment thread (renderDrawer). Narrowing the read paths
+// to this seam keeps the write methods (Update/Claim/SetRank/…) out of reach where
+// only reads happen, so a read helper can't grow a stray write. Any IssueSource —
+// the real *bd.Client, the caching wrapper, a test stub — satisfies it for free.
+type readSource interface {
+	List(ctx context.Context, args ...string) ([]bd.Issue, error)
+	Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, error)
+	Comments(ctx context.Context, id string) ([]bd.Comment, error)
+}
+
+// Compile-time proof the fat source and its caching wrapper still satisfy the
+// narrow read seam, so the read helpers accept whatever source() hands back.
+var (
+	_ readSource = (IssueSource)(nil)
+	_ readSource = (*cachingSource)(nil)
+)
+
 // SourceFunc builds the bd-backed issue source for a repo. It is the seam the
 // command wires (a real bd.Client scoped to the repo's path) and tests stub (an
 // in-memory fake), so switching the active repo re-scopes every read and write
@@ -762,7 +781,7 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 // insightsModel computes the dashboard for a scope. issues is the full repo list
 // (for labels and timestamps the forest drops); the scope's beads come from the
 // view. Deps drives both the in-scope structural graph and the all-blockers triage.
-func (s *Server) insightsModel(ctx context.Context, src IssueSource, v *listView, issues []bd.Issue) (insights, error) {
+func (s *Server) insightsModel(ctx context.Context, src readSource, v *listView, issues []bd.Issue) (insights, error) {
 	// Epics are containers, not actionable work: the dashboard is about the queue
 	// and the structure of real tasks, so it drops them.
 	beads := actionable(scopeBeads(v))
@@ -989,7 +1008,7 @@ func (s *Server) handleBead(w http.ResponseWriter, r *http.Request) {
 // renderDrawer redraws the detail panel from bd's truth: the issue plus its
 // comments, with an optional write error shown inline. A comments-read failure is
 // non-fatal — the panel still shows the issue, just without the thread.
-func (s *Server) renderDrawer(ctx context.Context, w http.ResponseWriter, src IssueSource, issue *bd.Issue, writeErr error) {
+func (s *Server) renderDrawer(ctx context.Context, w http.ResponseWriter, src readSource, issue *bd.Issue, writeErr error) {
 	if issue == nil {
 		// bd can return (nil, nil) — a silent write or an empty Show (firstIssue's
 		// documented contract). No bead to draw, so fall back to the error panel
@@ -1224,7 +1243,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 // buildForest pulls the active repo's live issue list once and folds it into the
 // landing model, labeling the region with the active repo's name (the synthesis
 // project follows the active repo, so a switch re-labels every view).
-func (s *Server) buildForest(ctx context.Context, src IssueSource, repo registry.Repo) (forest.Forest, error) {
+func (s *Server) buildForest(ctx context.Context, src readSource, repo registry.Repo) (forest.Forest, error) {
 	issues, err := src.List(ctx, allIssues...)
 	if err != nil {
 		return forest.Forest{}, fmt.Errorf("list issues: %w", err)

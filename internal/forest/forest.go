@@ -19,13 +19,13 @@ import (
 	"github.com/dkoosis/strand/internal/bd"
 )
 
-// tilePalette holds the trunk hues for the treemap. Reds and ambers are left
+// tilePalette holds the tile hues for the treemap. Reds and ambers are left
 // out so a tile's color never collides with the status/priority signals
 // (blocked, in-progress, P0/P1). Each entry is a vivid mid-tone that reads as a
 // gentle tint once mixed into the card at --tile-mix.
-const nTrunkHues = 8
+const nTileHues = 8
 
-var tilePalette = [nTrunkHues]string{
+var tilePalette = [nTileHues]string{
 	"#3e63dd", // indigo
 	"#6e56cf", // violet
 	"#ab4aba", // plum
@@ -36,15 +36,15 @@ var tilePalette = [nTrunkHues]string{
 	"#0090ff", // blue
 }
 
-// trunkColor maps an epic id to a stable palette hue. Hashing the id (rather
-// than using sort position) keeps a trunk's color fixed as its open count and
+// tileColor maps an epic id to a stable palette hue. Hashing the id (rather
+// than using sort position) keeps a tile's color fixed as its open count and
 // rank shift between requests.
-func trunkColor(id string) string {
+func tileColor(id string) string {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(id))
 	// Modulo by the untyped const keeps the math in uint32 with no int->uint32
-	// conversion, and the array size ties to nTrunkHues so the index can't escape.
-	return tilePalette[h.Sum32()%nTrunkHues]
+	// conversion, and the array size ties to nTileHues so the index can't escape.
+	return tilePalette[h.Sum32()%nTileHues]
 }
 
 // Bead is one issue as the bead-list renders it.
@@ -83,7 +83,7 @@ type Epic struct {
 	Name  string
 	Open  int
 	Flag  bool
-	Color string // tile hue, assigned per trunk so the treemap reads by grouping
+	Color string // tile hue, hashed from the tile's id so it holds steady across requests
 	Beads []Bead
 	Rect  Rect // geometry within its region's body, in 0–100 percentages
 }
@@ -329,7 +329,7 @@ func rootOf(id string, byID map[string]bd.Issue) string {
 // buildEpic turns a root id and its live members into an Epic. The name comes
 // from the root issue when known; beads sort priority-asc then most-recent.
 func buildEpic(rootID string, members []bd.Issue, byID map[string]bd.Issue) Epic {
-	e := Epic{ID: rootID, Open: len(members), Color: trunkColor(rootID)}
+	e := Epic{ID: rootID, Open: len(members), Color: tileColor(rootID)}
 	if root, ok := byID[rootID]; ok {
 		e.Name = root.Title
 	} else {
