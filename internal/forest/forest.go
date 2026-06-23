@@ -3,13 +3,17 @@
 // list of bd issues into regions of epics, each epic a treemap tile sized by its
 // open work, so weight and heat read before a word does.
 //
-// The region layer is a synthesis the human shapes (modules, north star, color);
-// bd does not yet provide it (spec §1a, lines 100–102, tracks that mechanism
-// separately). Until it lands, Build groups every epic under one project region.
+// Regions are the project's top-level epics — the trunks the human shapes (spec
+// §1a: trixi's MEMORY, WETWARE, RETRIEVAL …). A region's tiles are the epics one
+// level beneath its trunk; deeper tasks and subtasks roll up into the tile they
+// descend from. Live work that doesn't ladder up to any trunk collects in a
+// catch-all region. The trunk hierarchy lives in bd (parent edges), so the
+// synthesis layer spec §1a deferred is now read straight from the data.
 package forest
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/dkoosis/strand/internal/bd"
 )
@@ -54,8 +58,9 @@ type Epic struct {
 	Rect  Rect // geometry within its region's body, in 0–100 percentages
 }
 
-// Region groups epics. One synthetic project region today; the module synthesis
-// layer (spec §1a) will fan this out later without touching the renderer.
+// Region is a trunk: a top-level epic whose tiles are the epics beneath it.
+// Key is the trunk's bd id (or looseKey for off-trunk work); Color is stable per
+// trunk across requests.
 type Region struct {
 	Key   string
 	Name  string
@@ -88,6 +93,23 @@ func openish(status bd.Status) bool {
 	return status != bd.StatusClosed && status != bd.StatusDeferred
 }
 
+// regionPalette colors the trunks. Colors are assigned by sorted region key, so
+// a trunk keeps its color across requests no matter its current weight.
+var regionPalette = []string{"#4c7ef0", "#e0663d", "#3fa66a", "#a463d6", "#d6a13f", "#2fa6a0"}
+
+const (
+	// looseKey is the catch-all region for live work that doesn't ladder up to a
+	// trunk (standalone tasks, orphaned features).
+	looseKey   = "__loose__"
+	looseColor = "#7a8290"
+)
+
+// isTrunk reports whether an issue is a region trunk: a top-level epic. A trunk
+// defines a region; it is never itself a tile or a bead.
+func isTrunk(is *bd.Issue) bool {
+	return is.Parent == "" && is.IssueType == "epic"
+}
+
 // Build assembles the forest from a flat issue list and the synthesis layer.
 func Build(issues []bd.Issue, syn Synthesis) Forest {
 	byID := make(map[string]bd.Issue, len(issues))
@@ -95,50 +117,164 @@ func Build(issues []bd.Issue, syn Synthesis) Forest {
 		byID[issues[i].ID] = issues[i]
 	}
 
-	// Group every live issue under its top-level ancestor (the story/epic),
-	// counting in-progress work in the same pass.
-	groups := make(map[string][]bd.Issue)
+	// Group every live non-trunk issue under its tile (the epic one level below
+	// its trunk), and record which region the tile belongs to. Count in-progress
+	// work in the same pass.
+	members := make(map[string][]bd.Issue)
+	regionOf := make(map[string]string)
 	inProgress := 0
 	for i := range issues {
-		if !openish(issues[i].Status) {
+		if !openish(issues[i].Status) || isTrunk(&issues[i]) {
 			continue
 		}
 		if issues[i].Status == bd.StatusInProgress {
 			inProgress++
 		}
-		root := rootOf(issues[i].ID, byID)
-		groups[root] = append(groups[root], issues[i])
+		region, epic := placeIssue(issues[i].ID, byID)
+		members[epic] = append(members[epic], issues[i])
+		regionOf[epic] = region
 	}
 
 	f := Forest{NorthStar: syn.NorthStar, InProgress: inProgress}
-	epics := make([]Epic, 0, len(groups))
-	for rootID, members := range groups {
-		e := buildEpic(rootID, members, byID)
-		epics = append(epics, e)
-		f.Open += e.Open
+	if len(members) == 0 {
+		return f
 	}
-	// Largest epics first: stable, weight-ordered, ties broken by id for a
-	// deterministic layout across requests.
+
+	// Collect tiles into their regions.
+	byRegion := make(map[string][]Epic)
+	for epicID, ms := range members {
+		e := buildEpic(epicID, ms, byID)
+		byRegion[regionOf[epicID]] = append(byRegion[regionOf[epicID]], e)
+	}
+
+	regions := make([]Region, 0, len(byRegion))
+	for key, epics := range byRegion {
+		sortEpics(epics)
+		layoutEpics(epics)
+		r := Region{Key: key, Name: regionName(key, byID), Epics: epics}
+		for i := range epics {
+			r.Open += epics[i].Open
+		}
+		regions = append(regions, r)
+		f.Open += r.Open
+	}
+	colorRegions(regions)
+	// A project with no trunk structure is one big loose region — name it for
+	// the project rather than "off-trunk".
+	if len(regions) == 1 && regions[0].Key == looseKey {
+		regions[0].Name = syn.Project
+	}
+	sortRegions(regions)
+	layoutRegions(regions)
+	f.Regions = regions
+	return f
+}
+
+// placeIssue returns the (region, tile) an issue belongs to: its trunk and the
+// epic one level beneath that trunk. Work that descends from no trunk lands in
+// the catch-all region, keyed by its own top-level ancestor's child.
+func placeIssue(id string, byID map[string]bd.Issue) (region, epic string) {
+	root := rootOf(id, byID)
+	if root == id {
+		return looseKey, id // standalone top-level non-epic: its own tile, off-trunk
+	}
+	if r, ok := byID[root]; ok && isTrunk(&r) {
+		return root, childOfRoot(id, root, byID)
+	}
+	return looseKey, childOfRoot(id, root, byID)
+}
+
+// childOfRoot returns the ancestor of id whose parent is root — the depth-1 node
+// directly under the trunk, which is the tile id rolls up into. It falls back to
+// the last node reached if the chain doesn't reach root (missing link or cycle).
+func childOfRoot(id, root string, byID map[string]bd.Issue) string {
+	if id == root {
+		return id
+	}
+	seen := map[string]bool{}
+	cur := id
+	for {
+		is, ok := byID[cur]
+		if !ok || is.Parent == "" || is.Parent == root || seen[cur] {
+			return cur
+		}
+		seen[cur] = true
+		cur = is.Parent
+	}
+}
+
+// regionName cleans a trunk title down to its label ("MEMORY trunk — …" →
+// "MEMORY"); the catch-all region is named by the caller.
+func regionName(key string, byID map[string]bd.Issue) string {
+	if key == looseKey {
+		return "off-trunk"
+	}
+	if is, ok := byID[key]; ok {
+		title := is.Title
+		if i := strings.Index(title, " — "); i >= 0 {
+			title = title[:i]
+		}
+		title = strings.TrimSpace(title)
+		title = strings.TrimSuffix(title, " trunk")
+		return strings.TrimSpace(title)
+	}
+	return key
+}
+
+// colorRegions assigns each region a stable color by sorted key, so trunk colors
+// hold steady across requests regardless of weight order.
+func colorRegions(regions []Region) {
+	keys := make([]string, len(regions))
+	for i := range regions {
+		keys[i] = regions[i].Key
+	}
+	sort.Strings(keys)
+	color := make(map[string]string, len(keys))
+	ci := 0
+	for _, k := range keys {
+		if k == looseKey {
+			color[k] = looseColor
+			continue
+		}
+		color[k] = regionPalette[ci%len(regionPalette)]
+		ci++
+	}
+	for i := range regions {
+		regions[i].Color = color[regions[i].Key]
+	}
+}
+
+// sortEpics / sortRegions order tiles largest-first, ties broken by id/key for a
+// deterministic layout across requests.
+func sortEpics(epics []Epic) {
 	sort.SliceStable(epics, func(a, b int) bool {
 		if epics[a].Open != epics[b].Open {
 			return epics[a].Open > epics[b].Open
 		}
 		return epics[a].ID < epics[b].ID
 	})
+}
 
-	if len(epics) == 0 {
-		return f
+func sortRegions(regions []Region) {
+	sort.SliceStable(regions, func(a, b int) bool {
+		if regions[a].Open != regions[b].Open {
+			return regions[a].Open > regions[b].Open
+		}
+		return regions[a].Key < regions[b].Key
+	})
+}
+
+// layoutRegions squarifies the regions into the treemap's 0–100 space by their
+// open weight.
+func layoutRegions(regions []Region) {
+	weights := make([]float64, len(regions))
+	for i := range regions {
+		weights[i] = float64(regions[i].Open)
 	}
-	layoutEpics(epics)
-	f.Regions = []Region{{
-		Key:   "project",
-		Name:  syn.Project,
-		Color: "#4c7ef0",
-		Open:  f.Open,
-		Epics: epics,
-		Rect:  Rect{X: 0, Y: 0, W: 100, H: 100},
-	}}
-	return f
+	rects := squarify(weights)
+	for i := range regions {
+		regions[i].Rect = rects[i]
+	}
 }
 
 // rootOf walks the parent chain to the top-level ancestor id. A missing or empty

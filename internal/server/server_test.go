@@ -259,10 +259,11 @@ func oneBead(iss *bd.Issue) *stubBD {
 }
 
 var sampleIssues = []bd.Issue{
-	{ID: "demo-e1", Title: "Forest epic", IssueType: "epic", Status: "open", Priority: 1},
+	{ID: "demo-root", Title: "DEMO trunk", IssueType: "epic", Status: "open"}, // region; epics below are tiles
+	{ID: "demo-e1", Parent: "demo-root", Title: "Forest epic", IssueType: "epic", Status: "open", Priority: 1},
 	{ID: "demo-e1.a", Parent: "demo-e1", Title: "Wire the thing", Status: "open", Priority: 0},
 	{ID: "demo-e1.b", Parent: "demo-e1", Title: "Test the thing", Status: "in_progress", Priority: 2},
-	{ID: "demo-e2", Title: "Lone task", IssueType: "task", Status: "open", Priority: 3},
+	{ID: "demo-e2", Parent: "demo-root", Title: "Lone task", IssueType: "task", Status: "open", Priority: 3},
 }
 
 // TestForestPageRenders pins the landing: the page renders the north star, the
@@ -412,7 +413,8 @@ func TestBoardMoveErrorReverts(t *testing.T) {
 // id order so the rank order and the obvious reading order line up.
 func rankedEpic() []bd.Issue {
 	return []bd.Issue{
-		{ID: "r-1", Title: "Ranked epic", IssueType: "epic", Status: "open", Priority: 1, Metadata: map[string]any{"rank": 1.0}},
+		{ID: "r-root", Title: "RANK trunk", IssueType: "epic", Status: "open"}, // region; r-1 is the tile
+		{ID: "r-1", Parent: "r-root", Title: "Ranked epic", IssueType: "epic", Status: "open", Priority: 1, Metadata: map[string]any{"rank": 1.0}},
 		{ID: "r-1.a", Parent: "r-1", Title: "A", Status: "open", Priority: 0, Metadata: map[string]any{"rank": 2.0}},
 		{ID: "r-1.b", Parent: "r-1", Title: "B", Status: "open", Priority: 2, Metadata: map[string]any{"rank": 3.0}},
 		{ID: "r-1.c", Parent: "r-1", Title: "C", Status: "open", Priority: 2, Metadata: map[string]any{"rank": 4.0}},
@@ -538,7 +540,7 @@ func TestRankHeadAndTailEdges(t *testing.T) {
 // writing a colliding rank.
 func TestRankRenormalizesOnExhaustion(t *testing.T) {
 	tight := rankedEpic()
-	tight[1].Metadata["rank"] = math.Nextafter(1, 2) // r-1.a one ulp above r-1
+	tight[2].Metadata["rank"] = math.Nextafter(1, 2) // r-1.a one ulp above r-1 (index 2: after r-root, r-1)
 	stub := &stubBD{issues: tight}
 	srv := newTestServer(t, stub)
 	// Drop r-1.c between r-1 (1) and r-1.a (1+ulp): the midpoint rounds back to 1.
@@ -998,13 +1000,14 @@ func TestGuardNeverGatesGET(t *testing.T) {
 // (g.4→g.2→g.1, the critical path) and a 2-node cycle (g.5↔g.6); epic demo-h
 // holds one unrelated bead so the epic-scoping test has something to exclude.
 var graphIssues = []bd.Issue{
-	{ID: "demo-g", Title: "Graph epic", IssueType: "epic", Status: "open", Priority: 1},
+	{ID: "demo-root", Title: "DEMO trunk", IssueType: "epic", Status: "open"}, // region; epics below are tiles
+	{ID: "demo-g", Parent: "demo-root", Title: "Graph epic", IssueType: "epic", Status: "open", Priority: 1},
 	{ID: "demo-g.1", Parent: "demo-g", Title: "Foundation", Status: "open", Priority: 1},
 	{ID: "demo-g.2", Parent: "demo-g", Title: "Mid", Status: "open", Priority: 2},
 	{ID: "demo-g.4", Parent: "demo-g", Title: "Leaf", Status: "in_progress", Priority: 2},
 	{ID: "demo-g.5", Parent: "demo-g", Title: "CycleA", Status: "open", Priority: 2},
 	{ID: "demo-g.6", Parent: "demo-g", Title: "CycleB", Status: "open", Priority: 2},
-	{ID: "demo-h", Title: "Other epic", IssueType: "epic", Status: "open", Priority: 2},
+	{ID: "demo-h", Parent: "demo-root", Title: "Other epic", IssueType: "epic", Status: "open", Priority: 2},
 	{ID: "demo-h.1", Parent: "demo-h", Title: "Elsewhere", Status: "open", Priority: 2},
 }
 
@@ -1162,7 +1165,8 @@ var (
 // dependency chain (i.3→i.2→i.1, so i.1 is foundational), one in-progress bead, and
 // one stale untagged bead. bd list omits closed, so no closed beads appear.
 var insightsIssues = []bd.Issue{
-	{ID: "demo-i", Title: "Insights epic", IssueType: "epic", Status: "open", Priority: 1, UpdatedAt: insFresh},
+	{ID: "demo-root", Title: "DEMO trunk", IssueType: "epic", Status: "open"}, // region; demo-i is the tile
+	{ID: "demo-i", Parent: "demo-root", Title: "Insights epic", IssueType: "epic", Status: "open", Priority: 1, UpdatedAt: insFresh},
 	{ID: "demo-i.1", Parent: "demo-i", Title: "Foundation", Status: "open", Priority: 1, Labels: []string{"core"}, UpdatedAt: insFresh},
 	{ID: "demo-i.2", Parent: "demo-i", Title: "Mid", Status: "open", Priority: 2, Labels: []string{"core", "ui"}, UpdatedAt: insFresh},
 	{ID: "demo-i.3", Parent: "demo-i", Title: "Leaf", Status: "open", Priority: 2, Labels: []string{"ui"}, UpdatedAt: insFresh},
@@ -1337,7 +1341,7 @@ func TestInsightsFragmentRenders(t *testing.T) {
 // from another epic must not appear in the critical path or leaderboards.
 func TestInsightsScopedToEpic(t *testing.T) {
 	mixed := append(append([]bd.Issue(nil), insightsIssues...),
-		bd.Issue{ID: "demo-z", Title: "Other epic", IssueType: "epic", Status: "open", Priority: 2, UpdatedAt: insFresh},
+		bd.Issue{ID: "demo-z", Parent: "demo-root", Title: "Other epic", IssueType: "epic", Status: "open", Priority: 2, UpdatedAt: insFresh},
 		bd.Issue{ID: "demo-z.1", Parent: "demo-z", Title: "Elsewhere", Status: "open", Priority: 2, UpdatedAt: insFresh})
 	srv := newTestServer(t, &stubBD{issues: mixed, deps: insightsDeps})
 	srv.now = func() time.Time { return insightsNow }

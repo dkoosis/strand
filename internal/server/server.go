@@ -863,7 +863,7 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "insights", insightsView{})
 		return
 	}
-	issues, err := src.List(ctx)
+	issues, err := src.List(ctx, allIssues...)
 	if err != nil {
 		s.renderError(w, fmt.Errorf("list issues: %w", err))
 		return
@@ -1345,12 +1345,17 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 // landing model, labeling the region with the active repo's name (the synthesis
 // project follows the active repo, so a switch re-labels every view).
 func (s *Server) buildForest(ctx context.Context, src IssueSource, repo registry.Repo) (forest.Forest, error) {
-	issues, err := src.List(ctx)
+	issues, err := src.List(ctx, allIssues...)
 	if err != nil {
 		return forest.Forest{}, fmt.Errorf("list issues: %w", err)
 	}
 	return forest.Build(issues, s.synFor(repo)), nil
 }
+
+// allIssues lifts bd list's default 50-row cap. The forest folds each issue into
+// its trunk by walking the parent chain, so a truncated list breaks the laddering
+// — a tile lands off-trunk the moment one ancestor row is missing. Fetch them all.
+var allIssues = []string{"--limit", "0"}
 
 // synFor labels the synthesis with the active repo's name; the project follows the
 // active repo, so a switch re-labels every view. Shared by buildForest and the
