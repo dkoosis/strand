@@ -222,9 +222,9 @@
     <span>{{cleanName .Epic.Name}}</span><span class="eo tnum">{{.Epic.Open}}</span>
   </div>
   {{end}}
-  <table><tbody>
+  <table><tbody class="bead-rows" data-epic="{{.Epic.ID}}">
     {{range .Epic.Beads}}
-    <tr hx-get="/bead/{{.ID}}" hx-target="#drawer">
+    <tr data-id="{{.ID}}" hx-get="/bead/{{.ID}}" hx-target="#drawer">
       <td class="r-id mono">{{shortID .ID}}</td>
       <td class="r-pri"><span class="pchip {{pclass .Priority}}">{{.Priority}}</span></td>
       <td class="r-title">{{.Title}}</td>

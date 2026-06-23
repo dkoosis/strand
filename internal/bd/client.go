@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -66,6 +67,32 @@ type Issue struct {
 	DependencyCount int       `json:"dependency_count"`
 	DependentCount  int       `json:"dependent_count"`
 	CommentCount    int       `json:"comment_count"`
+	// Metadata holds bd's custom key/values. strand stores the manual-rank order
+	// here as rank=<float> (D5: no sidecar). bd emits numbers as JSON numbers, so
+	// a rank decodes into any as float64.
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+// Rank returns the bead's manual-rank order from metadata and whether it is set.
+// bd stores rank as a JSON number (decoded to float64); a string is tolerated
+// defensively in case a future bd quotes it. Absent or unparseable means unranked.
+func (i *Issue) Rank() (float64, bool) {
+	v, ok := i.Metadata["rank"]
+	if !ok {
+		return 0, false
+	}
+	switch r := v.(type) {
+	case float64:
+		return r, true
+	case string:
+		f, err := strconv.ParseFloat(r, 64)
+		if err != nil {
+			return 0, false
+		}
+		return f, true
+	default:
+		return 0, false
+	}
 }
 
 // DepEdge is one dependency edge: IssueID depends on DependsOnID. Type tells the

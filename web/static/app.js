@@ -77,6 +77,43 @@ function initBoard() {
     });
   });
 }
+// The V1 list is drag-to-reorder within one epic (no cross-epic group, so drops
+// stay inside their tbody). On drop we POST only the post-drop id order; the server
+// re-reads ranks from bd and writes the minimal change (spec R6 manual rank). A
+// success is 204 — htmx swaps nothing, the optimistic DOM already matches bd. A bd
+// error returns non-2xx, caught by the shared revert handler below.
+function initList() {
+  const pane = document.getElementById("listPane");
+  if (!pane || !window.Sortable) return;
+  pane.querySelectorAll(".bead-rows").forEach((tbody) => {
+    new Sortable(tbody, {
+      animation: 120,
+      ghostClass: "card-ghost",
+      // Capture the row's original following sibling before the drag moves it.
+      // Reverting by saved index breaks on upward moves: the dragged row still
+      // occupies a slot, shifting from.children[oldIndex] off by one. The
+      // original next sibling pins the exact spot for moves in either direction
+      // (null when it was last → append).
+      onStart: (evt) => {
+        evt.item._revertSibling = evt.item.nextSibling;
+      },
+      onEnd: (evt) => {
+        if (evt.oldIndex === evt.newIndex) return; // no positional change
+        const row = evt.item;
+        const from = evt.from;
+        const sibling = row._revertSibling;
+        row._revert = () => from.insertBefore(row, sibling);
+        const order = Array.from(from.children)
+          .map((tr) => tr.dataset.id)
+          .join(",");
+        htmx.ajax("POST", "/bead/" + row.dataset.id + "/rank", {
+          source: row,
+          values: { order },
+        });
+      },
+    });
+  });
+}
 function showBoardError(msg) {
   const el = document.getElementById("boardErr");
   if (!el) return;
@@ -97,8 +134,11 @@ document.body.addEventListener("htmx:afterSwap", (e) => {
   if (e.detail.target.id === "listPane") {
     initBoard();
     initGraph();
+    initList();
   }
 });
+// The V1 list renders inline on first paint (no htmx swap), so bind it once at load.
+initList();
 
 // ---- dependency graph (V3) ----
 // The server computes the DAG and its metrics and serializes them into #cy's

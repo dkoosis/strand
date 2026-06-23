@@ -103,6 +103,59 @@ func TestCloseWithoutReasonOmitsFlag(t *testing.T) {
 	}
 }
 
+func TestSetRankWritesMetadataAndParsesNumber(t *testing.T) {
+	c, log := fakeBD(t, `echo '[{"id":"x-9","metadata":{"rank":1.5}}]'`)
+	got, err := c.SetRank(context.Background(), "x-9", 1.5)
+	if err != nil {
+		t.Fatalf("SetRank: %v", err)
+	}
+	if r, ok := got.Rank(); !ok || r != 1.5 {
+		t.Fatalf("Rank() = %v,%v, want 1.5,true", r, ok)
+	}
+	line := readLog(t, log)[0]
+	for _, want := range []string{"update", "x-9", "--set-metadata", "rank=1.5", "--json"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("args %q missing %q", line, want)
+		}
+	}
+}
+
+// A rank with no fractional part must format as a plain integer-looking number
+// (no exponent, no trailing noise) so bd stores it cleanly for re-reads.
+func TestSetRankFormatsWholeNumberPlainly(t *testing.T) {
+	c, log := fakeBD(t, `echo '[{"id":"x-9"}]'`)
+	if _, err := c.SetRank(context.Background(), "x-9", 3); err != nil {
+		t.Fatalf("SetRank: %v", err)
+	}
+	if line := readLog(t, log)[0]; !strings.Contains(line, "rank=3") {
+		t.Errorf("args %q want rank=3", line)
+	}
+}
+
+func TestSetRankEmptyIDRejected(t *testing.T) {
+	c, _ := fakeBD(t, `echo '[]'`)
+	if _, err := c.SetRank(context.Background(), "", 1); err == nil {
+		t.Fatal("want error for empty id, got nil")
+	}
+}
+
+// Rank tolerates bd quoting the number as a string; an unparseable value reads
+// as unranked rather than erroring.
+func TestRankAccessorParsesStringAndRejectsGarbage(t *testing.T) {
+	str := Issue{Metadata: map[string]any{"rank": "2.25"}}
+	if r, ok := str.Rank(); !ok || r != 2.25 {
+		t.Errorf("string rank = %v,%v, want 2.25,true", r, ok)
+	}
+	none := Issue{}
+	if _, ok := none.Rank(); ok {
+		t.Error("absent metadata should read as unranked")
+	}
+	junk := Issue{Metadata: map[string]any{"rank": "nope"}}
+	if _, ok := junk.Rank(); ok {
+		t.Error("unparseable rank should read as unranked")
+	}
+}
+
 // bd create emits a single bare issue object, not the array shape used by
 // update/close. Create must decode it; otherwise every successful create is
 // reported as a parse failure after the issue already exists.

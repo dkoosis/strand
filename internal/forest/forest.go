@@ -22,12 +22,15 @@ type Bead struct {
 	Priority int
 	Type     string
 	Assignee string
+	Rank     float64 // manual-rank order (V1 list); meaningful only when HasRank
+	HasRank  bool
 }
 
 // NewBead projects a bd.Issue onto the render-facing Bead — the one place that
 // maps bd's field names (IssueType) to the view's, so the epic roll-up and the
 // board's single-card refresh can't drift.
 func NewBead(i *bd.Issue) Bead {
+	rank, hasRank := i.Rank()
 	return Bead{
 		ID:       i.ID,
 		Title:    i.Title,
@@ -35,6 +38,8 @@ func NewBead(i *bd.Issue) Bead {
 		Priority: i.Priority,
 		Type:     i.IssueType,
 		Assignee: i.Assignee,
+		Rank:     rank,
+		HasRank:  hasRank,
 	}
 }
 
@@ -171,13 +176,42 @@ func buildEpic(rootID string, members []bd.Issue, byID map[string]bd.Issue) Epic
 		}
 		e.Beads = append(e.Beads, NewBead(&members[i]))
 	}
-	sort.SliceStable(e.Beads, func(a, b int) bool {
-		if e.Beads[a].Priority != e.Beads[b].Priority {
-			return e.Beads[a].Priority < e.Beads[b].Priority
-		}
-		return e.Beads[a].ID < e.Beads[b].ID
-	})
+	sortBeads(e.Beads)
 	return e
+}
+
+// sortBeads orders an epic's beads. An untouched epic (no bead manually ranked)
+// keeps the default priority-asc, id tiebreak — unchanged behavior. The first
+// manual reorder seeds a rank onto every bead in the group (server handleRank),
+// so a ranked group is wholly rank-ordered; mixing the two states never happens,
+// which keeps the key space monotonic and drag inserts collision-safe.
+func sortBeads(beads []Bead) {
+	ranked := false
+	for i := range beads {
+		if beads[i].HasRank {
+			ranked = true
+			break
+		}
+	}
+	sort.SliceStable(beads, func(a, b int) bool {
+		if ranked {
+			// A bead created into an already-ranked epic has no rank yet
+			// (HasRank false, Rank 0); since head-insert drags can mint
+			// negative ranks, a zero default could land it mid-list. Sort
+			// unranked beads after ranked ones so they collect at the bottom.
+			if beads[a].HasRank != beads[b].HasRank {
+				return beads[a].HasRank
+			}
+			if beads[a].Rank != beads[b].Rank {
+				return beads[a].Rank < beads[b].Rank
+			}
+			return beads[a].ID < beads[b].ID
+		}
+		if beads[a].Priority != beads[b].Priority {
+			return beads[a].Priority < beads[b].Priority
+		}
+		return beads[a].ID < beads[b].ID
+	})
 }
 
 // layoutEpics fills each epic's Rect by squarifying their open weights into the
