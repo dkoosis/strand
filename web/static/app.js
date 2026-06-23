@@ -89,12 +89,20 @@ function initList() {
     new Sortable(tbody, {
       animation: 120,
       ghostClass: "card-ghost",
+      // Capture the row's original following sibling before the drag moves it.
+      // Reverting by saved index breaks on upward moves: the dragged row still
+      // occupies a slot, shifting from.children[oldIndex] off by one. The
+      // original next sibling pins the exact spot for moves in either direction
+      // (null when it was last → append).
+      onStart: (evt) => {
+        evt.item._revertSibling = evt.item.nextSibling;
+      },
       onEnd: (evt) => {
         if (evt.oldIndex === evt.newIndex) return; // no positional change
         const row = evt.item;
         const from = evt.from;
-        const oldIndex = evt.oldIndex;
-        row._revert = () => from.insertBefore(row, from.children[oldIndex] || null);
+        const sibling = row._revertSibling;
+        row._revert = () => from.insertBefore(row, sibling);
         const order = Array.from(from.children)
           .map((tr) => tr.dataset.id)
           .join(",");

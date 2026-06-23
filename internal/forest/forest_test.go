@@ -108,6 +108,25 @@ func TestBuildRankTiebreaksByID(t *testing.T) {
 	}
 }
 
+// A bead created into an already-ranked epic carries no rank. Even when
+// head-insert drags have minted negative ranks, the unranked newcomer sorts to
+// the bottom — never mid-list on its zero default.
+func TestBuildUnrankedBeadSortsLastInRankedGroup(t *testing.T) {
+	issues := []bd.Issue{
+		{ID: "p-1", Title: "E", IssueType: "epic", Status: "open", Priority: 2, Metadata: map[string]any{"rank": 1.0}},
+		{ID: "p-1.head", Parent: "p-1", Status: "open", Priority: 0, Metadata: map[string]any{"rank": -2.0}},
+		{ID: "p-1.new", Parent: "p-1", Status: "open", Priority: 0}, // no rank yet
+	}
+	f := Build(issues, Synthesis{Project: "demo"})
+	beads := f.Regions[0].Epics[0].Beads
+	want := []string{"p-1.head", "p-1", "p-1.new"} // ranked (-2, 1) then unranked
+	for i, id := range want {
+		if beads[i].ID != id {
+			t.Errorf("bead[%d] = %s, want %s", i, beads[i].ID, id)
+		}
+	}
+}
+
 // TestBuildEmptyHasNoRegions: a workspace with no live work yields an empty
 // forest, not a region with zero tiles.
 func TestBuildEmptyHasNoRegions(t *testing.T) {

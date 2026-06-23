@@ -195,6 +195,13 @@ func sortBeads(beads []Bead) {
 	}
 	sort.SliceStable(beads, func(a, b int) bool {
 		if ranked {
+			// A bead created into an already-ranked epic has no rank yet
+			// (HasRank false, Rank 0); since head-insert drags can mint
+			// negative ranks, a zero default could land it mid-list. Sort
+			// unranked beads after ranked ones so they collect at the bottom.
+			if beads[a].HasRank != beads[b].HasRank {
+				return beads[a].HasRank
+			}
 			if beads[a].Rank != beads[b].Rank {
 				return beads[a].Rank < beads[b].Rank
 			}
