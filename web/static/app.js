@@ -57,7 +57,7 @@ function initBoard() {
   const board = document.querySelector(".board");
   if (!board || !window.Sortable) return;
   board.querySelectorAll(".bcol-body").forEach((col) => {
-    new Sortable(col, {
+    col._sortable = new Sortable(col, {
       group: "board",
       animation: 120,
       ghostClass: "card-ghost",
@@ -67,6 +67,10 @@ function initBoard() {
         const from = evt.from;
         const oldIndex = evt.oldIndex;
         card._revert = () => from.insertBefore(card, from.children[oldIndex] || null);
+        // Freeze both columns this drop touched until bd answers. A second drag
+        // before the POST returns would stomp card._revert and revert to the
+        // wrong spot on error (strand-vd2). afterRequest re-enables them.
+        freezeSortables(card, [from, evt.to]);
         htmx.ajax("POST", "/bead/" + card.dataset.id + "/move", {
           source: card,
           target: card,
@@ -86,7 +90,7 @@ function initList() {
   const pane = document.getElementById("listPane");
   if (!pane || !window.Sortable) return;
   pane.querySelectorAll(".bead-rows").forEach((tbody) => {
-    new Sortable(tbody, {
+    tbody._sortable = new Sortable(tbody, {
       animation: 120,
       ghostClass: "card-ghost",
       // Capture the row's original following sibling before the drag moves it.
@@ -103,6 +107,10 @@ function initList() {
         const from = evt.from;
         const sibling = row._revertSibling;
         row._revert = () => from.insertBefore(row, sibling);
+        // Freeze this tbody until bd answers. A second drag before the rank POST
+        // returns would stomp row._revert and revert to the wrong spot on error
+        // (strand-vd2). afterRequest re-enables it.
+        freezeSortables(row, [from]);
         const order = Array.from(from.children)
           .map((tr) => tr.dataset.id)
           .join(",");
@@ -114,6 +122,23 @@ function initList() {
     });
   });
 }
+// Drag-revert race guard (strand-vd2). Both initBoard and initList stash their
+// optimistic-revert closure in a single slot on the dragged element
+// (card._revert / row._revert). A second drag before the first POST returns
+// would overwrite that slot, so a later error reverts to the wrong position.
+// Fix: freeze the Sortable instance(s) the drop touched until bd answers, so no
+// second drag can start mid-flight. The element carries the frozen instances so
+// htmx:afterRequest (fires on success AND error) can thaw them.
+function freezeSortables(elt, containers) {
+  const instances = containers.map((c) => c && c._sortable).filter(Boolean);
+  elt._frozen = instances;
+  instances.forEach((s) => s.option("disabled", true));
+}
+function thawSortables(elt) {
+  if (!elt || !elt._frozen) return;
+  elt._frozen.forEach((s) => s.option("disabled", false));
+  elt._frozen = null;
+}
 function showBoardError(msg) {
   const el = document.getElementById("boardErr");
   if (!el) return;
@@ -121,13 +146,29 @@ function showBoardError(msg) {
   el.hidden = false;
 }
 // A bead move that bd rejected: revert the optimistic drop and show the reason.
+// Gate on POST: the dragged card/row also carries hx-get (opens the drawer), so a
+// drawer GET failing mid-drag must not fire the revert against a live _revert slot.
 document.body.addEventListener("htmx:responseError", (e) => {
+  if (e.detail.requestConfig?.verb !== "post") return;
   const card = e.detail.elt;
   if (card && card._revert) {
     card._revert();
     card._revert = null;
     showBoardError(e.detail.xhr.responseText.replace(/<[^>]*>/g, "").trim());
   }
+});
+// Every drag-POST settles here (success or error). Thaw the columns/tbody we
+// froze for the duration of the request and drop the now-consumed revert slot,
+// so the next drag starts from a clean state (strand-vd2).
+document.body.addEventListener("htmx:afterRequest", (e) => {
+  // Only the drag POSTs froze anything. The same card/row also has hx-get for the
+  // drawer; a GET completing mid-drag would otherwise thaw and clear _revert early,
+  // defeating the guard if the POST then errors (strand-vd2).
+  if (e.detail.requestConfig?.verb !== "post") return;
+  const elt = e.detail.elt;
+  if (!elt) return;
+  thawSortables(elt);
+  if (elt._revert) elt._revert = null;
 });
 // The board arrives over htmx; (re)bind Sortable once its fragment lands.
 document.body.addEventListener("htmx:afterSwap", (e) => {
