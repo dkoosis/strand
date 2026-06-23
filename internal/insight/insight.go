@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
-	"github.com/dkoosis/strand/internal/forest"
+	"github.com/dkoosis/strand/internal/strand"
 	"github.com/dkoosis/strand/internal/graph"
 )
 
@@ -29,7 +29,7 @@ type Model struct {
 	Ready      []RankedBead // ready beads ranked by influence — the dispatch queue
 	Influence  []RankedBead // top PageRank — foundational beads
 	Bottleneck []RankedBead // top betweenness — chokepoints
-	CritPath   []forest.Bead
+	CritPath   []strand.Bead
 	Labels     []LabelCount // label distribution over open beads, descending
 	Untagged   int          // open beads carrying no label at all
 }
@@ -45,7 +45,7 @@ type Counts struct {
 // sits in the blocked or stale set is the one item worth acting on now (spec §3,
 // cross-flag).
 type RankedBead struct {
-	forest.Bead
+	strand.Bead
 	Score   float64
 	Width   int
 	Blocked bool
@@ -66,7 +66,7 @@ const leaderboardSize = 5
 
 // Compute builds the dashboard for a scope. beads is the scope's actionable work
 // (callers drop epic containers first); issues is the full repo list (for the
-// labels and timestamps the forest drops); deps drives both the in-scope
+// labels and timestamps the strand drops); deps drives both the in-scope
 // structural graph and the all-blockers triage. now is the clock the stale
 // cutoff reads — a parameter so the caller's test seam (Server.now) flows in.
 //
@@ -74,7 +74,7 @@ const leaderboardSize = 5
 // such edges every bead ties at PageRank's base, so the leaderboards stay empty
 // (a ranking would be noise) and only the ready queue — every ready bead is
 // dispatchable — is populated.
-func Compute(beads []forest.Bead, issues []bd.Issue, deps []bd.DepEdge, now time.Time) Model {
+func Compute(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge, now time.Time) Model {
 	ids, inScope := scopeIDs(beads)
 	compEdges := blocksEdges(deps, inScope)
 	m := graph.Compute(ids, compEdges)
@@ -106,8 +106,8 @@ func Compute(beads []forest.Bead, issues []bd.Issue, deps []bd.DepEdge, now time
 // Actionable drops epic-type beads (containers) from a scope, leaving the real
 // work the dashboard reasons about. The caller narrows the scope before Compute
 // so the structural graph and triage run over tasks, not the epic shells.
-func Actionable(beads []forest.Bead) []forest.Bead {
-	out := make([]forest.Bead, 0, len(beads))
+func Actionable(beads []strand.Bead) []strand.Bead {
+	out := make([]strand.Bead, 0, len(beads))
 	for i := range beads {
 		if beads[i].Type != "epic" {
 			out = append(out, beads[i])
@@ -117,7 +117,7 @@ func Actionable(beads []forest.Bead) []forest.Bead {
 }
 
 // scopeIDs lists the scope's bead IDs and a membership set for the edge filter.
-func scopeIDs(beads []forest.Bead) ([]string, map[string]bool) {
+func scopeIDs(beads []strand.Bead) ([]string, map[string]bool) {
 	ids := make([]string, len(beads))
 	in := make(map[string]bool, len(beads))
 	for i := range beads {
@@ -142,7 +142,7 @@ func blocksEdges(deps []bd.DepEdge, inScope map[string]bool) []graph.Edge {
 }
 
 // indexIssues maps every repo bead by id, so triage and label-health can read the
-// fields forest.Bead drops (status of an out-of-scope blocker, timestamps, labels).
+// fields strand.Bead drops (status of an out-of-scope blocker, timestamps, labels).
 func indexIssues(issues []bd.Issue) map[string]bd.Issue {
 	m := make(map[string]bd.Issue, len(issues))
 	for i := range issues {
@@ -152,8 +152,8 @@ func indexIssues(issues []bd.Issue) map[string]bd.Issue {
 }
 
 // beadByID indexes the scope's beads for the critical-path title lookup.
-func beadByID(beads []forest.Bead) map[string]forest.Bead {
-	m := make(map[string]forest.Bead, len(beads))
+func beadByID(beads []strand.Bead) map[string]strand.Bead {
+	m := make(map[string]strand.Bead, len(beads))
 	for i := range beads {
 		m[beads[i].ID] = beads[i]
 	}
@@ -163,7 +163,7 @@ func beadByID(beads []forest.Bead) map[string]forest.Bead {
 // triage counts the scope's queue shape. ready/blocked weigh ALL of a bead's
 // blocks-dependencies (resolved against the full-repo index), since a blocker can
 // live outside the visible scope; stale flags live work untouched past the cut.
-func triage(beads []forest.Bead, openBlockers map[string]int, idx map[string]bd.Issue, now time.Time) Counts {
+func triage(beads []strand.Bead, openBlockers map[string]int, idx map[string]bd.Issue, now time.Time) Counts {
 	var c Counts
 	for i := range beads {
 		b := &beads[i]
@@ -181,7 +181,7 @@ func triage(beads []forest.Bead, openBlockers map[string]int, idx map[string]bd.
 		case bd.StatusBlocked:
 			c.Blocked++
 		case bd.StatusClosed, bd.StatusDeferred:
-			// Not live work; the forest filter already drops these, so they
+			// Not live work; the strand filter already drops these, so they
 			// don't reach a count — listed to keep the status set exhaustive.
 		}
 		if isStale(b.Status, idx[b.ID].UpdatedAt, now) {
@@ -220,7 +220,7 @@ func isStale(status bd.Status, updated, now time.Time) bool {
 // leaderboard ranks the scope's beads by a metric, descending, keeping the top few
 // with a positive score and sizing each row's bar against the leader. An all-zero
 // metric (no edges) yields no rows — there's nothing to lead.
-func leaderboard(beads []forest.Bead, score map[string]float64) []RankedBead {
+func leaderboard(beads []strand.Bead, score map[string]float64) []RankedBead {
 	ranked := make([]RankedBead, 0, len(beads))
 	for i := range beads {
 		if s := score[beads[i].ID]; s > 0 {
@@ -257,7 +257,7 @@ func rankBoard(board []RankedBead) []RankedBead {
 // It closes the count→actionable gap — triage says how many are ready, this says which.
 // Rows carry the stale cross-flag (a ready bead can still have gone cold); ready beads
 // are by definition not blocked, so Blocked stays false here.
-func readyQueue(beads []forest.Bead, openBlockers map[string]int, idx map[string]bd.Issue, score map[string]float64, now time.Time) []RankedBead {
+func readyQueue(beads []strand.Bead, openBlockers map[string]int, idx map[string]bd.Issue, score map[string]float64, now time.Time) []RankedBead {
 	ready := make([]RankedBead, 0, len(beads))
 	for i := range beads {
 		b := &beads[i]
@@ -288,8 +288,8 @@ func crossFlag(board []RankedBead, openBlockers map[string]int, idx map[string]b
 
 // beadPath resolves the critical-path ids to scope beads (for their titles),
 // dropping any id not in scope so the panel can't render a blank row.
-func beadPath(path []string, byID map[string]forest.Bead) []forest.Bead {
-	out := make([]forest.Bead, 0, len(path))
+func beadPath(path []string, byID map[string]strand.Bead) []strand.Bead {
+	out := make([]strand.Bead, 0, len(path))
 	for _, id := range path {
 		if b, ok := byID[id]; ok {
 			out = append(out, b)
@@ -300,7 +300,7 @@ func beadPath(path []string, byID map[string]forest.Bead) []forest.Bead {
 
 // labelHealth tallies labels across the scope's open beads, descending by count
 // then name, so the panel surfaces what the live work is tagged with.
-func labelHealth(beads []forest.Bead, idx map[string]bd.Issue) []LabelCount {
+func labelHealth(beads []strand.Bead, idx map[string]bd.Issue) []LabelCount {
 	count := map[string]int{}
 	for i := range beads {
 		if beads[i].Status != bd.StatusOpen {
@@ -325,7 +325,7 @@ func labelHealth(beads []forest.Bead, idx map[string]bd.Issue) []LabelCount {
 
 // untaggedOpen counts open beads carrying no label — the hygiene warning that pairs
 // with the distribution.
-func untaggedOpen(beads []forest.Bead, idx map[string]bd.Issue) int {
+func untaggedOpen(beads []strand.Bead, idx map[string]bd.Issue) int {
 	n := 0
 	for i := range beads {
 		if beads[i].Status == bd.StatusOpen && len(idx[beads[i].ID].Labels) == 0 {

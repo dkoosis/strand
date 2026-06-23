@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
-	"github.com/dkoosis/strand/internal/forest"
 	"github.com/dkoosis/strand/internal/insight"
 	"github.com/dkoosis/strand/internal/registry"
+	"github.com/dkoosis/strand/internal/strand"
 )
 
 // errNoRepo means no beads workspace is active. The landing turns it into an
@@ -76,7 +76,7 @@ type IssueSource interface {
 }
 
 // readSource is the read-only slice of IssueSource the pure-read helpers need:
-// the full-repo List (buildForest), the dependency edges (insightsModel,
+// the full-repo List (buildStrand), the dependency edges (insightsModel,
 // renderDrawer), and the comment thread (renderDrawer). Narrowing the read paths
 // to this seam keeps the write methods (Update/Claim/SetRank/…) out of reach where
 // only reads happen, so a read helper can't grow a stray write. Any IssueSource —
@@ -105,7 +105,7 @@ type SourceFunc func(registry.Repo) IssueSource
 // writeAndRefresh share one scannable contract instead of respelling it inline.
 type writeFunc func(context.Context, IssueSource) (*bd.Issue, error)
 
-// Server renders the forest landing and its htmx fragments over the active repo's
+// Server renders the strand landing and its htmx fragments over the active repo's
 // issue source. The active repo (and the known-repo registry) live in reg;
 // srcFor turns the active repo into the source each request reads through.
 type Server struct {
@@ -113,7 +113,7 @@ type Server struct {
 	reg      *registry.Registry
 	tmpl     *template.Template
 	static   http.Handler
-	syn      forest.Synthesis
+	syn      strand.Synthesis
 	shutdown func()           // raised by POST /shutdown; a test seam over the interrupt hook
 	now      func() time.Time // clock for the stale cutoff; a test seam (default time.Now)
 	cache    *snapshotCache   // per-repo in-process read cache (strand-9s6)
@@ -134,7 +134,7 @@ func defaultShutdown() {
 // static serves the embedded assets, both wired in by the caller so package
 // server stays free of embed. syn is the human-shaped synthesis layer (north
 // star); the project label follows the active repo.
-func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, static http.Handler, syn forest.Synthesis) *Server {
+func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, static http.Handler, syn strand.Synthesis) *Server {
 	s := &Server{srcFor: srcFor, reg: reg, tmpl: tmpl, static: static, syn: syn, shutdown: defaultShutdown, now: time.Now}
 	s.cache = newSnapshotCache(func() time.Time { return s.now() })
 	return s
@@ -154,13 +154,13 @@ func (s *Server) source() (IssueSource, registry.Repo, bool) {
 	return &cachingSource{IssueSource: s.srcFor(repo), cache: s.cache, repo: repo.Path}, repo, true
 }
 
-// Routes returns the mux: the forest page, its htmx fragments, and static assets.
+// Routes returns the mux: the strand page, its htmx fragments, and static assets.
 // Every mutating route (POST/PATCH/DELETE) is registered through mutate, which
 // wraps the handler in the cross-site guard; the GET reads stay open so the same
 // guard can never break a plain navigation (spec: gate writes, not reads).
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", s.handleForest)
+	mux.HandleFunc("GET /{$}", s.handleHome)
 	mux.HandleFunc("GET /list", s.handleList)
 	mux.HandleFunc("GET /board", s.handleBoard)
 	mux.HandleFunc("GET /insights", s.handleInsights)
@@ -180,6 +180,7 @@ func (s *Server) Routes() http.Handler {
 	s.mutate(mux, "DELETE /bead/{id}", s.handleDelete)
 	mux.HandleFunc("GET /new", s.handleNewForm)
 	s.mutate(mux, "POST /new", s.handleCreate)
+	s.mutate(mux, "POST /refresh", s.handleRefresh)
 	mux.HandleFunc("GET /repos", s.handleRepos)
 	s.mutate(mux, "POST /repos/rescan", s.handleRescan)
 	s.mutate(mux, "POST /repo", s.handleSwitchRepo)
@@ -268,22 +269,23 @@ func (s *Server) handleShutdown(w http.ResponseWriter, _ *http.Request) {
 
 // listView is the bead-list pane: a region, optionally narrowed to one epic.
 type listView struct {
-	Region  forest.Region
-	Epic    forest.Epic
+	Region  strand.Region
+	Epic    strand.Epic
 	HasEpic bool // false = show the whole region
 }
 
-// pageData is the full landing render: the forest, the list pane, and the repo
+// pageData is the full landing render: the strand, the list pane, and the repo
 // selector chrome (the active repo's name and the known repos). Empty is true
 // when no repo is active, switching the landing to its actionable empty state.
 type pageData struct {
-	Forest forest.Forest
+	Strand strand.Model
 	List   listView
 	Repos  repoMenu
 	Empty  bool
+	AsOf   string // "data as of HH:MM" for the refresh readout; empty when no snapshot
 }
 
-func (s *Server) handleForest(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
 	src, repo, ok := s.source()
@@ -291,12 +293,47 @@ func (s *Server) handleForest(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "page", pageData{Empty: true, Repos: s.repoMenu("")})
 		return
 	}
-	f, err := s.buildForest(ctx, src, repo)
+	f, err := s.buildStrand(ctx, src, repo)
 	if err != nil {
 		s.renderError(w, err)
 		return
 	}
-	s.render(w, "page", pageData{Forest: f, List: listViewFor(f, ""), Repos: s.repoMenu("")})
+	// Open warms every view, not just this one: buildStrand warmed the List
+	// snapshot, so prefetch the repo-wide Deps too — that makes the first Insights
+	// click (the one view needing edges) hit memory instead of paying a cold `dep
+	// list` spawn (str-udl). A prefetch failure is non-fatal: the landing still
+	// renders, and Insights falls back to fetching its own deps on demand.
+	_, _ = src.Deps(ctx)
+	s.render(w, "page", pageData{
+		Strand: f,
+		List:   listViewFor(f, ""),
+		Repos:  s.repoMenu(""),
+		AsOf:   s.asOf(repo),
+	})
+}
+
+// handleRefresh drops the active repo's snapshot and tells htmx to reload the
+// page. With no time-based expiry (str-udl), a plain reload would serve the warm
+// snapshot — so seeing an out-of-band edit (a fleet agent or bd CLI touching the
+// same store) needs this deliberate invalidate. The HX-Refresh response header
+// makes htmx do a full document reload, which re-runs handleHome and re-warms List
+// + Deps from bd's truth. No active repo is a no-op reload.
+func (s *Server) handleRefresh(w http.ResponseWriter, _ *http.Request) {
+	if _, repo, ok := s.source(); ok {
+		s.cache.invalidate(repo.Path)
+	}
+	w.Header().Set("HX-Refresh", "true")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// asOf formats the active snapshot's fetch time as "HH:MM" for the refresh
+// readout, or "" when no snapshot is warm (the readout then shows nothing rather
+// than a misleading zero time).
+func (s *Server) asOf(repo registry.Repo) string {
+	if at, ok := s.cache.stampedAt(repo.Path); ok {
+		return at.Format("15:04")
+	}
+	return ""
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
@@ -307,7 +344,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "list", listView{})
 		return
 	}
-	f, err := s.buildForest(ctx, src, repo)
+	f, err := s.buildStrand(ctx, src, repo)
 	if err != nil {
 		s.renderError(w, err)
 		return
@@ -316,11 +353,11 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "list", listViewFor(f, r.URL.Query().Get("epic")))
 }
 
-// listViewFor builds the bead-list pane from the forest: its first region,
-// optionally narrowed to one epic by id. An empty forest yields an empty view.
+// listViewFor builds the bead-list pane from the strand: its first region,
+// optionally narrowed to one epic by id. An empty strand yields an empty view.
 // Both the full-page render and the htmx list swap go through here, so the two
 // panes can't diverge.
-func listViewFor(f forest.Forest, epicID string) listView {
+func listViewFor(f strand.Model, epicID string) listView {
 	if len(f.Regions) == 0 {
 		return listView{}
 	}
@@ -343,7 +380,7 @@ func listViewFor(f forest.Forest, epicID string) listView {
 type pivotField struct {
 	Name  string
 	Seeds []boardColumn
-	value func(*forest.Bead) string
+	value func(*strand.Bead) string
 }
 
 // pivotFields are the fields the kanban can pivot on, in pivot-bar order (the
@@ -353,9 +390,9 @@ type pivotField struct {
 // reports that aren't seeded (a named assignee) are appended. The assignee
 // "unassigned" column writes an empty value — dropping there clears the field.
 var pivotFields = []pivotField{
-	{"status", []boardColumn{{Key: string(bd.StatusOpen), Label: "open"}, {Key: string(bd.StatusInProgress), Label: "in progress"}, {Key: string(bd.StatusBlocked), Label: "blocked"}, {Key: string(bd.StatusClosed), Label: "closed"}}, func(b *forest.Bead) string { return string(b.Status) }},
-	{"priority", []boardColumn{{Key: "0", Label: "P0"}, {Key: "1", Label: "P1"}, {Key: "2", Label: "P2"}, {Key: "3", Label: "P3"}, {Key: "4", Label: "P4"}}, func(b *forest.Bead) string { return strconv.Itoa(b.Priority) }},
-	{"assignee", []boardColumn{{Key: "", Label: "unassigned"}}, func(b *forest.Bead) string { return b.Assignee }},
+	{"status", []boardColumn{{Key: string(bd.StatusOpen), Label: "open"}, {Key: string(bd.StatusInProgress), Label: "in progress"}, {Key: string(bd.StatusBlocked), Label: "blocked"}, {Key: string(bd.StatusClosed), Label: "closed"}}, func(b *strand.Bead) string { return string(b.Status) }},
+	{"priority", []boardColumn{{Key: "0", Label: "P0"}, {Key: "1", Label: "P1"}, {Key: "2", Label: "P2"}, {Key: "3", Label: "P3"}, {Key: "4", Label: "P4"}}, func(b *strand.Bead) string { return strconv.Itoa(b.Priority) }},
+	{"assignee", []boardColumn{{Key: "", Label: "unassigned"}}, func(b *strand.Bead) string { return b.Assignee }},
 }
 
 // boardPivots is the pivot bar's name order, derived from pivotFields so the two
@@ -385,7 +422,7 @@ type boardView struct {
 type boardColumn struct {
 	Key   string
 	Label string
-	Beads []forest.Bead
+	Beads []strand.Bead
 }
 
 func (s *Server) handleBoard(w http.ResponseWriter, r *http.Request) {
@@ -396,7 +433,7 @@ func (s *Server) handleBoard(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "board", boardView{Pivots: boardPivots, Pivot: boardPivots[0]})
 		return
 	}
-	f, err := s.buildForest(ctx, src, repo)
+	f, err := s.buildStrand(ctx, src, repo)
 	if err != nil {
 		s.renderError(w, err)
 		return
@@ -418,7 +455,7 @@ func buildBoard(v *listView, pivot string) boardView {
 }
 
 // scopeBeads flattens the view's beads: one epic's, or every epic's in the region.
-func scopeBeads(v *listView) []forest.Bead {
+func scopeBeads(v *listView) []strand.Bead {
 	if v.HasEpic {
 		return v.Epic.Beads
 	}
@@ -426,7 +463,7 @@ func scopeBeads(v *listView) []forest.Bead {
 	for i := range v.Region.Epics {
 		total += len(v.Region.Epics[i].Beads)
 	}
-	all := make([]forest.Bead, 0, total)
+	all := make([]strand.Bead, 0, total)
 	for i := range v.Region.Epics {
 		all = append(all, v.Region.Epics[i].Beads...)
 	}
@@ -445,7 +482,7 @@ func pivotOrDefault(p string) string {
 // boardColumns buckets beads into the pivot's columns: the seeded columns first
 // (in order), then any unseeded value bd reports, appended. Every bead lands in
 // exactly one column. pivot must be a known field (callers pass pivotOrDefault).
-func boardColumns(pivot string, beads []forest.Bead) []boardColumn {
+func boardColumns(pivot string, beads []strand.Bead) []boardColumn {
 	field := pivotByName(pivot)
 	cols := append([]boardColumn(nil), field.Seeds...)
 	idx := make(map[string]int, len(cols))
@@ -502,7 +539,7 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.render(w, "boardCard", forest.NewBead(issue))
+	s.render(w, "boardCard", strand.NewBead(issue))
 }
 
 // handleRank persists a drag-to-reorder of the V1 bead list. SortableJS posts only
@@ -512,7 +549,7 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 // success the response is 204 (no swap, no Sortable re-init churn); a write error
 // renders the error fragment at a non-2xx status, the client's revert signal.
 //
-// Two write paths preserve the pure-rank-after-seed invariant (forest.sortBeads):
+// Two write paths preserve the pure-rank-after-seed invariant (strand.sortBeads):
 // a group with no manual rank yet is seeded with dense ranks 1..N over the new
 // order; an already-ranked group moves one bead to the midpoint of its new
 // neighbors (or just past an edge), renormalizing the whole group only when float
@@ -531,7 +568,7 @@ func (s *Server) handleRank(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	f, err := s.buildForest(ctx, src, repo)
+	f, err := s.buildStrand(ctx, src, repo)
 	if err != nil {
 		s.renderError(w, err)
 		return
@@ -577,9 +614,9 @@ func splitIDs(s string) []string {
 	return out
 }
 
-// walkBeads visits every bead in the forest. It flattens the region/epic/bead
+// walkBeads visits every bead in the strand. It flattens the region/epic/bead
 // nesting so callers read as one loop, not three.
-func walkBeads(f forest.Forest, fn func(forest.Bead)) {
+func walkBeads(f strand.Model, fn func(strand.Bead)) {
 	for ri := range f.Regions {
 		for ei := range f.Regions[ri].Epics {
 			for _, b := range f.Regions[ri].Epics[ei].Beads {
@@ -589,13 +626,13 @@ func walkBeads(f forest.Forest, fn func(forest.Bead)) {
 	}
 }
 
-// groupRanks reads the current rank of every id in order from the forest and
-// reports which ids the forest actually yielded (present) and whether the whole
+// groupRanks reads the current rank of every id in order from the strand and
+// reports which ids the strand actually yielded (present) and whether the whole
 // group is already manually ranked. A group that is not wholly ranked must be
-// seeded, not midpoint-inserted (the sortBeads invariant). An id the forest never
+// seeded, not midpoint-inserted (the sortBeads invariant). An id the strand never
 // yielded (closed mid-drag, say) reads as not-ranked and not-present, so a partial
 // group seeds over only its live members rather than mis-inserting.
-func groupRanks(f forest.Forest, order []string) (ranks map[string]float64, present map[string]bool, allRanked bool) {
+func groupRanks(f strand.Model, order []string) (ranks map[string]float64, present map[string]bool, allRanked bool) {
 	want := make(map[string]bool, len(order))
 	for _, id := range order {
 		want[id] = true
@@ -603,7 +640,7 @@ func groupRanks(f forest.Forest, order []string) (ranks map[string]float64, pres
 	ranks = make(map[string]float64, len(order))
 	present = make(map[string]bool, len(order))
 	unranked := false
-	walkBeads(f, func(b forest.Bead) {
+	walkBeads(f, func(b strand.Bead) {
 		if !want[b.ID] {
 			return
 		}
@@ -676,7 +713,7 @@ func rankFor(order []string, ranks map[string]float64, moved string) (rank float
 // seedRanks writes dense ranks 1..M over the live ids in order, making the group
 // wholly rank-ordered. Used to seed an untouched group on its first drag and to
 // renormalize when midpoint space runs out. An id absent from present (closed
-// mid-drag) is skipped so no rank lands on a bead the forest no longer shows; the
+// mid-drag) is skipped so no rank lands on a bead the strand no longer shows; the
 // counter only advances on a write, keeping the survivors' ranks dense.
 func seedRanks(ctx context.Context, src IssueSource, order []string, present map[string]bool) error {
 	rank := 1
@@ -702,7 +739,7 @@ type insightsView struct {
 
 // handleInsights renders the V4 dashboard for the active scope (a region or one
 // epic), mirroring handleBoard. No repo or an empty scope renders the same empty
-// pane the other views use. It lists once and reuses the issues for both the forest
+// pane the other views use. It lists once and reuses the issues for both the strand
 // (scope) and the metric/triage computation.
 func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
@@ -717,7 +754,7 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, fmt.Errorf("list issues: %w", err))
 		return
 	}
-	f := forest.Build(issues, s.synFor(repo))
+	f := strand.Build(issues, s.synFor(repo))
 	view := listViewFor(f, r.URL.Query().Get("epic"))
 	model, err := s.insightsModel(ctx, src, &view, issues)
 	if err != nil {
@@ -728,7 +765,7 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 }
 
 // insightsModel computes the dashboard for a scope. issues is the full repo list
-// (for labels and timestamps the forest drops); the scope's beads come from the
+// (for labels and timestamps the strand drops); the scope's beads come from the
 // view. It fetches the scope's dependency edges, then hands the plain data to
 // internal/insight — the analytics seam that owns the triage/leaderboard/graph
 // math, so the server stays transport-only and no longer depends on the graph
@@ -757,7 +794,7 @@ func (s *Server) insightsModel(ctx context.Context, src readSource, v *listView,
 // directly; .Err carries a bd write failure to show inline (spec Q2).
 //
 // Priority shadows the embedded *bd.Issue.Priority (now *int) with the render-side
-// int the priority <select> compares against: it routes through forest.NewBead so
+// int the priority <select> compares against: it routes through strand.NewBead so
 // an absent priority maps to the P2 default — never a false P0 — exactly like the
 // list and board (str-zvh).
 type drawerData struct {
@@ -795,7 +832,7 @@ func (s *Server) renderDrawer(ctx context.Context, w http.ResponseWriter, src re
 		s.renderError(w, errNoIssue)
 		return
 	}
-	data := drawerData{Issue: issue, Priority: forest.NewBead(issue).Priority}
+	data := drawerData{Issue: issue, Priority: strand.NewBead(issue).Priority}
 	if writeErr != nil {
 		data.Err = writeErr.Error()
 	}
@@ -966,7 +1003,7 @@ func labelFromForm(r *http.Request) string {
 // Parent-picker sentinels. The create form forces a deliberate parent choice:
 // the bead lands under an existing parent, off-trunk by explicit opt-out, or
 // under a parent minted inline. An empty value is no choice and is rejected, so
-// no bead is ever created parentless by accident (the forest's tree axis holds
+// no bead is ever created parentless by accident (the strand's tree axis holds
 // for near-zero cost).
 const (
 	parentOffTrunk = "__off_trunk__" // deliberate "no parent" choice
@@ -1144,33 +1181,33 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "deleted", nil)
 }
 
-// buildForest pulls the active repo's live issue list once and folds it into the
+// buildStrand pulls the active repo's live issue list once and folds it into the
 // landing model, labeling the region with the active repo's name (the synthesis
 // project follows the active repo, so a switch re-labels every view).
-func (s *Server) buildForest(ctx context.Context, src readSource, repo registry.Repo) (forest.Forest, error) {
+func (s *Server) buildStrand(ctx context.Context, src readSource, repo registry.Repo) (strand.Model, error) {
 	issues, err := src.List(ctx, allIssues...)
 	if err != nil {
-		return forest.Forest{}, fmt.Errorf("list issues: %w", err)
+		return strand.Model{}, fmt.Errorf("list issues: %w", err)
 	}
-	return forest.Build(issues, s.synFor(repo)), nil
+	return strand.Build(issues, s.synFor(repo)), nil
 }
 
-// allIssues lifts bd list's default 50-row cap. The forest folds each issue into
+// allIssues lifts bd list's default 50-row cap. The strand folds each issue into
 // its trunk by walking the parent chain, so a truncated list breaks the laddering
 // — a tile lands off-trunk the moment one ancestor row is missing. Fetch them all.
 var allIssues = []string{"--limit", "0"}
 
 // synFor labels the synthesis with the active repo's name; the project follows the
-// active repo, so a switch re-labels every view. Shared by buildForest and the
-// insights handler (which lists issues itself, so can't go through buildForest).
-func (s *Server) synFor(repo registry.Repo) forest.Synthesis {
+// active repo, so a switch re-labels every view. Shared by buildStrand and the
+// insights handler (which lists issues itself, so can't go through buildStrand).
+func (s *Server) synFor(repo registry.Repo) strand.Synthesis {
 	syn := s.syn
 	syn.Project = repo.Name
 	return syn
 }
 
 // snapshotCache holds one in-process read snapshot per repo, keyed by the repo's
-// path. Each view (forest/list/board/insights) used to shell out to `bd
+// path. Each view (strand/list/board/insights) used to shell out to `bd
 // list --limit 0` (~0.5s, opens the Dolt store) and insights added a `dep
 // list` call; the compute over the result is in-memory and negligible, so the bd
 // subprocess spawn is the whole cost, paid back-to-back through execMu on a
@@ -1184,12 +1221,17 @@ func (s *Server) synFor(repo registry.Repo) forest.Synthesis {
 // serializes the bd calls that do happen, but the cache removes the contention by
 // removing the calls.
 //
+// A snapshot has no time-based expiry: it lives until a write invalidates it or
+// the repo switches. The model is "open a beadbase, look at each view in turn", so
+// a snapshot must outlast a long look without re-paying the ~0.4s bd spawn on the
+// next tab (str-udl supersedes the original 3s TTL, which punished lingering).
+//
 // Out-of-band staleness — a bd CLI run or another agent editing the same repo's
-// store while strand holds a snapshot — is the one case writes can't catch. The
-// documented mitigation is a TTL floor: an entry older than cacheTTL is treated as
-// a miss, so out-of-band edits surface within a few seconds without any UI work.
-// The manual-reload path is the browser refresh / re-navigation that re-issues the
-// GET after the TTL lapses; no template change is needed for it.
+// store while strand holds a snapshot — is the one case writes can't catch. With
+// no clock to age the snapshot out, a plain browser reload would serve the stale
+// view, so the mitigation is the explicit refresh control (POST /refresh →
+// invalidate → reload): out-of-band edits surface on a deliberate click, with a
+// "data as of HH:MM" readout so the staleness window is visible.
 type snapshotCache struct {
 	mu      sync.Mutex
 	now     func() time.Time
@@ -1200,7 +1242,7 @@ type snapshotCache struct {
 // snapshot is one repo's cached reads: the full `list --limit 0` result and the
 // repo-wide Deps result, stamped with the wall time they were fetched so the TTL
 // floor can age them out. List and Deps share one entry (and the TTL stamp set at
-// the List fetch) so forest/list/insights are one logical snapshot — and Deps is
+// the List fetch) so strand/list/insights are one logical snapshot — and Deps is
 // fetched once over the whole repo, not per scope, so the second structural view
 // reuses the first's edges (depsOK distinguishes "no deps" from "not fetched yet").
 //
@@ -1216,28 +1258,32 @@ type snapshot struct {
 	depsOK bool
 }
 
-// cacheTTL is the out-of-band staleness backstop: a snapshot older than this is a
-// miss, so a bd CLI / fleet edit to the same repo surfaces on the next navigation
-// within a few seconds even though strand didn't make the write. It is a floor,
-// not a refresh interval — writes still invalidate immediately, so the steady
-// single-writer path never waits on it. Kept short (the bead's ~2-5s window).
-const cacheTTL = 3 * time.Second
-
 func newSnapshotCache(now func() time.Time) *snapshotCache {
 	return &snapshotCache{now: now, entries: map[string]*snapshot{}}
 }
 
-// entryLocked returns the repo's snapshot if present and within the TTL floor,
-// else nil (a miss). The caller MUST hold c.mu: putDeps mutates an entry's
-// deps/depsOK in place, so a reader that escapes the lock with the *snapshot
-// races that write (strand-4sd). The public accessors below copy the fields they
-// need out under the lock and never hand the pointer to a handler.
+// entryLocked returns the repo's snapshot if present, else nil (a miss). A
+// snapshot lives until a write invalidates it or the repo switches — there is no
+// time-based expiry. The usage model is "open a beadbase, look at each view", so
+// a snapshot must survive a long look without re-paying the bd spawn; out-of-band
+// edits surface through the explicit refresh control (str-udl), not a silent
+// clock. The caller MUST hold c.mu: putDeps mutates an entry's deps/depsOK in
+// place, so a reader that escapes the lock with the *snapshot races that write
+// (strand-4sd). The public accessors below copy the fields they need out under
+// the lock and never hand the pointer to a handler.
 func (c *snapshotCache) entryLocked(repo string) *snapshot {
-	e, ok := c.entries[repo]
-	if !ok || c.now().Sub(e.at) >= cacheTTL {
-		return nil
+	return c.entries[repo]
+}
+
+// stampedAt reports when the repo's snapshot was fetched, for the "data as of …"
+// readout. ok is false when no snapshot is warm yet.
+func (c *snapshotCache) stampedAt(repo string) (time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.entries[repo]; ok {
+		return e.at, true
 	}
-	return e
+	return time.Time{}, false
 }
 
 // liveList returns the repo's cached list and true on a live snapshot. The slice

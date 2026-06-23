@@ -183,7 +183,7 @@ func TestCreateSendsSetFieldsOnly(t *testing.T) {
 	}
 }
 
-// Create emits --parent when Parent is set, so the forest's tree axis is wired
+// Create emits --parent when Parent is set, so the strand's tree axis is wired
 // at birth (str-6k0.6.2 forced-parent contract). An empty Parent omits the flag
 // — that's the deliberate off-trunk path, covered by TestCreateSendsSetFieldsOnly.
 func TestCreateSendsParentWhenSet(t *testing.T) {

@@ -58,7 +58,7 @@ type Issue struct {
 	// Priority is 0–4 (0=highest) when bd emits the field, nil when bd omits it.
 	// *int (not plain int) so an absent priority decodes to nil rather than
 	// collapsing into a false P0 — the zero-sentinel hazard (F1) str-vuq pinned
-	// and str-zvh closed. Consumers must nil-check: forest.NewBead maps nil to a
+	// and str-zvh closed. Consumers must nil-check: strand.NewBead maps nil to a
 	// sensible default (P2). This mirrors the write path, where CreateOpts.Priority
 	// is already *int because omission is a real option.
 	Priority        *int      `json:"priority"`

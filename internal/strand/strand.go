@@ -1,4 +1,4 @@
-// Package forest builds strand's landing model — the "forest" view (spec §1a):
+// Package strand builds strand's landing model — the "strand" view (spec §1a):
 // the work in motion as sized story tiles, not a flat catalog. It turns a flat
 // list of bd issues into regions of epics, each epic a treemap tile sized by its
 // open work, so weight and heat read before a word does.
@@ -9,7 +9,7 @@
 // descend from. Live work that doesn't ladder up to any trunk collects in a
 // catch-all region. The trunk hierarchy lives in bd (parent edges), so the
 // synthesis layer spec §1a deferred is now read straight from the data.
-package forest
+package strand
 
 import (
 	"hash/fnv"
@@ -110,8 +110,8 @@ type Region struct {
 	Rect  Rect // geometry within the treemap, in 0–100 percentages
 }
 
-// Forest is the whole landing model the page template renders.
-type Forest struct {
+// Model is the whole landing model the page template renders.
+type Model struct {
 	NorthStar  string
 	Regions    []Region
 	Open       int
@@ -128,7 +128,7 @@ type Synthesis struct {
 }
 
 // openish reports whether a status counts as live work. Closed and deferred
-// issues are not part of the forest — it shows what's in motion.
+// issues are not part of the strand — it shows what's in motion.
 func openish(status bd.Status) bool {
 	return status != bd.StatusClosed && status != bd.StatusDeferred
 }
@@ -150,8 +150,8 @@ func isTrunk(is *bd.Issue) bool {
 	return is.Parent == "" && is.IssueType == "epic"
 }
 
-// Build assembles the forest from a flat issue list and the synthesis layer.
-func Build(issues []bd.Issue, syn Synthesis) Forest {
+// Build assembles the strand from a flat issue list and the synthesis layer.
+func Build(issues []bd.Issue, syn Synthesis) Model {
 	byID := make(map[string]bd.Issue, len(issues))
 	for i := range issues {
 		byID[issues[i].ID] = issues[i]
@@ -175,7 +175,7 @@ func Build(issues []bd.Issue, syn Synthesis) Forest {
 		regionOf[epic] = region
 	}
 
-	f := Forest{NorthStar: syn.NorthStar, InProgress: inProgress}
+	f := Model{NorthStar: syn.NorthStar, InProgress: inProgress}
 	if len(members) == 0 {
 		return f
 	}

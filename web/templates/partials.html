@@ -5,10 +5,8 @@
 {{define "treemap"}}
 <div class="treemap">
   {{range .Regions}}
-  <div class="region" style="--rc:{{.Color}};left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%">
-    <div class="rg-head mm-filter" role="button" tabindex="0" data-name="{{.Name}}">
-      <span class="nm">{{.Name}}</span><span class="ct tnum">{{.Open}}</span>
-    </div>
+  <div class="region" data-name="{{.Name}}" data-open="{{.Open}}" style="--rc:{{.Color}};left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%">
+    <div class="rg-head mm-filter" role="button" tabindex="0" data-name="{{.Name}}" aria-label="{{.Name}} — whole region"></div>
     <div class="rg-body">
       {{range .Epics}}
       <div class="tile mm-filter" role="button" tabindex="0"
@@ -42,7 +40,7 @@
 </div>
 {{else}}
 <div class="pane-head"><div class="lp-scope"><span class="lp-name">—</span></div></div>
-<div class="list-body"><p class="empty">No live work. The forest is quiet.</p></div>
+<div class="list-body"><p class="empty">No live work. The strand is quiet.</p></div>
 {{end}}
 {{end}}
 
@@ -75,7 +73,7 @@
 </div>
 {{else}}
 <div class="pane-head"><div class="lp-scope"><span class="lp-name">—</span></div></div>
-<div class="list-body"><p class="empty">No live work. The forest is quiet.</p></div>
+<div class="list-body"><p class="empty">No live work. The strand is quiet.</p></div>
 {{end}}
 {{end}}
 
@@ -152,7 +150,7 @@
 {{end}}
 {{else}}
 <div class="pane-head"><div class="lp-scope"><span class="lp-name">—</span></div></div>
-<div class="list-body"><p class="empty">No live work. The forest is quiet.</p></div>
+<div class="list-body"><p class="empty">No live work. The strand is quiet.</p></div>
 {{end}}
 {{end}}
 
@@ -176,7 +174,7 @@
 
 {{/* epicGroup renders one epic's bead table with no group header — the
      epic-scoped list, where the pane head already names the epic. Dot is a
-     forest.Epic. */}}
+     strand.Epic. */}}
 {{define "epicGroup"}}
 <div class="epic-group">
   {{template "epicRows" .}}
@@ -185,7 +183,7 @@
 
 {{/* epicGroupHead is the region-view variant: a clickable group header above
      the bead table, drawn once per epic in the whole-region list. Dot is a
-     forest.Epic. */}}
+     strand.Epic. */}}
 {{define "epicGroupHead"}}
 <div class="epic-group">
   <div class="eg-head" role="button" tabindex="0"
@@ -198,7 +196,7 @@
 {{end}}
 
 {{/* epicRows is the shared bead table for both epic-group variants. Dot is a
-     forest.Epic. */}}
+     strand.Epic. */}}
 {{define "epicRows"}}
 <table><tbody class="bead-rows" data-epic="{{.ID}}">
     {{range .Beads}}

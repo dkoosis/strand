@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
-	"github.com/dkoosis/strand/internal/forest"
+	"github.com/dkoosis/strand/internal/strand"
 	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/internal/server"
 	"github.com/dkoosis/strand/web"
@@ -29,7 +29,7 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:7777", "address to listen on")
 	dir := flag.String("dir", "", "seed this beads workspace into the registry and make it active")
 	bin := flag.String("bd", "bd", "path to the bd binary")
-	northStar := flag.String("northstar", "", "north-star line shown above the forest")
+	northStar := flag.String("northstar", "", "north-star line shown above the strand")
 	flag.Parse()
 
 	tmpl, err := web.Templates()
@@ -55,7 +55,7 @@ func main() {
 	srcFor := func(repo registry.Repo) server.IssueSource {
 		return &bd.Client{Dir: repo.Path, Bin: bdBin}
 	}
-	syn := forest.Synthesis{NorthStar: *northStar}
+	syn := strand.Synthesis{NorthStar: *northStar}
 	srv := server.New(srcFor, reg, tmpl, web.Static(), syn)
 
 	httpSrv := &http.Server{

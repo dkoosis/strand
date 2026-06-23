@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
-	"github.com/dkoosis/strand/internal/forest"
 	"github.com/dkoosis/strand/internal/registry"
+	"github.com/dkoosis/strand/internal/strand"
 	"github.com/dkoosis/strand/web"
 )
 
@@ -235,7 +235,7 @@ func (s *stubBD) Update(_ context.Context, id, field, value string) (*bd.Issue, 
 }
 
 // SetRank logs the write and reflects it in the issue list so a follow-up
-// buildForest re-read sees the new rank — mirroring bd's metadata round-trip.
+// buildStrand re-read sees the new rank — mirroring bd's metadata round-trip.
 // writeErr models a bd outage: the list is left untouched and the handler must
 // surface the error rather than report a phantom reorder.
 func (s *stubBD) SetRank(_ context.Context, id string, rank float64) (*bd.Issue, error) {
@@ -271,13 +271,13 @@ func (s *stubBD) Close(_ context.Context, id, _ string) (*bd.Issue, error) {
 }
 
 // demoRepo is the active repo every test server scopes to; its name labels the
-// forest region the way the active repo's name does in production.
+// strand region the way the active repo's name does in production.
 var demoRepo = registry.Repo{Name: "demo", Path: "/demo"}
 
 // readOnlyStub implements ONLY the readSource methods (List/Deps/Comments) — no
 // writes. It pins the narrowed seam (strand-8zg): the read helpers must depend on
 // readSource, not the fat IssueSource, so a source with no write methods drives
-// them. If a read helper grew a write call, buildForest/insightsModel/renderDrawer
+// them. If a read helper grew a write call, buildStrand/insightsModel/renderDrawer
 // would no longer accept this type and the package would not compile.
 type readOnlyStub struct{ inner *stubBD }
 
@@ -303,9 +303,9 @@ func TestReadHelpersTakeReadSource(t *testing.T) {
 	src := &readOnlyStub{inner: &stubBD{issues: sampleIssues, deps: sampleDeps}}
 	ctx := context.Background()
 
-	f, err := srv.buildForest(ctx, src, demoRepo)
+	f, err := srv.buildStrand(ctx, src, demoRepo)
 	if err != nil {
-		t.Fatalf("buildForest: %v", err)
+		t.Fatalf("buildStrand: %v", err)
 	}
 	view := listViewFor(f, "")
 	if _, err := srv.insightsModel(ctx, src, &view, sampleIssues); err != nil {
@@ -328,7 +328,7 @@ func newTestServer(t *testing.T, src IssueSource) *Server {
 	}
 	reg := registry.InMemory(demoRepo)
 	srcFor := func(registry.Repo) IssueSource { return src }
-	return New(srcFor, reg, tmpl, web.Static(), forest.Synthesis{NorthStar: "remember across sessions"})
+	return New(srcFor, reg, tmpl, web.Static(), strand.Synthesis{NorthStar: "remember across sessions"})
 }
 
 func do(t *testing.T, srv *Server, path string) *httptest.ResponseRecorder {
@@ -355,17 +355,17 @@ func oneBead(iss *bd.Issue) *stubBD {
 
 var sampleIssues = []bd.Issue{
 	{ID: "demo-root", Title: "DEMO trunk", IssueType: "epic", Status: "open"}, // region; epics below are tiles
-	{ID: "demo-e1", Parent: "demo-root", Title: "Forest epic", IssueType: "epic", Status: "open", Priority: new(1)},
+	{ID: "demo-e1", Parent: "demo-root", Title: "Strand epic", IssueType: "epic", Status: "open", Priority: new(1)},
 	{ID: "demo-e1.a", Parent: "demo-e1", Title: "Wire the thing", Status: "open", Priority: new(0)},
 	{ID: "demo-e1.b", Parent: "demo-e1", Title: "Test the thing", Status: "in_progress", Priority: new(2)},
 	{ID: "demo-e2", Parent: "demo-root", Title: "Lone task", IssueType: "task", Status: "open", Priority: new(3)},
 }
 
-// TestForestPageRenders pins the view-centric landing: the page renders the north
+// TestStrandPageRenders pins the view-centric landing: the page renders the north
 // star, the loud primary view-switcher (Table/Board/Insights tabs), the minimap
 // treemap with a tile per epic carrying its filter identity (data-epic, routed to
 // the active view by app.js), and the centerpiece list.
-func TestForestPageRenders(t *testing.T) {
+func TestStrandPageRenders(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: sampleIssues})
 	rec := do(t, srv, "/")
 
@@ -598,13 +598,13 @@ func TestRankSeedsUntouchedGroup(t *testing.T) {
 	}
 }
 
-// TestRankSeedSkipsAbsentID: an id in the posted order that the forest no longer
+// TestRankSeedSkipsAbsentID: an id in the posted order that the strand no longer
 // yields (closed mid-drag) gets no rank write — only the live survivors are seeded,
 // and they stay dense.
 func TestRankSeedSkipsAbsentID(t *testing.T) {
 	stub := &stubBD{issues: append([]bd.Issue(nil), sampleIssues...)}
 	srv := newTestServer(t, stub)
-	// "ghost" is not in the forest; the live demo-e1 group is the other three.
+	// "ghost" is not in the strand; the live demo-e1 group is the other three.
 	rec := send(t, srv, http.MethodPost, "/bead/demo-e1.b/rank",
 		"order=demo-e1.b,ghost,demo-e1.a,demo-e1")
 
@@ -1010,7 +1010,7 @@ func TestCreateReflects(t *testing.T) {
 }
 
 // TestCreateForcesParent: a create with no parent choice is rejected — the form
-// re-renders with the forced-parent error and no bead is created. The forest's
+// re-renders with the forced-parent error and no bead is created. The strand's
 // tree axis can't be skipped by omission (str-6k0.6.2).
 func TestCreateForcesParent(t *testing.T) {
 	stub := &stubBD{show: map[string]*bd.Issue{}}
@@ -1394,7 +1394,7 @@ func TestInsightsNoRepo(t *testing.T) {
 		t.Fatalf("parse templates: %v", err)
 	}
 	srv := New(func(registry.Repo) IssueSource { return &stubBD{} },
-		registry.InMemory(), tmpl, web.Static(), forest.Synthesis{})
+		registry.InMemory(), tmpl, web.Static(), strand.Synthesis{})
 	rec := do(t, srv, "/insights")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /insights (no repo) = %d, want 200", rec.Code)
@@ -1536,7 +1536,7 @@ func (c *countingBD) Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, err
 	return c.stubBD.Deps(ctx, ids...)
 }
 
-// TestSnapshotCacheCrossView: navigating forest→list→board→insights on one repo
+// TestSnapshotCacheCrossView: navigating strand→list→board→insights on one repo
 // fetches List and Deps once each; every later view is served from the in-process
 // snapshot (acceptance: cross-view nav hits memory after first load).
 func TestSnapshotCacheCrossView(t *testing.T) {
@@ -1589,6 +1589,67 @@ func TestSnapshotCacheInvalidatesOnWrite(t *testing.T) {
 	}
 }
 
+// TestHandleHomePrefetchesDeps: opening the landing warms Deps too, not just List,
+// so the first Insights click hits memory instead of a cold `dep list` spawn
+// (str-udl). Asserting depsCalls==1 after only GET / — with no Insights visit —
+// proves the prefetch ran.
+func TestHandleHomePrefetchesDeps(t *testing.T) {
+	src := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
+	srv := newTestServer(t, src)
+	srv.now = func() time.Time { return cacheNow }
+
+	if rec := do(t, srv, "/"); rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d, want 200", rec.Code)
+	}
+	if src.depsCalls.Load() != 1 {
+		t.Errorf("Deps spawned %d times on open, want 1 — the landing must prefetch deps", src.depsCalls.Load())
+	}
+	if rec := do(t, srv, "/insights"); src.depsCalls.Load() != 1 {
+		t.Errorf("Deps spawned %d times after insights, want 1 — insights must reuse the prefetch (code %d)", src.depsCalls.Load(), rec.Code)
+	}
+}
+
+// TestHandleRefreshInvalidates: POST /refresh drops the active snapshot and tells
+// htmx to reload (HX-Refresh: true). With no time expiry, a write-less reload
+// would otherwise serve the warm snapshot, so refresh is the only way to surface an
+// out-of-band edit (str-udl).
+func TestHandleRefreshInvalidates(t *testing.T) {
+	src := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
+	srv := newTestServer(t, src)
+	srv.now = func() time.Time { return cacheNow }
+
+	do(t, srv, "/") // warms the snapshot (List #1)
+	if src.listCalls.Load() != 1 {
+		t.Fatalf("List spawned %d times before refresh, want 1", src.listCalls.Load())
+	}
+
+	rec := send(t, srv, http.MethodPost, "/refresh", "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("POST /refresh = %d, want 204", rec.Code)
+	}
+	if got := rec.Header().Get("HX-Refresh"); got != "true" {
+		t.Errorf("HX-Refresh = %q, want \"true\"", got)
+	}
+
+	do(t, srv, "/list") // must re-read bd's truth (List #2)
+	if src.listCalls.Load() != 2 {
+		t.Errorf("List spawned %d times after refresh, want 2 — refresh must invalidate", src.listCalls.Load())
+	}
+}
+
+// TestHandleHomeShowsAsOf: the landing carries the "as of HH:MM" refresh readout,
+// stamped from the snapshot's fetch time (str-udl).
+func TestHandleHomeShowsAsOf(t *testing.T) {
+	src := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
+	srv := newTestServer(t, src)
+	srv.now = func() time.Time { return cacheNow }
+
+	rec := do(t, srv, "/")
+	if want := "as of " + cacheNow.Format("15:04"); !strings.Contains(rec.Body.String(), want) {
+		t.Errorf("landing missing the refresh readout %q", want)
+	}
+}
+
 // TestSnapshotCacheRepoSwitchRescopes: switching the active repo serves the new
 // repo's source, not the prior repo's cached snapshot (acceptance: repo switch
 // re-scopes). Two repos back two distinct counting sources.
@@ -1608,7 +1669,7 @@ func TestSnapshotCacheRepoSwitchRescopes(t *testing.T) {
 		}
 		return srcA
 	}
-	srv := New(srcFor, reg, tmpl, web.Static(), forest.Synthesis{NorthStar: "x"})
+	srv := New(srcFor, reg, tmpl, web.Static(), strand.Synthesis{NorthStar: "x"})
 	srv.now = func() time.Time { return cacheNow }
 
 	// Warm repoB's snapshot (InMemory makes the last-added repo active).
@@ -1694,13 +1755,12 @@ func TestSnapshotCachePutDepsVersionSkew(t *testing.T) {
 	}
 }
 
-// TestSnapshotCacheTTLEviction exercises the TTL floor's true branch, which every
-// other cache test misses by freezing the clock: warm the snapshot, advance the
-// injected clock past cacheTTL, and prove the next read is a miss that re-fetches
-// (acceptance: TTL eviction covered). The clock is a mutable fake, not a real
-// sleep — the age check reads now()-at, so advancing now() is wall-clock truth
-// without the 3s wait.
-func TestSnapshotCacheTTLEviction(t *testing.T) {
+// TestSnapshotCacheNoTimeExpiry proves str-udl's core contract: a snapshot has no
+// time-based expiry — advancing the clock by any amount keeps it warm, so a long
+// look at one view never re-pays the bd spawn on the next tab. Only an explicit
+// invalidate (a write, or POST /refresh) forces the re-fetch. The clock is a
+// mutable fake; advancing it stands in for wall-clock passing during a long look.
+func TestSnapshotCacheNoTimeExpiry(t *testing.T) {
 	src := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
 	clock := cacheNow
 	cache := newSnapshotCache(func() time.Time { return clock })
@@ -1710,20 +1770,21 @@ func TestSnapshotCacheTTLEviction(t *testing.T) {
 	if _, err := cs.List(ctx); err != nil { // miss → fetch #1
 		t.Fatalf("List: %v", err)
 	}
-	if _, err := cs.List(ctx); err != nil { // within TTL → served from snapshot
+	clock = clock.Add(time.Hour) // a long look — far past the old 3s TTL
+	if _, err := cs.List(ctx); err != nil {
 		t.Fatalf("List: %v", err)
 	}
 	if src.listCalls.Load() != 1 {
-		t.Fatalf("List spawned %d times within TTL, want 1", src.listCalls.Load())
+		t.Fatalf("List spawned %d times after an hour, want 1 — snapshot must not age out", src.listCalls.Load())
 	}
 
-	clock = clock.Add(cacheTTL) // age the snapshot to exactly the floor → stale
+	cache.invalidate("demo") // explicit refresh / a write drops the snapshot
 
 	if _, err := cs.List(ctx); err != nil { // miss → fetch #2
 		t.Fatalf("List: %v", err)
 	}
 	if src.listCalls.Load() != 2 {
-		t.Errorf("List spawned %d times after TTL lapse, want 2 — stale snapshot must re-fetch", src.listCalls.Load())
+		t.Errorf("List spawned %d times after invalidate, want 2 — invalidate must re-fetch", src.listCalls.Load())
 	}
 }
 
