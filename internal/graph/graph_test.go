@@ -23,13 +23,9 @@ func diamond() ([]string, []Edge) {
 	return nodes, edges
 }
 
-func TestDepthAndCriticalPath(t *testing.T) {
+func TestCriticalPath(t *testing.T) {
 	m := Compute(diamond())
 
-	want := map[string]int{"A": 4, "B": 3, "C": 3, "D": 2, "E": 1}
-	if !reflect.DeepEqual(m.Depth, want) {
-		t.Errorf("Depth = %v, want %v", m.Depth, want)
-	}
 	// Both A→B→D→E and A→C→D→E are length 4; the walk takes the lower-ID branch.
 	wantPath := []string{"A", "B", "D", "E"}
 	if !reflect.DeepEqual(m.CriticalPath, wantPath) {
@@ -88,8 +84,7 @@ func TestCycleDetected(t *testing.T) {
 
 func TestEmptyGraph(t *testing.T) {
 	m := Compute(nil, nil)
-	if m.PageRank == nil || m.Betweenness == nil || m.Hub == nil ||
-		m.Authority == nil || m.Depth == nil {
+	if m.PageRank == nil || m.Betweenness == nil {
 		t.Error("metric maps must be non-nil even when empty")
 	}
 	if len(m.PageRank) != 0 || len(m.CriticalPath) != 0 || len(m.Cycles) != 0 {
@@ -98,36 +93,33 @@ func TestEmptyGraph(t *testing.T) {
 }
 
 // TestNodesNoEdgesTerminates is the regression for strand-d6f: a scope with
-// nodes but zero in-scope edges (every dependency filtered out) drove gonum's
-// HITS to divide by a zero link norm and spin forever, hanging /graph and
-// /insights past their request deadline. Compute must return promptly with
-// zeroed hub/authority for every node.
+// nodes but zero in-scope edges (every dependency filtered out) once drove
+// gonum's HITS to divide by a zero link norm and spin forever, hanging /graph
+// and /insights past their request deadline. HITS is gone (api-surface F1), but
+// the edgeless-scope path stays pinned: Compute must return promptly and cover
+// every node in PageRank.
 func TestNodesNoEdgesTerminates(t *testing.T) {
 	done := make(chan Metrics, 1)
 	go func() { done <- Compute([]string{"A", "B", "C"}, nil) }()
 
 	select {
 	case m := <-done:
-		for _, n := range []string{"A", "B", "C"} {
-			if m.Hub[n] != 0 || m.Authority[n] != 0 {
-				t.Errorf("node %s: Hub=%g Authority=%g, want 0/0", n, m.Hub[n], m.Authority[n])
-			}
-		}
-		if len(m.Hub) != 3 || len(m.Authority) != 3 {
-			t.Errorf("Hub/Authority should cover all 3 nodes, got %d/%d", len(m.Hub), len(m.Authority))
+		if len(m.PageRank) != 3 {
+			t.Errorf("PageRank should cover all 3 nodes, got %d", len(m.PageRank))
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Compute hung on an edgeless graph (HITS non-convergence regression)")
+		t.Fatal("Compute hung on an edgeless graph (non-convergence regression)")
 	}
 }
 
 func TestEdgeAddsMissingNode(t *testing.T) {
 	// "F" appears only as an edge endpoint, never in the node list.
 	m := Compute([]string{"A"}, []Edge{{"A", "F"}})
-	if _, ok := m.Depth["F"]; !ok {
+	if _, ok := m.PageRank["F"]; !ok {
 		t.Error("node referenced only by an edge should appear in metrics")
 	}
-	if m.Depth["A"] != 2 || m.Depth["F"] != 1 {
-		t.Errorf("Depth = %v, want A:2 F:1", m.Depth)
+	// A depends on F, so the longest chain is A→F.
+	if want := []string{"A", "F"}; !reflect.DeepEqual(m.CriticalPath, want) {
+		t.Errorf("CriticalPath = %v, want %v", m.CriticalPath, want)
 	}
 }

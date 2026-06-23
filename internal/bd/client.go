@@ -51,9 +51,14 @@ var execMu sync.Mutex
 // Issue mirrors the JSON shape bd emits from `list`/`show`. Fields bd omits stay
 // at their zero value; extra fields bd adds later are ignored, not an error.
 type Issue struct {
-	ID              string    `json:"id"`
-	Title           string    `json:"title"`
-	Status          string    `json:"status"`
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status Status `json:"status"`
+	// Priority is 0–4 (0=highest); bd's `list`/`show` JSON always emits it,
+	// defaulting to 2, so a plain 0 means P0 unambiguously — there is no
+	// absent-vs-zero hazard on the read path (zero-sentinel F1, verified against
+	// bd's contract). The write path still uses *int (CreateOpts) where omission
+	// is a real option.
 	Priority        int       `json:"priority"`
 	IssueType       string    `json:"issue_type"`
 	Parent          string    `json:"parent,omitempty"`

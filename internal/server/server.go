@@ -44,16 +44,6 @@ const (
 	secFetchCrossSite  = "cross-site"
 )
 
-// bd status values strand reasons about (triage, the kanban status pivot). The
-// kanban column captions stay separate display strings.
-const (
-	statusOpen       = "open"
-	statusInProgress = "in_progress"
-	statusBlocked    = "blocked"
-	statusClosed     = "closed"
-	statusDeferred   = "deferred"
-)
-
 // IssueSource is the slice of bd.Client the server needs: reads plus the V1
 // writes. An interface keeps the handlers testable with a stub and the bd CLI
 // behind one seam (spec Q0). Writes go through the write-client (spec D6) so the
@@ -78,6 +68,11 @@ type IssueSource interface {
 // in-memory fake), so switching the active repo re-scopes every read and write
 // without the server knowing how a source is made.
 type SourceFunc func(registry.Repo) IssueSource
+
+// writeFunc runs one bd write through the request's issue source and hands back
+// the fresh issue (or nil) plus any error. Named so the write handlers and
+// writeAndRefresh share one scannable contract instead of respelling it inline.
+type writeFunc func(context.Context, IssueSource) (*bd.Issue, error)
 
 // Server renders the forest landing and its htmx fragments over the active repo's
 // issue source. The active repo (and the known-repo registry) live in reg;
@@ -316,7 +311,7 @@ type pivotField struct {
 // reports that aren't seeded (a named assignee) are appended. The assignee
 // "unassigned" column writes an empty value — dropping there clears the field.
 var pivotFields = []pivotField{
-	{"status", []boardColumn{{Key: statusOpen, Label: "open"}, {Key: statusInProgress, Label: "in progress"}, {Key: statusBlocked, Label: "blocked"}, {Key: statusClosed, Label: "closed"}}, func(b *forest.Bead) string { return b.Status }},
+	{"status", []boardColumn{{Key: string(bd.StatusOpen), Label: "open"}, {Key: string(bd.StatusInProgress), Label: "in progress"}, {Key: string(bd.StatusBlocked), Label: "blocked"}, {Key: string(bd.StatusClosed), Label: "closed"}}, func(b *forest.Bead) string { return string(b.Status) }},
 	{"priority", []boardColumn{{Key: "0", Label: "P0"}, {Key: "1", Label: "P1"}, {Key: "2", Label: "P2"}, {Key: "3", Label: "P3"}, {Key: "4", Label: "P4"}}, func(b *forest.Bead) string { return strconv.Itoa(b.Priority) }},
 	{"assignee", []boardColumn{{Key: "", Label: "unassigned"}}, func(b *forest.Bead) string { return b.Assignee }},
 }
@@ -607,7 +602,7 @@ func metricNodes(beads []forest.Bead, m *graph.Metrics) []graphNode {
 		nodes[i] = graphNode{
 			ID:       b.ID,
 			Label:    b.Title,
-			Status:   b.Status,
+			Status:   string(b.Status),
 			Priority: b.Priority,
 			Score:    m.PageRank[b.ID],
 			InCycle:  inCycle[b.ID],
@@ -767,17 +762,20 @@ func triage(beads []forest.Bead, deps []bd.DepEdge, idx map[string]bd.Issue, now
 		b := &beads[i]
 		c.Total++
 		switch b.Status {
-		case statusInProgress:
+		case bd.StatusInProgress:
 			c.InProgress++
-		case statusOpen:
+		case bd.StatusOpen:
 			c.Open++
 			if openBlockers[b.ID] > 0 {
 				c.Blocked++
 			} else {
 				c.Ready++
 			}
-		case statusBlocked:
+		case bd.StatusBlocked:
 			c.Blocked++
+		case bd.StatusClosed, bd.StatusDeferred:
+			// Not live work; the forest filter already drops these, so they
+			// don't reach a count — listed to keep the status set exhaustive.
 		}
 		if isStale(b.Status, idx[b.ID].UpdatedAt, now) {
 			c.Stale++
@@ -796,7 +794,7 @@ func blockerCounts(deps []bd.DepEdge, idx map[string]bd.Issue) map[string]int {
 		if d.Type != "blocks" {
 			continue
 		}
-		if iss, ok := idx[d.DependsOnID]; ok && iss.Status != statusClosed {
+		if iss, ok := idx[d.DependsOnID]; ok && iss.Status != bd.StatusClosed {
 			open[d.IssueID]++
 		}
 	}
@@ -805,8 +803,8 @@ func blockerCounts(deps []bd.DepEdge, idx map[string]bd.Issue) map[string]int {
 
 // isStale reports whether live (open/in-progress) work has gone untouched past the
 // cutoff. A zero timestamp (never recorded) is not flagged — absence isn't staleness.
-func isStale(status string, updated, now time.Time) bool {
-	if status == statusClosed || status == statusDeferred || updated.IsZero() {
+func isStale(status bd.Status, updated, now time.Time) bool {
+	if status == bd.StatusClosed || status == bd.StatusDeferred || updated.IsZero() {
 		return false
 	}
 	return now.Sub(updated) > staleAfter
@@ -857,7 +855,7 @@ func beadPath(path []string, byID map[string]forest.Bead) []forest.Bead {
 func labelHealth(beads []forest.Bead, idx map[string]bd.Issue) []labelCount {
 	count := map[string]int{}
 	for i := range beads {
-		if beads[i].Status != statusOpen {
+		if beads[i].Status != bd.StatusOpen {
 			continue
 		}
 		for _, l := range idx[beads[i].ID].Labels {
@@ -882,7 +880,7 @@ func labelHealth(beads []forest.Bead, idx map[string]bd.Issue) []labelCount {
 func untaggedOpen(beads []forest.Bead, idx map[string]bd.Issue) int {
 	n := 0
 	for i := range beads {
-		if beads[i].Status == statusOpen && len(idx[beads[i].ID].Labels) == 0 {
+		if beads[i].Status == bd.StatusOpen && len(idx[beads[i].ID].Labels) == 0 {
 			n++
 		}
 	}
@@ -969,7 +967,7 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleReopen(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.writeAndRefresh(w, r, id, func(ctx context.Context, src IssueSource) (*bd.Issue, error) {
-		iss, err := src.Update(ctx, id, "status", statusOpen)
+		iss, err := src.Update(ctx, id, "status", string(bd.StatusOpen))
 		return iss, wrapWrite("reopen", err)
 	})
 }
@@ -989,7 +987,7 @@ func wrapWrite(action string, err error) error {
 // returned no issue) it re-reads, so the drawer shows the unchanged value next
 // to bd's error message; the UI never claims a change that didn't land. If that
 // re-read also fails, fall back to the hard error page.
-func (s *Server) writeAndRefresh(w http.ResponseWriter, r *http.Request, id string, write func(context.Context, IssueSource) (*bd.Issue, error)) {
+func (s *Server) writeAndRefresh(w http.ResponseWriter, r *http.Request, id string, write writeFunc) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
 	src, _, ok := s.source()

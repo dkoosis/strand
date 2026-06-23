@@ -33,9 +33,6 @@ type Edge struct {
 type Metrics struct {
 	PageRank     map[string]float64 // importance: foundational beads rank high
 	Betweenness  map[string]float64 // bottleneck: beads many chains route through
-	Hub          map[string]float64 // HITS hub: depends on many important beads
-	Authority    map[string]float64 // HITS authority: depended-upon by many hubs
-	Depth        map[string]int     // longest dependency chain starting at the bead
 	Cycles       [][]string         // dependency cycles (SCCs >1 node, or self-loops)
 	CriticalPath []string           // the single longest dependency chain
 }
@@ -45,7 +42,6 @@ type Metrics struct {
 const (
 	pageRankDamp = 0.85
 	pageRankTol  = 1e-6
-	hitsTol      = 1e-6
 )
 
 // Compute builds the DAG from nodes + edges and returns its metrics. Node IDs
@@ -76,9 +72,6 @@ func Compute(nodes []string, edges []Edge) Metrics {
 	m := Metrics{
 		PageRank:    map[string]float64{},
 		Betweenness: map[string]float64{},
-		Hub:         map[string]float64{},
-		Authority:   map[string]float64{},
-		Depth:       map[string]int{},
 	}
 
 	// gonum's matrix-based metrics panic on a node-less graph; nothing to compute.
@@ -92,28 +85,11 @@ func Compute(nodes []string, edges []Edge) Metrics {
 	for k, v := range network.Betweenness(g) {
 		m.Betweenness[id.name(k)] = v
 	}
-	// HITS normalizes hub/authority by the link norm; an edgeless graph drives
-	// that norm to zero, so every score becomes NaN and the tolerance check
-	// (|new-old| < tol) never settles — gonum's HITS spins forever. This is the
-	// same degeneracy the node-less guard above dodges, one rung down. A region
-	// or epic scope whose in-scope "blocks" edges are all filtered out hits it.
-	// With no links every hub/authority is zero, so fill them and skip the call.
-	if g.Edges().Len() == 0 {
-		graphNodes := g.Nodes()
-		for graphNodes.Next() {
-			name := id.name(graphNodes.Node().ID())
-			m.Hub[name] = 0
-			m.Authority[name] = 0
-		}
-	} else {
-		for k, ha := range network.HITS(g, hitsTol) {
-			m.Hub[id.name(k)] = ha.Hub
-			m.Authority[id.name(k)] = ha.Authority
-		}
-	}
 
 	m.Cycles = cyclesOf(g, id, selfLoops(edges))
-	m.Depth, m.CriticalPath = depths(g, id)
+	// depths' per-node map is the critical-path pass's by-product; only the
+	// chain is surfaced, so the map is discarded (it has no consumer — api-surface F1).
+	_, m.CriticalPath = depths(g, id)
 
 	return m
 }

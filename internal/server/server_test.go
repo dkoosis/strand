@@ -131,7 +131,7 @@ func (s *stubBD) Update(_ context.Context, id, field, value string) (*bd.Issue, 
 	case "description":
 		iss.Description = value
 	case "status":
-		iss.Status = value
+		iss.Status = bd.Status(value)
 	}
 	return iss, nil
 }
@@ -965,8 +965,8 @@ func TestTriageAbsentBlockerIsResolved(t *testing.T) {
 // TestTriageExplicitlyBlocked: a bead bd reports with status "blocked" (not just
 // dependency-blocked) lands in Blocked, not lost between the open/in-progress cases.
 func TestTriageExplicitlyBlocked(t *testing.T) {
-	beads := []forest.Bead{{ID: "b1", Status: statusBlocked}}
-	idx := map[string]bd.Issue{"b1": {ID: "b1", Status: statusBlocked}}
+	beads := []forest.Bead{{ID: "b1", Status: bd.StatusBlocked}}
+	idx := map[string]bd.Issue{"b1": {ID: "b1", Status: bd.StatusBlocked}}
 	got := triage(beads, nil, idx, insightsNow)
 	if got.Total != 1 || got.Blocked != 1 {
 		t.Errorf("explicitly blocked bead: got %+v, want Total=1 Blocked=1", got)
@@ -977,7 +977,7 @@ func TestTriageExplicitlyBlocked(t *testing.T) {
 func TestIsStale(t *testing.T) {
 	cases := []struct {
 		name    string
-		status  string
+		status  bd.Status
 		updated time.Time
 		want    bool
 	}{
