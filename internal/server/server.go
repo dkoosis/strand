@@ -1270,6 +1270,7 @@ func (s *Server) synFor(repo registry.Repo) forest.Synthesis {
 type snapshotCache struct {
 	mu      sync.Mutex
 	now     func() time.Time
+	gen     uint64
 	entries map[string]*snapshot
 }
 
@@ -1279,8 +1280,14 @@ type snapshotCache struct {
 // the List fetch) so forest/list/insights are one logical snapshot — and Deps is
 // fetched once over the whole repo, not per scope, so the second structural view
 // reuses the first's edges (depsOK distinguishes "no deps" from "not fetched yet").
+//
+// gen is the snapshot's identity: a monotonic stamp set at putList that lets a
+// late Deps fetch tell whether the snapshot it read the ids from is still the one
+// it's about to write deps into (see putDeps). It is clock-independent, so the
+// fixed-clock tests still distinguish versions even when every `at` is equal.
 type snapshot struct {
 	at     time.Time
+	gen    uint64
 	list   []bd.Issue
 	deps   []bd.DepEdge
 	depsOK bool
@@ -1313,13 +1320,13 @@ func (c *snapshotCache) entryLocked(repo string) *snapshot {
 // liveList returns the repo's cached list and true on a live snapshot. The slice
 // header is copied out under the lock; its backing array is the shared read-only
 // view (see the contract above putList), never mutated after publish.
-func (c *snapshotCache) liveList(repo string) ([]bd.Issue, bool) {
+func (c *snapshotCache) liveList(repo string) ([]bd.Issue, uint64, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if e := c.entryLocked(repo); e != nil {
-		return e.list, true
+		return e.list, e.gen, true
 	}
-	return nil, false
+	return nil, 0, false
 }
 
 // liveDeps returns the repo-wide dependency edges and true only when a live
@@ -1347,16 +1354,20 @@ func (c *snapshotCache) liveDeps(repo string) ([]bd.DepEdge, bool) {
 func (c *snapshotCache) putList(repo string, list []bd.Issue) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries[repo] = &snapshot{at: c.now(), list: list}
+	c.gen++
+	c.entries[repo] = &snapshot{at: c.now(), gen: c.gen, list: list}
 }
 
-// putDeps records the repo-wide Deps result into the existing snapshot. If the
-// snapshot lapsed between the List fetch and here, it is skipped — the next read
-// re-warms List, and Deps follows.
-func (c *snapshotCache) putDeps(repo string, deps []bd.DepEdge) {
+// putDeps records the repo-wide Deps result into the snapshot it was fetched for,
+// identified by gen (the value liveList returned alongside the ids). It writes only
+// when the current snapshot is still that one: an invalidate or a fresh putList
+// between the List read and here replaces the entry with a different gen, and the
+// stale deps are dropped rather than stapled onto a newer list (the version-skew
+// guard). The next read re-warms List, and Deps follows.
+func (c *snapshotCache) putDeps(repo string, gen uint64, deps []bd.DepEdge) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if e, ok := c.entries[repo]; ok {
+	if e, ok := c.entries[repo]; ok && e.gen == gen {
 		e.deps, e.depsOK = deps, true
 	}
 }
@@ -1383,7 +1394,7 @@ type cachingSource struct {
 // (or after the TTL lapses). The bead's reads pass no per-call filter that would
 // change the result (every caller uses allIssues), so one cached list is correct.
 func (c *cachingSource) List(ctx context.Context, args ...string) ([]bd.Issue, error) {
-	if list, ok := c.cache.liveList(c.repo); ok {
+	if list, _, ok := c.cache.liveList(c.repo); ok {
 		return list, nil
 	}
 	list, err := c.IssueSource.List(ctx, args...)
@@ -1404,28 +1415,30 @@ func (c *cachingSource) Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, 
 	if deps, ok := c.cache.liveDeps(c.repo); ok {
 		return deps, nil
 	}
-	fetchIDs := c.repoIDs(ids)
+	fetchIDs, gen := c.repoIDs(ids)
 	deps, err := c.IssueSource.Deps(ctx, fetchIDs...)
 	if err != nil {
 		return nil, err
 	}
-	c.cache.putDeps(c.repo, deps)
+	c.cache.putDeps(c.repo, gen, deps)
 	return deps, nil
 }
 
-// repoIDs returns the id set to fetch deps over: every id in the cached list (so
-// one fetch covers all scopes), falling back to the caller's ids when the list
-// isn't cached yet (a Deps before any List — not a path the views take, but safe).
-func (c *cachingSource) repoIDs(reqIDs []string) []string {
-	list, ok := c.cache.liveList(c.repo)
+// repoIDs returns the id set to fetch deps over plus the gen of the snapshot it
+// read them from (so putDeps can bind the result to that exact snapshot): every id
+// in the cached list (so one fetch covers all scopes), falling back to the caller's
+// ids and gen 0 when the list isn't cached yet (a Deps before any List — not a path
+// the views take, but safe; gen 0 never matches a live snapshot, so putDeps skips).
+func (c *cachingSource) repoIDs(reqIDs []string) ([]string, uint64) {
+	list, gen, ok := c.cache.liveList(c.repo)
 	if !ok || len(list) == 0 {
-		return reqIDs
+		return reqIDs, 0
 	}
 	ids := make([]string, len(list))
 	for i := range list {
 		ids[i] = list[i].ID
 	}
-	return ids
+	return ids, gen
 }
 
 // The write methods pass through to bd, then drop the repo's snapshot on success so

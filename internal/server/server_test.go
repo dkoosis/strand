@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1292,17 +1293,17 @@ func TestDepRemoveDropsBlocker(t *testing.T) {
 // source again. Writes delegate to the embedded stub.
 type countingBD struct {
 	stubBD
-	listCalls int
-	depsCalls int
+	listCalls atomic.Int64
+	depsCalls atomic.Int64
 }
 
 func (c *countingBD) List(ctx context.Context, args ...string) ([]bd.Issue, error) {
-	c.listCalls++
+	c.listCalls.Add(1)
 	return c.stubBD.List(ctx, args...)
 }
 
 func (c *countingBD) Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, error) {
-	c.depsCalls++
+	c.depsCalls.Add(1)
 	return c.stubBD.Deps(ctx, ids...)
 }
 
@@ -1322,11 +1323,11 @@ func TestSnapshotCacheCrossView(t *testing.T) {
 			t.Fatalf("GET %s = %d, want 200", p, rec.Code)
 		}
 	}
-	if src.listCalls != 1 {
-		t.Errorf("List spawned %d times across the views, want 1 (cache miss only on first load)", src.listCalls)
+	if src.listCalls.Load() != 1 {
+		t.Errorf("List spawned %d times across the views, want 1 (cache miss only on first load)", src.listCalls.Load())
 	}
-	if src.depsCalls != 1 {
-		t.Errorf("Deps spawned %d times, want 1 (insights' fetch is cached)", src.depsCalls)
+	if src.depsCalls.Load() != 1 {
+		t.Errorf("Deps spawned %d times, want 1 (insights' fetch is cached)", src.depsCalls.Load())
 	}
 }
 
@@ -1344,8 +1345,8 @@ func TestSnapshotCacheInvalidatesOnWrite(t *testing.T) {
 
 	do(t, srv, "/")     // warms the snapshot (List #1)
 	do(t, srv, "/list") // served from cache (still List #1)
-	if src.listCalls != 1 {
-		t.Fatalf("List spawned %d times before write, want 1", src.listCalls)
+	if src.listCalls.Load() != 1 {
+		t.Fatalf("List spawned %d times before write, want 1", src.listCalls.Load())
 	}
 
 	// A successful edit must invalidate the snapshot.
@@ -1354,8 +1355,8 @@ func TestSnapshotCacheInvalidatesOnWrite(t *testing.T) {
 	}
 
 	do(t, srv, "/list") // must re-read bd's truth (List #2)
-	if src.listCalls != 2 {
-		t.Errorf("List spawned %d times, want 2 — a write must invalidate the snapshot", src.listCalls)
+	if src.listCalls.Load() != 2 {
+		t.Errorf("List spawned %d times, want 2 — a write must invalidate the snapshot", src.listCalls.Load())
 	}
 }
 
@@ -1383,7 +1384,7 @@ func TestSnapshotCacheRepoSwitchRescopes(t *testing.T) {
 
 	// Warm repoB's snapshot (InMemory makes the last-added repo active).
 	do(t, srv, "/")
-	bBefore := srcB.listCalls
+	bBefore := srcB.listCalls.Load()
 
 	// Switch to repoA, then load a view: it must fetch repoA's source, not serve
 	// repoB's snapshot.
@@ -1391,11 +1392,11 @@ func TestSnapshotCacheRepoSwitchRescopes(t *testing.T) {
 		t.Fatalf("POST /repo = %d, want 204", rec.Code)
 	}
 	do(t, srv, "/")
-	if srcA.listCalls != 1 {
-		t.Errorf("repoA List spawned %d times after switch, want 1 — switch must re-scope", srcA.listCalls)
+	if srcA.listCalls.Load() != 1 {
+		t.Errorf("repoA List spawned %d times after switch, want 1 — switch must re-scope", srcA.listCalls.Load())
 	}
-	if srcB.listCalls != bBefore {
-		t.Errorf("repoB List spawned again (%d→%d) after switching away", bBefore, srcB.listCalls)
+	if srcB.listCalls.Load() != bBefore {
+		t.Errorf("repoB List spawned again (%d→%d) after switching away", bBefore, srcB.listCalls.Load())
 	}
 }
 
@@ -1432,6 +1433,38 @@ func TestSnapshotCacheConcurrentListDeps(t *testing.T) {
 	wg.Wait()
 }
 
+// TestSnapshotCachePutDepsVersionSkew proves putDeps binds deps to the snapshot
+// generation they were fetched for: a Deps fetch that reads ids from snapshot V1,
+// then races a putList that publishes V2, must NOT staple V1's deps onto V2. The
+// cache reads the gen at the List fetch and only writes deps when the live snapshot
+// still carries that gen (gemini review, strand-4sd).
+func TestSnapshotCachePutDepsVersionSkew(t *testing.T) {
+	c := newSnapshotCache(func() time.Time { return cacheNow })
+
+	c.putList("demo", []bd.Issue{{ID: "a"}}) // V1
+	_, genV1, ok := c.liveList("demo")
+	if !ok {
+		t.Fatal("V1 not live after putList")
+	}
+
+	// Simulate a concurrent invalidate+refresh: V1 is replaced by V2 (depsOK false)
+	// before the in-flight Deps fetch returns.
+	c.putList("demo", []bd.Issue{{ID: "a"}, {ID: "b"}}) // V2
+
+	// The late putDeps carries V1's gen — it must be dropped, not written onto V2.
+	c.putDeps("demo", genV1, []bd.DepEdge{{IssueID: "a", DependsOnID: "stale"}})
+	if _, ok := c.liveDeps("demo"); ok {
+		t.Error("putDeps stapled stale V1 deps onto V2 — version-skew guard failed")
+	}
+
+	// A putDeps for the current snapshot (V2's gen) still writes.
+	_, genV2, _ := c.liveList("demo")
+	c.putDeps("demo", genV2, []bd.DepEdge{{IssueID: "a", DependsOnID: "b"}})
+	if _, ok := c.liveDeps("demo"); !ok {
+		t.Error("putDeps for the live snapshot was wrongly dropped")
+	}
+}
+
 // TestSnapshotCacheTTLEviction exercises the TTL floor's true branch, which every
 // other cache test misses by freezing the clock: warm the snapshot, advance the
 // injected clock past cacheTTL, and prove the next read is a miss that re-fetches
@@ -1451,8 +1484,8 @@ func TestSnapshotCacheTTLEviction(t *testing.T) {
 	if _, err := cs.List(ctx); err != nil { // within TTL → served from snapshot
 		t.Fatalf("List: %v", err)
 	}
-	if src.listCalls != 1 {
-		t.Fatalf("List spawned %d times within TTL, want 1", src.listCalls)
+	if src.listCalls.Load() != 1 {
+		t.Fatalf("List spawned %d times within TTL, want 1", src.listCalls.Load())
 	}
 
 	clock = clock.Add(cacheTTL) // age the snapshot to exactly the floor → stale
@@ -1460,8 +1493,8 @@ func TestSnapshotCacheTTLEviction(t *testing.T) {
 	if _, err := cs.List(ctx); err != nil { // miss → fetch #2
 		t.Fatalf("List: %v", err)
 	}
-	if src.listCalls != 2 {
-		t.Errorf("List spawned %d times after TTL lapse, want 2 — stale snapshot must re-fetch", src.listCalls)
+	if src.listCalls.Load() != 2 {
+		t.Errorf("List spawned %d times after TTL lapse, want 2 — stale snapshot must re-fetch", src.listCalls.Load())
 	}
 }
 
