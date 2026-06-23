@@ -109,6 +109,14 @@ document.addEventListener("keydown", (e) => {
     minimapFilter(f);
   }
 });
+// Keyboard-activated [role=button] tiles/rows/heads fire htmx on keyup (Enter/Space),
+// but Space's default page-scroll happens on keydown — before the keyup trigger. htmx
+// won't preventDefault a keydown on a non-form element, so cancel it here; activation
+// still lands on keyup. mm-filter elements handle their own keys above (this only
+// preventDefaults, so the double-cancel on any overlap is harmless).
+document.addEventListener("keydown", (e) => {
+  if (e.key === " " && e.target.closest?.("[role=button]")) e.preventDefault();
+});
 // After any centerpiece swap, re-read the fragment's own scope (pane-head carries
 // data-view/data-epic) into #viewport, so the chrome and the minimap highlight
 // follow the truth the server just rendered — including a tab click that changed
