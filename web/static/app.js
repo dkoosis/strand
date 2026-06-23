@@ -185,11 +185,18 @@ function initGraph() {
     ...model.edges.map((e) => ({ data: { source: e.source, target: e.target } })),
   ];
 
+  // Dagre ranks nodes by edges; with no edges every node lands at rank 0 and the
+  // graph collapses to one horizontal line (the edgeless-scope case). Fall back to
+  // a grid so isolated beads tile legibly instead of stringing out.
+  const layout = elements.some((e) => e.data.source)
+    ? { name: window.cytoscapeDagre ? "dagre" : "breadthfirst", rankDir: "TB", padding: 18 }
+    : { name: "grid", padding: 18 };
+
   cy?.destroy();
   cy = cytoscape({
     container: el,
     elements,
-    layout: { name: window.cytoscapeDagre ? "dagre" : "breadthfirst", rankDir: "TB", padding: 18 },
+    layout,
     style: [
       {
         selector: "node",
