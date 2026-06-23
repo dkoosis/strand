@@ -39,7 +39,6 @@ var funcs = template.FuncMap{
 	"shortID":     shortID,
 	"cleanName":   cleanName,
 	"regionLabel": regionLabel,
-	"epicArgs":    epicArgs,
 	"priorities":  priorities,
 	"beadTypes":   func() []string { return beadTypes },
 }
@@ -67,15 +66,6 @@ func regionLabel(regions []forest.Region) string {
 		return "—"
 	}
 	return regions[0].Name
-}
-
-// epicArgs bundles an epic with whether to draw its group header, so the
-// epic-group template serves both the single-epic and whole-region views. The
-// value copy is intrinsic to a template FuncMap and the epic is read-only here.
-//
-//nolint:gocritic // template helpers receive values; Epic is not mutated.
-func epicArgs(e forest.Epic, head bool) map[string]any {
-	return map[string]any{"Epic": e, "Head": head}
 }
 
 // shortID drops the project prefix ("strand-5ri.2" → "5ri.2") so the id recedes
