@@ -42,6 +42,8 @@ type stubBD struct {
 
 	rankWrites []rankWrite // ordered log of SetRank calls, for the reorder tests.
 	depWrites  []depWrite  // ordered log of DepAdd/DepRemove calls, for the dep tests.
+
+	createOpts []bd.CreateOpts // ordered log of Create calls, for the create-path tests.
 }
 
 // depWrite records one DepAdd/DepRemove call so a test can assert the handler
@@ -124,14 +126,23 @@ func (s *stubBD) DepRemove(_ context.Context, id, dependsOn string) error {
 
 // Create mints a bead with a fixed id and stores it so the post-create drawer
 // re-read finds it; an empty title fails like bd's validation does.
-func (s *stubBD) Create(_ context.Context, opts bd.CreateOpts) (*bd.Issue, error) {
+func (s *stubBD) Create(_ context.Context, opts *bd.CreateOpts) (*bd.Issue, error) {
 	if s.writeErr != nil {
 		return nil, s.writeErr
 	}
 	if opts.Title == "" {
 		return nil, bd.ErrEmptyTitle
 	}
-	iss := &bd.Issue{ID: "demo-new", Title: opts.Title, IssueType: opts.Type, Status: "open"}
+	// The first Create of a request keeps the legacy demo-new id (the common
+	// single create, and the new-parent mint which always runs first). A second
+	// Create in the same request — the child under a freshly-minted parent — gets
+	// a distinct id so both land in the show map.
+	id := "demo-new"
+	if len(s.createOpts) > 0 {
+		id = "demo-child"
+	}
+	s.createOpts = append(s.createOpts, *opts)
+	iss := &bd.Issue{ID: id, Title: opts.Title, IssueType: opts.Type, Status: "open"}
 	iss.Priority = opts.Priority
 	if s.show == nil {
 		s.show = map[string]*bd.Issue{}
@@ -863,24 +874,36 @@ func TestAddEmptyCommentIsHonest(t *testing.T) {
 	}
 }
 
-// TestCreateFormRenders: the new-bead form opens with the type options.
+// TestCreateFormRenders: the new-bead form opens with the type options, the
+// forced-parent picker (off-trunk + new-inline choices), and the candidate
+// parents loaded from the source.
 func TestCreateFormRenders(t *testing.T) {
-	srv := newTestServer(t, &stubBD{})
+	srv := newTestServer(t, &stubBD{issues: sampleIssues})
 	rec := do(t, srv, "/new")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /new = %d, want 200", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), `hx-post="/new"`) {
-		t.Errorf("create form missing its post target:\n%s", rec.Body.String())
+	body := rec.Body.String()
+	if !strings.Contains(body, `hx-post="/new"`) {
+		t.Errorf("create form missing its post target:\n%s", body)
+	}
+	for _, want := range []string{`name="parent"`, `value="__off_trunk__"`, `value="__new__"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("create form missing forced-parent picker part %q:\n%s", want, body)
+		}
+	}
+	if !strings.Contains(body, sampleIssues[0].ID) {
+		t.Errorf("create form did not offer candidate parent %q:\n%s", sampleIssues[0].ID, body)
 	}
 }
 
-// TestCreateReflects: a valid create shows the new bead's drawer and fires
-// refreshList so the list pane picks up the addition.
+// TestCreateReflects: a valid create under an existing parent shows the new
+// bead's drawer, fires refreshList, and threads the parent id through to bd.
 func TestCreateReflects(t *testing.T) {
-	srv := newTestServer(t, &stubBD{show: map[string]*bd.Issue{}})
-	rec := send(t, srv, http.MethodPost, "/new", "title=Fresh+bead&type=task&priority=2")
+	stub := &stubBD{show: map[string]*bd.Issue{}}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/new", "title=Fresh+bead&type=task&priority=2&parent=epic-1")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /new = %d, want 200", rec.Code)
@@ -891,13 +914,90 @@ func TestCreateReflects(t *testing.T) {
 	if rec.Header().Get("HX-Trigger") != "refreshList" {
 		t.Errorf("create did not fire refreshList, got %q", rec.Header().Get("HX-Trigger"))
 	}
+	if len(stub.createOpts) != 1 || stub.createOpts[0].Parent != "epic-1" {
+		t.Errorf("create did not thread the parent id, got %+v", stub.createOpts)
+	}
 }
 
-// TestCreateEmptyTitleIsHonest: a titleless create re-renders the form with bd's
-// error, not a half-made bead.
+// TestCreateForcesParent: a create with no parent choice is rejected — the form
+// re-renders with the forced-parent error and no bead is created. The forest's
+// tree axis can't be skipped by omission (str-6k0.6.2).
+func TestCreateForcesParent(t *testing.T) {
+	stub := &stubBD{show: map[string]*bd.Issue{}}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/new", "title=Orphan&type=task&priority=2")
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `hx-post="/new"`) {
+		t.Errorf("rejected create did not re-render the form:\n%s", body)
+	}
+	if !strings.Contains(body, errNoParent.Error()) {
+		t.Errorf("form hides the forced-parent error:\n%s", body)
+	}
+	if len(stub.createOpts) != 0 {
+		t.Errorf("a parentless create reached bd: %+v", stub.createOpts)
+	}
+}
+
+// TestCreateOffTrunk: the off-trunk choice is a deliberate root — the bead is
+// created with no parent id and no error.
+func TestCreateOffTrunk(t *testing.T) {
+	stub := &stubBD{show: map[string]*bd.Issue{}}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/new", "title=Root&type=task&priority=2&parent=__off_trunk__")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /new = %d, want 200", rec.Code)
+	}
+	if len(stub.createOpts) != 1 || stub.createOpts[0].Parent != "" {
+		t.Errorf("off-trunk create should carry no parent, got %+v", stub.createOpts)
+	}
+}
+
+// TestCreateNewParentInline: the create-new-inline path mints the parent epic
+// first, then creates the child under it — two creates, the child carrying the
+// minted parent's id.
+func TestCreateNewParentInline(t *testing.T) {
+	stub := &stubBD{show: map[string]*bd.Issue{}}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/new",
+		"title=Child&type=task&priority=2&parent=__new__&parent_new=New+Epic")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /new = %d, want 200", rec.Code)
+	}
+	if len(stub.createOpts) != 2 {
+		t.Fatalf("inline new-parent should create parent then child, got %+v", stub.createOpts)
+	}
+	if stub.createOpts[0].Title != "New Epic" || stub.createOpts[0].Type != "epic" {
+		t.Errorf("first create should mint the parent epic, got %+v", stub.createOpts[0])
+	}
+	if stub.createOpts[1].Title != "Child" || stub.createOpts[1].Parent != "demo-new" {
+		t.Errorf("child should hang under the minted parent, got %+v", stub.createOpts[1])
+	}
+}
+
+// TestCreateNewParentNeedsTitle: choosing create-new-inline without a title is
+// rejected; nothing is created.
+func TestCreateNewParentNeedsTitle(t *testing.T) {
+	stub := &stubBD{show: map[string]*bd.Issue{}}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/new", "title=Child&type=task&priority=2&parent=__new__&parent_new=")
+
+	body := rec.Body.String()
+	if !strings.Contains(body, errNoParentTitle.Error()) {
+		t.Errorf("form hides the new-parent-title error:\n%s", body)
+	}
+	if len(stub.createOpts) != 0 {
+		t.Errorf("a titleless new-parent reached bd: %+v", stub.createOpts)
+	}
+}
+
+// TestCreateEmptyTitleIsHonest: a titleless create (with a valid parent choice)
+// re-renders the form with bd's error, not a half-made bead.
 func TestCreateEmptyTitleIsHonest(t *testing.T) {
 	srv := newTestServer(t, &stubBD{})
-	rec := send(t, srv, http.MethodPost, "/new", "title=&type=task&priority=2")
+	rec := send(t, srv, http.MethodPost, "/new", "title=&type=task&priority=2&parent=__off_trunk__")
 
 	body := rec.Body.String()
 	if !strings.Contains(body, `hx-post="/new"`) {

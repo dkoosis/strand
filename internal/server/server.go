@@ -33,6 +33,13 @@ var (
 	errNoRepo    = errors.New("no active repo")
 	errNoIssue   = errors.New("no issue to display")
 	errCrossSite = errors.New("cross-site request blocked")
+	// errNoParent rejects a create with no deliberate parent choice — the
+	// forced-parent contract (str-6k0.6.2): pick an existing parent, choose
+	// off-trunk, or mint one inline, but never create a bead parentless by
+	// omission.
+	errNoParent = errors.New("pick a parent, choose off-trunk, or create a new parent")
+	// errNoParentTitle rejects the inline new-parent path with an empty title.
+	errNoParentTitle = errors.New("new parent needs a title")
 )
 
 // Cross-site guard header names and the one Sec-Fetch-Site value that is
@@ -61,7 +68,7 @@ type IssueSource interface {
 	Comment(ctx context.Context, id, text string) error
 	DepAdd(ctx context.Context, id, dependsOn string) error
 	DepRemove(ctx context.Context, id, dependsOn string) error
-	Create(ctx context.Context, opts bd.CreateOpts) (*bd.Issue, error)
+	Create(ctx context.Context, opts *bd.CreateOpts) (*bd.Issue, error)
 	DeletePreview(ctx context.Context, id string) (string, error)
 	Delete(ctx context.Context, id string) error
 }
@@ -1208,20 +1215,67 @@ func (s *Server) handleDepRemove(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Parent-picker sentinels. The create form forces a deliberate parent choice:
+// the bead lands under an existing parent, off-trunk by explicit opt-out, or
+// under a parent minted inline. An empty value is no choice and is rejected, so
+// no bead is ever created parentless by accident (the forest's tree axis holds
+// for near-zero cost).
+const (
+	parentOffTrunk = "__off_trunk__" // deliberate "no parent" choice
+	parentNew      = "__new__"       // mint a new parent inline from parentNewTitle
+)
+
+// parentOpt is one selectable parent in the create form's picker: the bead id to
+// pass to --parent and its raw title (the template formats the label with the
+// shared shortID/cleanName helpers).
+type parentOpt struct {
+	ID    string
+	Title string
+}
+
 // handleNewForm renders the empty create form into the drawer. New beads default
-// to a task at P2 so the common case is one field (a title) away from created.
-func (s *Server) handleNewForm(w http.ResponseWriter, _ *http.Request) {
-	s.render(w, "createForm", createForm{Type: "task", Priority: "2"})
+// to a task at P2 so the common case is a title plus a parent choice away from
+// created. It loads the candidate parents (every open bead) so the picker can
+// offer them; a List failure still renders the form (off-trunk / new-inline both
+// work without a candidate list).
+func (s *Server) handleNewForm(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := reqContext(r)
+	defer cancel()
+	form := createForm{Type: "task", Priority: "2"}
+	if src, _, ok := s.source(); ok {
+		form.Parents = candidateParents(ctx, src)
+	}
+	s.render(w, "createForm", form)
+}
+
+// candidateParents lists the beads a new bead may hang under: every issue the
+// source returns, newest-relevant first as bd orders them, labelled for the
+// picker. A List error yields no candidates (the off-trunk / new-inline paths
+// still let the user proceed) rather than blocking the form.
+func candidateParents(ctx context.Context, src readSource) []parentOpt {
+	issues, err := src.List(ctx, allIssues...)
+	if err != nil {
+		return nil
+	}
+	opts := make([]parentOpt, 0, len(issues))
+	for i := range issues {
+		opts = append(opts, parentOpt{ID: issues[i].ID, Title: issues[i].Title})
+	}
+	return opts
 }
 
 // createForm is the new-bead form's state: the raw field values (so a failed
-// submit re-renders with what the user typed) plus a bd error to show inline.
+// submit re-renders with what the user typed), the candidate parents for the
+// forced-parent picker, the sticky parent choice, and a bd error to show inline.
 type createForm struct {
-	Title       string
-	Type        string
-	Priority    string
-	Description string
-	Err         string
+	Title          string
+	Type           string
+	Priority       string
+	Description    string
+	Parent         string      // the picked value: a bead id, parentOffTrunk, or parentNew
+	ParentNewTitle string      // title for the inline new-parent path (Parent == parentNew)
+	Parents        []parentOpt // candidate existing parents for the picker
+	Err            string
 }
 
 // handleCreate runs bd create from the form. On success it shows the new bead's
@@ -1236,23 +1290,66 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	form := createForm{
-		Title:       r.FormValue("title"),
-		Type:        r.FormValue("type"),
-		Priority:    r.FormValue("priority"),
-		Description: r.FormValue("description"),
+		Title:          strings.TrimSpace(r.FormValue("title")),
+		Type:           r.FormValue("type"),
+		Priority:       r.FormValue("priority"),
+		Description:    r.FormValue("description"),
+		Parent:         r.FormValue("parent"),
+		ParentNewTitle: strings.TrimSpace(r.FormValue("parent_new")),
 	}
-	opts := bd.CreateOpts{Title: form.Title, Type: form.Type, Description: form.Description}
+	// Re-render with the candidate list so a rejected submit keeps the picker.
+	reject := func(err error) {
+		form.Err = err.Error()
+		form.Parents = candidateParents(ctx, src)
+		s.render(w, "createForm", form)
+	}
+
+	parent, err := s.resolveParent(ctx, src, &form)
+	if err != nil {
+		reject(err)
+		return
+	}
+
+	opts := bd.CreateOpts{Title: form.Title, Type: form.Type, Description: form.Description, Parent: parent}
 	if p, err := strconv.Atoi(form.Priority); err == nil {
 		opts.Priority = &p
 	}
-	issue, err := src.Create(ctx, opts)
+	issue, err := src.Create(ctx, &opts)
 	if err != nil {
-		form.Err = err.Error()
-		s.render(w, "createForm", form)
+		reject(err)
 		return
 	}
 	w.Header().Set("HX-Trigger", "refreshList")
 	s.renderDrawer(ctx, w, src, issue, nil)
+}
+
+// resolveParent turns the picker choice into the --parent id the create should
+// carry, enforcing the forced-parent contract. The empty choice is rejected
+// (no accidental parentless bead); off-trunk resolves to "" (a deliberate root);
+// the inline path mints a new epic and returns its id; anything else is taken as
+// an existing parent id. Minting the parent first means a failure there surfaces
+// before the child is created, so a half-made pair can't result.
+func (s *Server) resolveParent(ctx context.Context, src IssueSource, form *createForm) (string, error) {
+	switch form.Parent {
+	case "":
+		return "", errNoParent
+	case parentOffTrunk:
+		return "", nil
+	case parentNew:
+		if form.ParentNewTitle == "" {
+			return "", errNoParentTitle
+		}
+		parent, err := src.Create(ctx, &bd.CreateOpts{Title: form.ParentNewTitle, Type: "epic"})
+		if err != nil {
+			return "", err
+		}
+		if parent == nil {
+			return "", errNoParent
+		}
+		return parent.ID, nil
+	default:
+		return form.Parent, nil
+	}
 }
 
 // handleDeletePreview runs bd's bare delete — the free confirm step (O5). It
@@ -1579,7 +1676,7 @@ func (c *cachingSource) DepRemove(ctx context.Context, id, dependsOn string) err
 	return err
 }
 
-func (c *cachingSource) Create(ctx context.Context, opts bd.CreateOpts) (*bd.Issue, error) {
+func (c *cachingSource) Create(ctx context.Context, opts *bd.CreateOpts) (*bd.Issue, error) {
 	iss, err := c.IssueSource.Create(ctx, opts)
 	if err == nil {
 		c.cache.invalidate(c.repo)

@@ -304,6 +304,17 @@
       <select name="type">
         {{$t := .Type}}{{range $v := beadTypes}}<option value="{{$v}}" {{if eq $v $t}}selected{{end}}>{{$v}}</option>{{end}}
       </select></label></div>
+    <div class="dr-field"><label>Parent
+      <select name="parent" required
+              onchange="const p = this.closest('form').querySelector('.cf-new-parent'); p.hidden = this.value !== '__new__'; p.querySelector('input').required = this.value === '__new__'">
+        {{$pp := .Parent}}
+        <option value="" {{if eq $pp ""}}selected{{end}} disabled>Choose a parent…</option>
+        <option value="__off_trunk__" {{if eq $pp "__off_trunk__"}}selected{{end}}>Off-trunk (no parent)</option>
+        <option value="__new__" {{if eq $pp "__new__"}}selected{{end}}>＋ Create a new parent…</option>
+        {{range .Parents}}<option value="{{.ID}}" {{if eq $pp .ID}}selected{{end}}>{{shortID .ID}} · {{cleanName .Title}}</option>{{end}}
+      </select></label></div>
+    <div class="dr-field cf-new-parent" {{if ne .Parent "__new__"}}hidden{{end}}>
+      <label>New parent title <input name="parent_new" value="{{.ParentNewTitle}}" placeholder="Name the parent epic…" {{if eq .Parent "__new__"}}required{{end}}></label></div>
     <div class="dr-field"><label>Priority
       <select name="priority">
         {{$p := .Priority}}{{range $i := priorities}}<option value="{{$i}}" {{if eq (printf "%d" $i) $p}}selected{{end}}>P{{$i}}</option>{{end}}
