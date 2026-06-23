@@ -99,20 +99,27 @@ func main() {
 // genuine Serve failure (e.g. the listener dies).
 func serve(ctx context.Context, httpSrv *http.Server, ln net.Listener) error {
 	shutdownDone := make(chan struct{})
+	serveDone := make(chan struct{})
 	// Detached from ctx on purpose: by the time this drains, ctx is already
 	// cancelled, so the grace period must come from a fresh context.
 	go func() { //nolint:gosec // G118: the drain's shutdown context is deliberately detached from the cancelled ctx
 		defer close(shutdownDone)
-		<-ctx.Done()
-		log.Printf("strand: shutting down — bye")
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := httpSrv.Shutdown(shutCtx); err != nil {
-			log.Printf("strand: shutdown: %v", err)
+		select {
+		case <-ctx.Done():
+			log.Printf("strand: shutting down — bye")
+			shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := httpSrv.Shutdown(shutCtx); err != nil {
+				log.Printf("strand: shutdown: %v", err)
+			}
+		case <-serveDone:
+			// Serve failed before any shutdown — exit instead of leaking here.
 		}
 	}()
 
-	if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	err := httpSrv.Serve(ln)
+	close(serveDone)
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("serve: %w", err)
 	}
 	// Serve returned ErrServerClosed — a shutdown is in progress. Wait for the

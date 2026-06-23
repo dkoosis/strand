@@ -14,10 +14,15 @@ import (
 // shutdown context is cancelled. A handler that sleeps past the cancel point
 // must still complete and have its body recorded by the client.
 func TestServeDrainsInFlight(t *testing.T) {
+	// The handler blocks on releaseHandler so the test controls exactly when the
+	// in-flight request finishes — no sleeps, and no race over when to cancel.
+	handlerStarted := make(chan struct{})
+	releaseHandler := make(chan struct{})
 	var handlerDone atomic.Bool
 	mux := http.NewServeMux()
 	mux.HandleFunc("/slow", func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(150 * time.Millisecond)
+		close(handlerStarted)
+		<-releaseHandler
 		handlerDone.Store(true)
 		w.WriteHeader(http.StatusOK)
 	})
@@ -46,8 +51,19 @@ func TestServeDrainsInFlight(t *testing.T) {
 		reqDone <- nil
 	}()
 
-	time.Sleep(50 * time.Millisecond) // let the handler enter its sleep
-	cancel()                          // simulate Ctrl-C while the request is in flight
+	<-handlerStarted // the request is now in flight
+	cancel()         // simulate Ctrl-C while the request is in flight
+
+	// The regression: a broken serve returns at the START of Shutdown, before
+	// the in-flight request lands. While the handler is still blocked, serve
+	// must NOT have returned — the drain handshake holds it.
+	select {
+	case err := <-served:
+		t.Fatalf("serve returned mid-drain (err=%v) — in-flight request would be dropped", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(releaseHandler) // let the in-flight request complete
 
 	if err := <-reqDone; err != nil {
 		t.Fatalf("in-flight request was dropped: %v", err)
@@ -62,9 +78,6 @@ func TestServeDrainsInFlight(t *testing.T) {
 			t.Fatalf("serve returned error: %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("serve did not return after shutdown — handshake leaked")
+		t.Fatal("serve did not return after drain — handshake leaked")
 	}
-
-	// serve must not return before the drain completes: handlerDone was already
-	// true above, proving Serve's unblock didn't race main past the drain.
 }
