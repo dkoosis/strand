@@ -186,8 +186,8 @@ header {
 }
 .tile:hover { background: color-mix(in srgb, var(--rc) calc(var(--tile-mix) + 16%), var(--card)); }
 /* bug dot — small, constant corner; noticed via saturation + consistency, not size */
-.flag { position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 50%;
-  background: #ff1f29; box-shadow: 0 0 0 1px color-mix(in srgb, #ff1f29 40%, transparent); }
+.flag { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%;
+  background: #ff1f29; box-shadow: 0 0 0 1px #ff1f2966; }
 
 /* hint bar — fixed size + location; the hovered tile's identity reads here */
 .hintbar {
