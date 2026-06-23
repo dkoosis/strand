@@ -1247,7 +1247,7 @@ func (s *Server) handleNewForm(w http.ResponseWriter, r *http.Request) {
 // picker. A List error yields no candidates (the off-trunk / new-inline paths
 // still let the user proceed) rather than blocking the form.
 func candidateParents(ctx context.Context, src readSource) []parentOpt {
-	issues, err := src.List(ctx)
+	issues, err := src.List(ctx, allIssues...)
 	if err != nil {
 		return nil
 	}
@@ -1284,7 +1284,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	form := createForm{
-		Title:          r.FormValue("title"),
+		Title:          strings.TrimSpace(r.FormValue("title")),
 		Type:           r.FormValue("type"),
 		Priority:       r.FormValue("priority"),
 		Description:    r.FormValue("description"),
