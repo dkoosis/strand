@@ -41,6 +41,15 @@ type stubBD struct {
 	lastValue string // move test assert it issued the right bd update.
 
 	rankWrites []rankWrite // ordered log of SetRank calls, for the reorder tests.
+	depWrites  []depWrite  // ordered log of DepAdd/DepRemove calls, for the dep tests.
+}
+
+// depWrite records one DepAdd/DepRemove call so a test can assert the handler
+// wired the edge in the right direction (id depends on `on`).
+type depWrite struct {
+	op string // "add" | "remove"
+	id string
+	on string
 }
 
 // rankWrite records one SetRank call so a test can assert the handler issued the
@@ -82,6 +91,34 @@ func (s *stubBD) Comment(_ context.Context, id, text string) error {
 		s.comments = map[string][]bd.Comment{}
 	}
 	s.comments[id] = append(s.comments[id], bd.Comment{IssueID: id, Author: "me", Text: text})
+	return nil
+}
+
+// DepAdd records a "blocks" edge so the drawer re-read lists it; writeErr models
+// a bd outage. depWrites logs the call so a test can assert the wiring direction.
+func (s *stubBD) DepAdd(_ context.Context, id, dependsOn string) error {
+	if s.writeErr != nil {
+		return s.writeErr
+	}
+	s.depWrites = append(s.depWrites, depWrite{op: "add", id: id, on: dependsOn})
+	s.deps = append(s.deps, bd.DepEdge{IssueID: id, DependsOnID: dependsOn, Type: "blocks"})
+	return nil
+}
+
+// DepRemove drops the matching edge from the in-memory set so the re-read reflects it.
+func (s *stubBD) DepRemove(_ context.Context, id, dependsOn string) error {
+	if s.writeErr != nil {
+		return s.writeErr
+	}
+	s.depWrites = append(s.depWrites, depWrite{op: "remove", id: id, on: dependsOn})
+	kept := s.deps[:0]
+	for _, d := range s.deps {
+		if d.IssueID == id && d.DependsOnID == dependsOn {
+			continue
+		}
+		kept = append(kept, d)
+	}
+	s.deps = kept
 	return nil
 }
 
@@ -1336,5 +1373,74 @@ func TestInsightsNoRepo(t *testing.T) {
 	rec := do(t, srv, "/insights")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /insights (no repo) = %d, want 200", rec.Code)
+	}
+}
+
+// TestDepAddWiresBlocker: adding a blocker from the drawer issues DepAdd in the
+// "id depends on target" direction and redraws the panel listing the new blocker.
+func TestDepAddWiresBlocker(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/dep", "depends_on=demo-y")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST dep = %d, want 200", rec.Code)
+	}
+	if len(stub.depWrites) != 1 || stub.depWrites[0] != (depWrite{op: "add", id: "demo-x", on: "demo-y"}) {
+		t.Errorf("dep add issued %+v, want one add(demo-x, demo-y)", stub.depWrites)
+	}
+	if !strings.Contains(rec.Body.String(), "demo-y") {
+		t.Errorf("redrawn drawer missing the new blocker:\n%s", rec.Body.String())
+	}
+}
+
+// TestDepAddTrimsAndErrors: surrounding whitespace is trimmed before the write,
+// and a bd rejection surfaces in the drawer rather than 200-with-no-change.
+func TestDepAddError(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	stub.writeErr = fmt.Errorf("bd dep add: %w", bd.ErrBD)
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/dep", "depends_on=demo-y")
+
+	if !strings.Contains(rec.Body.String(), "dep add") {
+		t.Errorf("rejected dep add missing bd's message:\n%s", rec.Body.String())
+	}
+}
+
+// TestDepRemoveDropsBlocker: the remove form issues DepRemove and the redrawn
+// drawer no longer lists the dropped blocker.
+func TestDepRemoveDropsBlocker(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	stub.deps = []bd.DepEdge{{IssueID: "demo-x", DependsOnID: "demo-y", Type: "blocks"}}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/dep/remove", "depends_on=demo-y")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST dep remove = %d, want 200", rec.Code)
+	}
+	if len(stub.depWrites) != 1 || stub.depWrites[0].op != "remove" {
+		t.Errorf("dep remove issued %+v, want one remove", stub.depWrites)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "No blockers") {
+		t.Errorf("drawer still lists a blocker after remove:\n%s", body)
+	}
+}
+
+// TestDrawerListsBlockers: the detail panel renders the bead's existing "blocks"
+// dependencies and ignores non-blocks edges (epic parent-child et al).
+func TestDrawerListsBlockers(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	stub.deps = []bd.DepEdge{
+		{IssueID: "demo-x", DependsOnID: "demo-y", Type: "blocks"},
+		{IssueID: "demo-x", DependsOnID: "demo-epic", Type: "parent-child"},
+	}
+	srv := newTestServer(t, stub)
+	body := do(t, srv, "/bead/demo-x").Body.String()
+	if !strings.Contains(body, "demo-y") {
+		t.Errorf("drawer missing the blocks dependency:\n%s", body)
+	}
+	if strings.Contains(body, "demo-epic") {
+		t.Error("drawer leaked a non-blocks (parent-child) edge into the blocker list")
 	}
 }

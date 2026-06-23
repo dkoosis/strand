@@ -59,6 +59,8 @@ type IssueSource interface {
 	Close(ctx context.Context, id, reason string) (*bd.Issue, error)
 	SetRank(ctx context.Context, id string, rank float64) (*bd.Issue, error)
 	Comment(ctx context.Context, id, text string) error
+	DepAdd(ctx context.Context, id, dependsOn string) error
+	DepRemove(ctx context.Context, id, dependsOn string) error
 	Create(ctx context.Context, opts bd.CreateOpts) (*bd.Issue, error)
 	DeletePreview(ctx context.Context, id string) (string, error)
 	Delete(ctx context.Context, id string) error
@@ -136,6 +138,8 @@ func (s *Server) Routes() http.Handler {
 	s.mutate(mux, "POST /bead/{id}/close", s.handleClose)
 	s.mutate(mux, "POST /bead/{id}/reopen", s.handleReopen)
 	s.mutate(mux, "POST /bead/{id}/comment", s.handleComment)
+	s.mutate(mux, "POST /bead/{id}/dep", s.handleDepAdd)
+	s.mutate(mux, "POST /bead/{id}/dep/remove", s.handleDepRemove)
 	s.mutate(mux, "POST /bead/{id}/delete", s.handleDeletePreview)
 	s.mutate(mux, "DELETE /bead/{id}", s.handleDelete)
 	mux.HandleFunc("GET /new", s.handleNewForm)
@@ -1082,6 +1086,7 @@ func untaggedOpen(beads []forest.Bead, idx map[string]bd.Issue) int {
 type drawerData struct {
 	*bd.Issue
 	Comments []bd.Comment
+	Blockers []string // ids this bead depends on (its in-bd "blocks" blockers)
 	Err      string
 }
 
@@ -1119,7 +1124,24 @@ func (s *Server) renderDrawer(ctx context.Context, w http.ResponseWriter, src Is
 	if cs, err := src.Comments(ctx, issue.ID); err == nil {
 		data.Comments = cs
 	}
+	if deps, err := src.Deps(ctx, issue.ID); err == nil {
+		data.Blockers = blockerIDs(deps, issue.ID)
+	}
 	s.render(w, "drawer", data)
+}
+
+// blockerIDs pulls the ids that bead id depends on from its dependency edges,
+// keeping only "blocks" (epic parent-child and soft links aren't blockers). The
+// down-direction Deps query is id-centric, so every edge's IssueID is id; the
+// guard is defensive in case bd folds in other rows.
+func blockerIDs(deps []bd.DepEdge, id string) []string {
+	var ids []string
+	for _, d := range deps {
+		if d.Type == "blocks" && d.IssueID == id {
+			ids = append(ids, d.DependsOnID)
+		}
+	}
+	return ids
 }
 
 // handleEdit writes one field from the detail panel (hx-patch with field+value).
@@ -1205,6 +1227,26 @@ func (s *Server) handleComment(w http.ResponseWriter, r *http.Request) {
 	text := r.FormValue("text")
 	s.writeAndRefresh(w, r, id, func(ctx context.Context, src IssueSource) (*bd.Issue, error) {
 		return nil, wrapWrite("comment", src.Comment(ctx, id, text))
+	})
+}
+
+// handleDepAdd wires a "blocks" dependency from the drawer: the open bead depends
+// on (is blocked by) the posted bead. Like handleComment it returns no issue, so
+// the redraw re-reads — and renderDrawer reloads the blocker list with the new edge.
+func (s *Server) handleDepAdd(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	on := strings.TrimSpace(r.FormValue("depends_on"))
+	s.writeAndRefresh(w, r, id, func(ctx context.Context, src IssueSource) (*bd.Issue, error) {
+		return nil, wrapWrite("dep add", src.DepAdd(ctx, id, on))
+	})
+}
+
+// handleDepRemove drops a "blocks" dependency from the drawer's blocker list.
+func (s *Server) handleDepRemove(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	on := r.FormValue("depends_on")
+	s.writeAndRefresh(w, r, id, func(ctx context.Context, src IssueSource) (*bd.Issue, error) {
+		return nil, wrapWrite("dep remove", src.DepRemove(ctx, id, on))
 	})
 }
 

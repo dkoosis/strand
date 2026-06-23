@@ -137,6 +137,32 @@ func (c *Client) Create(ctx context.Context, opts CreateOpts) (*Issue, error) {
 	return firstIssue(out)
 }
 
+// DepAdd records that id depends on (is blocked by) dependsOn, the "blocks" edge
+// the graph reads. bd's default type is blocks, so no -t is needed. Both ids are
+// explicit; bd validates they exist and rejects a self- or duplicate edge.
+func (c *Client) DepAdd(ctx context.Context, id, dependsOn string) error {
+	if err := requireID(id, "dep add"); err != nil {
+		return err
+	}
+	if err := requireID(dependsOn, "dep add target"); err != nil {
+		return err
+	}
+	_, err := c.run(ctx, "dep", "add", id, dependsOn)
+	return err
+}
+
+// DepRemove drops the dependency from id to dependsOn (bd dep remove <id> <on>).
+func (c *Client) DepRemove(ctx context.Context, id, dependsOn string) error {
+	if err := requireID(id, "dep remove"); err != nil {
+		return err
+	}
+	if err := requireID(dependsOn, "dep remove target"); err != nil {
+		return err
+	}
+	_, err := c.run(ctx, "dep", "remove", id, dependsOn)
+	return err
+}
+
 // Comment adds a comment to an issue (bd comment <id> "text").
 func (c *Client) Comment(ctx context.Context, id, text string) error {
 	if err := requireID(id, "comment"); err != nil {

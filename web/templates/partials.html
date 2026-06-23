@@ -281,6 +281,22 @@
     <textarea name="value" rows="5" placeholder="No description recorded.">{{.Description}}</textarea>
   </form>
   {{if .Design}}<h3>Design</h3><pre>{{.Design}}</pre>{{end}}
+  <h3>Blocked by</h3>
+  {{range .Blockers}}
+  <div class="dr-dep">
+    <span class="dd-id mono">{{shortID .}}</span>
+    <form hx-post="/bead/{{$.ID}}/dep/remove" hx-target="#drawer">
+      <input type="hidden" name="depends_on" value="{{.}}">
+      <button class="dd-rm icon-btn" type="submit" aria-label="remove dependency">×</button>
+    </form>
+  </div>
+  {{else}}
+  <p class="dr-note">No blockers.</p>
+  {{end}}
+  <form class="dr-dep-add" hx-post="/bead/{{.ID}}/dep" hx-target="#drawer">
+    <input name="depends_on" placeholder="blocker bead id…" aria-label="blocker bead id" required>
+    <button type="submit">Add</button>
+  </form>
   <h3>Comments</h3>
   {{range .Comments}}
   <div class="dr-comment">
