@@ -609,6 +609,35 @@ func TestBeadDrawerRendersDetail(t *testing.T) {
 	}
 }
 
+// TestDrawerShapingLeadsAgentOpsDemoted: the drawer is the human shaping surface, so
+// the Description editor must render before the agent-ops zone (claim/close/delete).
+// Byte-offset ordering guards the zoning — a re-inversion regresses this red.
+func TestDrawerShapingLeadsAgentOpsDemoted(t *testing.T) {
+	srv := newTestServer(t, &stubBD{show: map[string]*bd.Issue{
+		"demo-z": {ID: "demo-z", Title: "Shape me", Status: "open", IssueType: "task", Description: "the body"},
+	}})
+	body := do(t, srv, "/bead/demo-z").Body.String()
+
+	desc := strings.Index(body, `value="description"`) // hidden field marks the Description editor
+	ops := strings.Index(body, "dr-overflow")          // demoted agent-ops disclosure
+	if desc < 0 {
+		t.Fatalf("drawer missing the Description editor:\n%s", body)
+	}
+	if ops < 0 {
+		t.Fatalf("drawer missing the demoted agent-ops zone:\n%s", body)
+	}
+	if desc > ops {
+		t.Errorf("agent ops render before Description — shaping is not leading (desc=%d, ops=%d)", desc, ops)
+	}
+	// Claim/Close/Delete all live inside the demoted zone, not the head — guard each
+	// so a partial re-inversion of any one button fails red.
+	for _, op := range []string{"/claim", "/close", "/delete"} {
+		if i := strings.Index(body, op); i < ops {
+			t.Errorf("%s sits above the agent-ops zone (%s=%d, ops=%d)", op, op, i, ops)
+		}
+	}
+}
+
 // TestBeadNotFoundIs404: a missing bead surfaces the bd sentinel as a 404 with an
 // error fragment, not a 200 with an empty drawer.
 func TestBeadNotFoundIs404(t *testing.T) {
