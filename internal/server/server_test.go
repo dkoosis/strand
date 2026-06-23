@@ -1148,7 +1148,7 @@ func insScope(t *testing.T) ([]forest.Bead, map[string]bd.Issue) {
 // in-progress and stale are split out, and Total counts only live beads.
 func TestTriageCounts(t *testing.T) {
 	beads, idx := insScope(t)
-	got := triage(beads, insightsDeps, idx, insightsNow)
+	got := triage(beads, blockerCounts(insightsDeps, idx), idx, insightsNow)
 	want := triageCounts{Total: 5, Open: 4, InProgress: 1, Ready: 2, Blocked: 2, Stale: 1}
 	if got != want {
 		t.Errorf("triage = %+v, want %+v", got, want)
@@ -1161,7 +1161,7 @@ func TestTriageAbsentBlockerIsResolved(t *testing.T) {
 	beads, idx := insScope(t)
 	deps := append(append([]bd.DepEdge(nil), insightsDeps...),
 		bd.DepEdge{IssueID: "demo-i.1", DependsOnID: "demo-gone", Type: "blocks"})
-	got := triage(beads, deps, idx, insightsNow)
+	got := triage(beads, blockerCounts(deps, idx), idx, insightsNow)
 	if got.Ready != 2 || got.Blocked != 2 {
 		t.Errorf("absent blocker changed triage: ready=%d blocked=%d, want 2/2", got.Ready, got.Blocked)
 	}
@@ -1172,7 +1172,7 @@ func TestTriageAbsentBlockerIsResolved(t *testing.T) {
 func TestTriageExplicitlyBlocked(t *testing.T) {
 	beads := []forest.Bead{{ID: "b1", Status: bd.StatusBlocked}}
 	idx := map[string]bd.Issue{"b1": {ID: "b1", Status: bd.StatusBlocked}}
-	got := triage(beads, nil, idx, insightsNow)
+	got := triage(beads, blockerCounts(nil, idx), idx, insightsNow)
 	if got.Total != 1 || got.Blocked != 1 {
 		t.Errorf("explicitly blocked bead: got %+v, want Total=1 Blocked=1", got)
 	}
@@ -1244,7 +1244,7 @@ func TestReadyQueue(t *testing.T) {
 			{Dependent: "demo-i.2", Dependency: "demo-i.1"},
 			{Dependent: "demo-i.3", Dependency: "demo-i.2"},
 		})
-	q := readyQueue(beads, insightsDeps, idx, m.PageRank, insightsNow)
+	q := readyQueue(beads, blockerCounts(insightsDeps, idx), idx, m.PageRank, insightsNow)
 	ids := make([]string, len(q))
 	for i := range q {
 		ids[i] = q[i].ID
@@ -1280,7 +1280,7 @@ func TestCrossFlag(t *testing.T) {
 			{Dependent: "demo-i.2", Dependency: "demo-i.1"},
 			{Dependent: "demo-i.3", Dependency: "demo-i.2"},
 		})
-	board := crossFlag(leaderboard(beads, m.Betweenness), insightsDeps, idx, insightsNow)
+	board := crossFlag(leaderboard(beads, m.Betweenness), blockerCounts(insightsDeps, idx), idx, insightsNow)
 	var mid *rankedBead
 	for i := range board {
 		if board[i].ID == "demo-i.2" {

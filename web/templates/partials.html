@@ -169,7 +169,7 @@
 {{if .}}
 <ul class="lboard">
   {{range .}}
-  <li class="lb-item" role="button" tabindex="0" hx-get="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="click,keyup[key=='Enter']">
+  <li class="lb-item" role="button" tabindex="0" hx-get="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']">
     <div class="lb-row">
       {{if or .Blocked .Stale}}<span class="lb-flag" title="{{if .Blocked}}blocked{{if .Stale}} · {{end}}{{end}}{{if .Stale}}stale{{end}} — act now">{{if .Blocked}}blocked{{else}}stale{{end}}</span>{{end}}
       <span class="lb-title">{{.Title}}</span>
