@@ -360,7 +360,11 @@ func TestEpicGroupHeadBranches(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: sampleIssues})
 
 	// Region view: no epic param ranges over Region.Epics with a head per group.
-	region := do(t, srv, "/list").Body.String()
+	recRegion := do(t, srv, "/list")
+	if recRegion.Code != http.StatusOK {
+		t.Fatalf("GET /list = %d, want 200", recRegion.Code)
+	}
+	region := recRegion.Body.String()
 	if !strings.Contains(region, `class="eg-head"`) {
 		t.Error("region list missing per-epic group header")
 	}
@@ -369,7 +373,11 @@ func TestEpicGroupHeadBranches(t *testing.T) {
 	}
 
 	// Epic-scoped view: the header is redundant (the pane head already names it).
-	epic := do(t, srv, "/list?epic=demo-e1").Body.String()
+	recEpic := do(t, srv, "/list?epic=demo-e1")
+	if recEpic.Code != http.StatusOK {
+		t.Fatalf("GET /list?epic=demo-e1 = %d, want 200", recEpic.Code)
+	}
+	epic := recEpic.Body.String()
 	if strings.Contains(epic, `class="eg-head"`) {
 		t.Error("epic-scoped list drew a redundant group header")
 	}
