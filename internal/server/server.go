@@ -1035,8 +1035,14 @@ func untaggedOpen(beads []forest.Bead, idx map[string]bd.Issue) int {
 // drawerData is the detail panel: a bead, its comments, and an optional write
 // error. Embedding promotes the issue's fields, so the template reads .Title etc.
 // directly; .Err carries a bd write failure to show inline (spec Q2).
+//
+// Priority shadows the embedded *bd.Issue.Priority (now *int) with the render-side
+// int the priority <select> compares against: it routes through forest.NewBead so
+// an absent priority maps to the P2 default — never a false P0 — exactly like the
+// list and board (str-zvh).
 type drawerData struct {
 	*bd.Issue
+	Priority int
 	Comments []bd.Comment
 	Blockers []string // ids this bead depends on (its in-bd "blocks" blockers)
 	Err      string
@@ -1069,7 +1075,7 @@ func (s *Server) renderDrawer(ctx context.Context, w http.ResponseWriter, src re
 		s.renderError(w, errNoIssue)
 		return
 	}
-	data := drawerData{Issue: issue}
+	data := drawerData{Issue: issue, Priority: forest.NewBead(issue).Priority}
 	if writeErr != nil {
 		data.Err = writeErr.Error()
 	}
@@ -1130,7 +1136,7 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleReopen(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.writeAndRefresh(w, r, id, func(ctx context.Context, src IssueSource) (*bd.Issue, error) {
-		iss, err := src.Update(ctx, id, "status", string(bd.StatusOpen))
+		iss, err := src.Update(ctx, id, bd.FieldStatus, string(bd.StatusOpen))
 		return iss, wrapWrite("reopen", err)
 	})
 }

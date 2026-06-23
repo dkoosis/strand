@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/dkoosis/strand/internal/registry"
@@ -50,6 +51,14 @@ func (s *Server) handleRepos(w http.ResponseWriter, _ *http.Request) {
 // re-renders the menu with bd's error rather than scoping to nothing.
 func (s *Server) handleSwitchRepo(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.reg.Switch(r.FormValue("path")); err != nil {
+		// ErrUnknownRepo is the user-correctable case (mistyped/unregistered
+		// path); anything else is unexpected persistence/system trouble. Both
+		// surface the message inline today — the errors.Is split consumes the
+		// sentinel in prod and marks the seam where the two could diverge.
+		if errors.Is(err, registry.ErrUnknownRepo) {
+			s.render(w, "repoMenu", s.repoMenu(err.Error()))
+			return
+		}
 		s.render(w, "repoMenu", s.repoMenu(err.Error()))
 		return
 	}
@@ -62,6 +71,14 @@ func (s *Server) handleSwitchRepo(w http.ResponseWriter, r *http.Request) {
 // with the error and the empty state's guidance, never adding a bare directory.
 func (s *Server) handleAddRepo(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.reg.Add(r.FormValue("path")); err != nil {
+		// ErrNoBeads is the user-correctable case (a path with no .beads); other
+		// failures (resolve-abs, persistence) are unexpected. Both surface the
+		// message inline today — the errors.Is split consumes the sentinel in
+		// prod and marks the seam where the two could diverge.
+		if errors.Is(err, registry.ErrNoBeads) {
+			s.render(w, "repoMenu", s.repoMenu(err.Error()))
+			return
+		}
 		s.render(w, "repoMenu", s.repoMenu(err.Error()))
 		return
 	}

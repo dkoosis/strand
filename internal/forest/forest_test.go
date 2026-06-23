@@ -14,12 +14,12 @@ func TestBuildRegionsFromTrunks(t *testing.T) {
 	issues := []bd.Issue{
 		{ID: "t-sub", Title: "SUBSTRATE trunk — code health", IssueType: "epic", Status: "open"}, // region
 		{ID: "e-1", Title: "Epic one", IssueType: "epic", Parent: "t-sub", Status: "open"},       // tile
-		{ID: "e-1.a", Parent: "e-1", Status: "open", Priority: 2},
-		{ID: "e-1.b", Parent: "e-1", Status: "in_progress", Priority: 0},
-		{ID: "e-1.c", Parent: "e-1", Status: "closed", Priority: 2},                                              // excluded
-		{ID: "e-2", Title: "Lone feature epic", IssueType: "epic", Parent: "t-sub", Status: "open", Priority: 3}, // tile, 1 open
-		{ID: "loose-1", Title: "Standalone", IssueType: "task", Status: "open", Priority: 2},                     // catch-all
-		{ID: "t-done", Title: "Done trunk", IssueType: "epic", Status: "closed"},                                 // no live work
+		{ID: "e-1.a", Parent: "e-1", Status: "open", Priority: new(2)},
+		{ID: "e-1.b", Parent: "e-1", Status: "in_progress", Priority: new(0)},
+		{ID: "e-1.c", Parent: "e-1", Status: "closed", Priority: new(2)},                                              // excluded
+		{ID: "e-2", Title: "Lone feature epic", IssueType: "epic", Parent: "t-sub", Status: "open", Priority: new(3)}, // tile, 1 open
+		{ID: "loose-1", Title: "Standalone", IssueType: "task", Status: "open", Priority: new(2)},                     // catch-all
+		{ID: "t-done", Title: "Done trunk", IssueType: "epic", Status: "closed"},                                      // no live work
 	}
 	f := Build(issues, Synthesis{Project: "demo", NorthStar: "north"})
 
@@ -87,9 +87,9 @@ func TestBuildNoTrunkNamesRegionForProject(t *testing.T) {
 func TestBuildBeadsSortPriorityThenID(t *testing.T) {
 	issues := []bd.Issue{
 		{ID: "t", IssueType: "epic", Status: "open"}, // trunk → region; p-1 is the tile
-		{ID: "p-1", Title: "E", IssueType: "epic", Parent: "t", Status: "open", Priority: 2},
-		{ID: "p-1.hi", Parent: "p-1", Status: "open", Priority: 0},
-		{ID: "p-1.lo", Parent: "p-1", Status: "open", Priority: 3},
+		{ID: "p-1", Title: "E", IssueType: "epic", Parent: "t", Status: "open", Priority: new(2)},
+		{ID: "p-1.hi", Parent: "p-1", Status: "open", Priority: new(0)},
+		{ID: "p-1.lo", Parent: "p-1", Status: "open", Priority: new(3)},
 	}
 	f := Build(issues, Synthesis{Project: "demo"})
 	beads := f.Regions[0].Epics[0].Beads
@@ -108,10 +108,10 @@ func TestBuildRankedEpicSortsByRank(t *testing.T) {
 	// its own list, P2 here), so the group is wholly rank-ordered.
 	issues := []bd.Issue{
 		{ID: "t", IssueType: "epic", Status: "open"}, // trunk → region; p-1 is the tile
-		{ID: "p-1", Title: "E", IssueType: "epic", Parent: "t", Status: "open", Priority: 2, Metadata: map[string]any{"rank": 4.0}},
-		{ID: "p-1.a", Parent: "p-1", Status: "open", Priority: 0, Metadata: map[string]any{"rank": 3.0}},
-		{ID: "p-1.b", Parent: "p-1", Status: "open", Priority: 3, Metadata: map[string]any{"rank": 1.0}},
-		{ID: "p-1.c", Parent: "p-1", Status: "open", Priority: 1, Metadata: map[string]any{"rank": 2.0}},
+		{ID: "p-1", Title: "E", IssueType: "epic", Parent: "t", Status: "open", Priority: new(2), Metadata: map[string]any{"rank": 4.0}},
+		{ID: "p-1.a", Parent: "p-1", Status: "open", Priority: new(0), Metadata: map[string]any{"rank": 3.0}},
+		{ID: "p-1.b", Parent: "p-1", Status: "open", Priority: new(3), Metadata: map[string]any{"rank": 1.0}},
+		{ID: "p-1.c", Parent: "p-1", Status: "open", Priority: new(1), Metadata: map[string]any{"rank": 2.0}},
 	}
 	f := Build(issues, Synthesis{Project: "demo"})
 	beads := f.Regions[0].Epics[0].Beads
@@ -127,9 +127,9 @@ func TestBuildRankedEpicSortsByRank(t *testing.T) {
 func TestBuildRankTiebreaksByID(t *testing.T) {
 	issues := []bd.Issue{
 		{ID: "t", IssueType: "epic", Status: "open"}, // trunk → region; p-1 is the tile
-		{ID: "p-1", Title: "E", IssueType: "epic", Parent: "t", Status: "open", Priority: 2, Metadata: map[string]any{"rank": 9.0}},
-		{ID: "p-1.y", Parent: "p-1", Status: "open", Priority: 0, Metadata: map[string]any{"rank": 5.0}},
-		{ID: "p-1.x", Parent: "p-1", Status: "open", Priority: 0, Metadata: map[string]any{"rank": 5.0}},
+		{ID: "p-1", Title: "E", IssueType: "epic", Parent: "t", Status: "open", Priority: new(2), Metadata: map[string]any{"rank": 9.0}},
+		{ID: "p-1.y", Parent: "p-1", Status: "open", Priority: new(0), Metadata: map[string]any{"rank": 5.0}},
+		{ID: "p-1.x", Parent: "p-1", Status: "open", Priority: new(0), Metadata: map[string]any{"rank": 5.0}},
 	}
 	f := Build(issues, Synthesis{Project: "demo"})
 	beads := f.Regions[0].Epics[0].Beads
@@ -144,9 +144,9 @@ func TestBuildRankTiebreaksByID(t *testing.T) {
 func TestBuildUnrankedBeadSortsLastInRankedGroup(t *testing.T) {
 	issues := []bd.Issue{
 		{ID: "t", IssueType: "epic", Status: "open"}, // trunk → region; p-1 is the tile
-		{ID: "p-1", Title: "E", IssueType: "epic", Parent: "t", Status: "open", Priority: 2, Metadata: map[string]any{"rank": 1.0}},
-		{ID: "p-1.head", Parent: "p-1", Status: "open", Priority: 0, Metadata: map[string]any{"rank": -2.0}},
-		{ID: "p-1.new", Parent: "p-1", Status: "open", Priority: 0}, // no rank yet
+		{ID: "p-1", Title: "E", IssueType: "epic", Parent: "t", Status: "open", Priority: new(2), Metadata: map[string]any{"rank": 1.0}},
+		{ID: "p-1.head", Parent: "p-1", Status: "open", Priority: new(0), Metadata: map[string]any{"rank": -2.0}},
+		{ID: "p-1.new", Parent: "p-1", Status: "open", Priority: new(0)}, // no rank yet
 	}
 	f := Build(issues, Synthesis{Project: "demo"})
 	beads := f.Regions[0].Epics[0].Beads
@@ -203,5 +203,28 @@ func TestSquarifyEmptyAndZero(t *testing.T) {
 		if r.W != 0 || r.H != 0 {
 			t.Errorf("zero-weight tile %d = %+v, want zero area", i, r)
 		}
+	}
+}
+
+func TestNewBeadAbsentPriorityDefaultsToP2(t *testing.T) {
+	// Absent priority (nil) must NOT render as P0 — it defaults to P2 so it
+	// neither trips the epic P0/P1 flag nor sorts to the top of priority-asc.
+	got := NewBead(&bd.Issue{ID: "a", Priority: nil})
+	if got.Priority != 2 {
+		t.Errorf("absent priority -> %d, want 2 (P2 default)", got.Priority)
+	}
+
+	// A present P0 still renders as 0 — the default must not swallow a real P0.
+	zero := 0
+	gotZero := NewBead(&bd.Issue{ID: "b", Priority: &zero})
+	if gotZero.Priority != 0 {
+		t.Errorf("present P0 -> %d, want 0", gotZero.Priority)
+	}
+
+	// A present non-zero round-trips.
+	three := 3
+	gotThree := NewBead(&bd.Issue{ID: "c", Priority: &three})
+	if gotThree.Priority != 3 {
+		t.Errorf("present P3 -> %d, want 3", gotThree.Priority)
 	}
 }
