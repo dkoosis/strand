@@ -125,12 +125,17 @@
   </div>
 
   <div class="ipanel">
-    <div class="ip-head">Influence <span class="ip-sub">PageRank</span></div>
+    <div class="ip-head">Ready to dispatch <span class="ip-sub">ranked by influence</span></div>
+    {{if .Ready}}{{template "leaderboard" .Ready}}{{else}}<p class="ip-empty">No ready beads — the queue is clear.</p>{{end}}
+  </div>
+
+  <div class="ipanel">
+    <div class="ip-head">Move these, the most shifts <span class="ip-sub">PageRank</span></div>
     {{template "leaderboard" .Influence}}
   </div>
 
   <div class="ipanel">
-    <div class="ip-head">Bottlenecks <span class="ip-sub">betweenness</span></div>
+    <div class="ip-head">Unblock these to free the most work <span class="ip-sub">betweenness</span></div>
     {{template "leaderboard" .Bottleneck}}
   </div>
 
@@ -164,9 +169,11 @@
 {{if .}}
 <ul class="lboard">
   {{range .}}
-  <li>
+  <li class="lb-item" role="button" tabindex="0" hx-get="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="click,keyup[key=='Enter']">
     <div class="lb-row">
+      {{if or .Blocked .Stale}}<span class="lb-flag" title="{{if .Blocked}}blocked{{if .Stale}} · {{end}}{{end}}{{if .Stale}}stale{{end}} — act now">{{if .Blocked}}blocked{{else}}stale{{end}}</span>{{end}}
       <span class="lb-title">{{.Title}}</span>
+      <span class="lb-mag tnum">{{.Width}}</span>
       <span class="lb-id mono">{{shortID .ID}}</span>
     </div>
     <div class="lb-bar"><span style="width:{{.Width}}%"></span></div>
