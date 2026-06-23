@@ -247,38 +247,26 @@
     <input type="hidden" name="field" value="title">
     <input class="dr-title" name="value" value="{{.Title}}" aria-label="title">
   </form>
-  <div class="dr-stat">
-    <span><span class="dot {{.Status}}" style="display:inline-block;margin-right:5px"></span><b>{{statusLabel .Status}}</b></span>
-    <span>priority <b>P{{.Priority}}</b></span>
-    <span>deps <b>{{.DependencyCount}}</b> · blocks <b>{{.DependentCount}}</b></span>
-  </div>
-  <div class="dr-actions">
-    <button type="button" hx-post="/bead/{{.ID}}/claim" hx-target="#drawer">Claim</button>
-    {{if eq .Status "closed"}}
-    <button type="button" hx-post="/bead/{{.ID}}/reopen" hx-target="#drawer">Reopen</button>
-    {{else}}
-    <button type="button" hx-post="/bead/{{.ID}}/close" hx-target="#drawer">Close</button>
-    {{end}}
-    <button type="button" class="danger" hx-post="/bead/{{.ID}}/delete" hx-target="#drawer">Delete</button>
+  <div class="dr-shape-row">
+    <form class="dr-field dr-field-inline" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change" onsubmit="event.preventDefault();">
+      <input type="hidden" name="field" value="priority">
+      <label>Priority
+        <select name="value">
+          {{$p := .Priority}}{{range $i := priorities}}<option value="{{$i}}" {{if eq $i $p}}selected{{end}}>P{{$i}}</option>{{end}}
+        </select>
+      </label>
+    </form>
+    <div class="dr-stat">
+      <span><span class="dot {{.Status}}" style="display:inline-block;margin-right:5px"></span><b>{{statusLabel .Status}}</b></span>
+      <span>deps <b>{{.DependencyCount}}</b> · blocks <b>{{.DependentCount}}</b></span>
+    </div>
   </div>
 </div>
 <div class="dr-body">
-  <form class="dr-field" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change" onsubmit="event.preventDefault();">
-    <input type="hidden" name="field" value="priority">
-    <label>Priority
-      <select name="value">
-        {{$p := .Priority}}{{range $i := priorities}}<option value="{{$i}}" {{if eq $i $p}}selected{{end}}>P{{$i}}</option>{{end}}
-      </select>
-    </label>
-  </form>
-  <form class="dr-field" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change" onsubmit="event.preventDefault();">
-    <input type="hidden" name="field" value="assignee">
-    <label>Assignee <input name="value" value="{{.Assignee}}" placeholder="unassigned"></label>
-  </form>
   <h3>Description</h3>
-  <form class="dr-field" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change" onsubmit="event.preventDefault();">
+  <form class="dr-field dr-field-primary" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change" onsubmit="event.preventDefault();">
     <input type="hidden" name="field" value="description">
-    <textarea name="value" rows="5" placeholder="No description recorded.">{{.Description}}</textarea>
+    <textarea class="dr-desc" name="value" rows="10" placeholder="No description recorded.">{{.Description}}</textarea>
   </form>
   {{if .Design}}<h3>Design</h3><pre>{{.Design}}</pre>{{end}}
   <h3>Blocked by</h3>
@@ -310,6 +298,22 @@
     <textarea name="text" rows="2" placeholder="Add a comment…" required></textarea>
     <button type="submit">Comment</button>
   </form>
+  <details class="dr-overflow">
+    <summary>Agent ops</summary>
+    <form class="dr-field" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change" onsubmit="event.preventDefault();">
+      <input type="hidden" name="field" value="assignee">
+      <label>Assignee <input name="value" value="{{.Assignee}}" placeholder="unassigned"></label>
+    </form>
+    <div class="dr-actions">
+      <button type="button" hx-post="/bead/{{.ID}}/claim" hx-target="#drawer">Claim</button>
+      {{if eq .Status "closed"}}
+      <button type="button" hx-post="/bead/{{.ID}}/reopen" hx-target="#drawer">Reopen</button>
+      {{else}}
+      <button type="button" hx-post="/bead/{{.ID}}/close" hx-target="#drawer">Close</button>
+      {{end}}
+      <button type="button" class="danger" hx-post="/bead/{{.ID}}/delete" hx-target="#drawer">Delete</button>
+    </div>
+  </details>
 </div>
 {{end}}
 

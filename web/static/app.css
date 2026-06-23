@@ -325,6 +325,24 @@ input.dr-title:focus { border-color: var(--st-open); outline: none; background: 
 .dr-field select { width: auto; }
 .dr-title-static { font-size: var(--fs-4); font-weight: 600; letter-spacing: -.01em; margin: var(--s-4) 0 0; line-height: 1.3; }
 
+/* shaping-first: priority + status share one compact row under the title, leaving the body for the description editor */
+.dr-shape-row { display: flex; align-items: flex-end; flex-wrap: wrap; gap: var(--s-3) var(--s-6); margin-top: var(--s-5); }
+.dr-field-inline { margin: 0; }
+.dr-shape-row .dr-stat { margin-top: 0; }
+
+/* description is the loud center of the drawer */
+.dr-field-primary { margin-bottom: var(--s-6); }
+textarea.dr-desc { min-height: 11rem; line-height: 1.5; }
+
+/* agent ops demoted behind an overflow disclosure, away from the shaping surface */
+.dr-overflow { margin-top: var(--s-7); padding-top: var(--s-5); border-top: 1px solid var(--line); }
+.dr-overflow > summary { font-size: var(--fs-9); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); cursor: pointer; list-style: none; }
+.dr-overflow > summary::-webkit-details-marker { display: none; }
+.dr-overflow > summary::before { content: "▸ "; color: var(--ink-3); }
+.dr-overflow[open] > summary::before { content: "▾ "; }
+.dr-overflow > summary:hover { color: var(--ink-2); }
+.dr-overflow .dr-field { margin-top: var(--s-4); }
+
 /* destructive action: muted until hover, then the blocked-red signal */
 .dr-actions button.danger:hover { border-color: var(--st-blocked); color: var(--st-blocked); }
 
