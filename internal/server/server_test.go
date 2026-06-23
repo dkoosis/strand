@@ -143,9 +143,7 @@ func (s *stubBD) Create(_ context.Context, opts *bd.CreateOpts) (*bd.Issue, erro
 	}
 	s.createOpts = append(s.createOpts, *opts)
 	iss := &bd.Issue{ID: id, Title: opts.Title, IssueType: opts.Type, Status: "open"}
-	if opts.Priority != nil {
-		iss.Priority = *opts.Priority
-	}
+	iss.Priority = opts.Priority
 	if s.show == nil {
 		s.show = map[string]*bd.Issue{}
 	}
@@ -183,7 +181,9 @@ func (s *stubBD) Update(_ context.Context, id, field, value string) (*bd.Issue, 
 	case "title":
 		iss.Title = value
 	case "priority":
-		iss.Priority, _ = strconv.Atoi(value)
+		if p, err := strconv.Atoi(value); err == nil {
+			iss.Priority = &p
+		}
 	case "assignee":
 		iss.Assignee = value
 	case "description":
@@ -315,14 +315,16 @@ func oneBead(iss *bd.Issue) *stubBD {
 
 var sampleIssues = []bd.Issue{
 	{ID: "demo-root", Title: "DEMO trunk", IssueType: "epic", Status: "open"}, // region; epics below are tiles
-	{ID: "demo-e1", Parent: "demo-root", Title: "Forest epic", IssueType: "epic", Status: "open", Priority: 1},
-	{ID: "demo-e1.a", Parent: "demo-e1", Title: "Wire the thing", Status: "open", Priority: 0},
-	{ID: "demo-e1.b", Parent: "demo-e1", Title: "Test the thing", Status: "in_progress", Priority: 2},
-	{ID: "demo-e2", Parent: "demo-root", Title: "Lone task", IssueType: "task", Status: "open", Priority: 3},
+	{ID: "demo-e1", Parent: "demo-root", Title: "Forest epic", IssueType: "epic", Status: "open", Priority: new(1)},
+	{ID: "demo-e1.a", Parent: "demo-e1", Title: "Wire the thing", Status: "open", Priority: new(0)},
+	{ID: "demo-e1.b", Parent: "demo-e1", Title: "Test the thing", Status: "in_progress", Priority: new(2)},
+	{ID: "demo-e2", Parent: "demo-root", Title: "Lone task", IssueType: "task", Status: "open", Priority: new(3)},
 }
 
-// TestForestPageRenders pins the landing: the page renders the north star, the
-// treemap, and a sized tile per epic with htmx wiring to the list pane.
+// TestForestPageRenders pins the view-centric landing: the page renders the north
+// star, the loud primary view-switcher (Table/Board/Insights tabs), the minimap
+// treemap with a tile per epic carrying its filter identity (data-epic, routed to
+// the active view by app.js), and the centerpiece list.
 func TestForestPageRenders(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: sampleIssues})
 	rec := do(t, srv, "/")
@@ -333,9 +335,14 @@ func TestForestPageRenders(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"remember across sessions", // north star
+		`class="viewbar"`,          // loud primary view switcher
+		`class="viewtab active" type="button" data-view="list"`, // Table is the default loud tab
+		`data-view="board"`,    // Board tab present
+		`data-view="insights"`, // Insights tab present
+		`class="minimap"`,      // treemap demoted to ambient minimap rail
 		`class="treemap"`,
-		`hx-get="/list?epic=demo-e1"`, // tile drills into its epic
-		`hx-get="/list?epic=demo-e2"`,
+		`data-epic="demo-e1"`, // tile carries its filter identity (app.js routes the click)
+		`data-epic="demo-e2"`,
 		`class="flag"`, // demo-e1 holds P0/P1 work
 	} {
 		if !strings.Contains(body, want) {
@@ -456,6 +463,11 @@ func TestBoardScopedToEpic(t *testing.T) {
 	if strings.Contains(body, "Lone task") {
 		t.Error("epic board leaked a bead from another epic")
 	}
+	// The board head carries the scope marker app.js reads to keep the top tab strip
+	// on Board at this epic, so a minimap click filters the active (board) view.
+	if !strings.Contains(body, `data-view="board"`) || !strings.Contains(body, `data-epic="demo-e1"`) {
+		t.Error("board fragment missing data-view/data-epic scope marker")
+	}
 }
 
 // TestBoardMoveUpdates: a column move issues the matching bd update and returns
@@ -503,10 +515,10 @@ func TestBoardMoveErrorReverts(t *testing.T) {
 func rankedEpic() []bd.Issue {
 	return []bd.Issue{
 		{ID: "r-root", Title: "RANK trunk", IssueType: "epic", Status: "open"}, // region; r-1 is the tile
-		{ID: "r-1", Parent: "r-root", Title: "Ranked epic", IssueType: "epic", Status: "open", Priority: 1, Metadata: map[string]any{"rank": 1.0}},
-		{ID: "r-1.a", Parent: "r-1", Title: "A", Status: "open", Priority: 0, Metadata: map[string]any{"rank": 2.0}},
-		{ID: "r-1.b", Parent: "r-1", Title: "B", Status: "open", Priority: 2, Metadata: map[string]any{"rank": 3.0}},
-		{ID: "r-1.c", Parent: "r-1", Title: "C", Status: "open", Priority: 2, Metadata: map[string]any{"rank": 4.0}},
+		{ID: "r-1", Parent: "r-root", Title: "Ranked epic", IssueType: "epic", Status: "open", Priority: new(1), Metadata: map[string]any{"rank": 1.0}},
+		{ID: "r-1.a", Parent: "r-1", Title: "A", Status: "open", Priority: new(0), Metadata: map[string]any{"rank": 2.0}},
+		{ID: "r-1.b", Parent: "r-1", Title: "B", Status: "open", Priority: new(2), Metadata: map[string]any{"rank": 3.0}},
+		{ID: "r-1.c", Parent: "r-1", Title: "C", Status: "open", Priority: new(2), Metadata: map[string]any{"rank": 4.0}},
 	}
 }
 
@@ -685,7 +697,7 @@ func TestRankSingleIDNoOp(t *testing.T) {
 // description.
 func TestBeadDrawerRendersDetail(t *testing.T) {
 	srv := newTestServer(t, &stubBD{show: map[string]*bd.Issue{
-		"demo-e1.a": {ID: "demo-e1.a", Title: "Wire the thing", Status: "open", Priority: 0, IssueType: "task", Description: "do the wiring"},
+		"demo-e1.a": {ID: "demo-e1.a", Title: "Wire the thing", Status: "open", Priority: new(0), IssueType: "task", Description: "do the wiring"},
 	}})
 	rec := do(t, srv, "/bead/demo-e1.a")
 
@@ -1217,12 +1229,12 @@ var (
 // one stale untagged bead. bd list omits closed, so no closed beads appear.
 var insightsIssues = []bd.Issue{
 	{ID: "demo-root", Title: "DEMO trunk", IssueType: "epic", Status: "open"}, // region; demo-i is the tile
-	{ID: "demo-i", Parent: "demo-root", Title: "Insights epic", IssueType: "epic", Status: "open", Priority: 1, UpdatedAt: insFresh},
-	{ID: "demo-i.1", Parent: "demo-i", Title: "Foundation", Status: "open", Priority: 1, Labels: []string{"core"}, UpdatedAt: insFresh},
-	{ID: "demo-i.2", Parent: "demo-i", Title: "Mid", Status: "open", Priority: 2, Labels: []string{"core", "ui"}, UpdatedAt: insFresh},
-	{ID: "demo-i.3", Parent: "demo-i", Title: "Leaf", Status: "open", Priority: 2, Labels: []string{"ui"}, UpdatedAt: insFresh},
-	{ID: "demo-i.4", Parent: "demo-i", Title: "Active", Status: "in_progress", Priority: 2, Labels: []string{"core"}, UpdatedAt: insFresh},
-	{ID: "demo-i.5", Parent: "demo-i", Title: "Stale", Status: "open", Priority: 3, UpdatedAt: insStale},
+	{ID: "demo-i", Parent: "demo-root", Title: "Insights epic", IssueType: "epic", Status: "open", Priority: new(1), UpdatedAt: insFresh},
+	{ID: "demo-i.1", Parent: "demo-i", Title: "Foundation", Status: "open", Priority: new(1), Labels: []string{"core"}, UpdatedAt: insFresh},
+	{ID: "demo-i.2", Parent: "demo-i", Title: "Mid", Status: "open", Priority: new(2), Labels: []string{"core", "ui"}, UpdatedAt: insFresh},
+	{ID: "demo-i.3", Parent: "demo-i", Title: "Leaf", Status: "open", Priority: new(2), Labels: []string{"ui"}, UpdatedAt: insFresh},
+	{ID: "demo-i.4", Parent: "demo-i", Title: "Active", Status: "in_progress", Priority: new(2), Labels: []string{"core"}, UpdatedAt: insFresh},
+	{ID: "demo-i.5", Parent: "demo-i", Title: "Stale", Status: "open", Priority: new(3), UpdatedAt: insStale},
 }
 
 var insightsDeps = []bd.DepEdge{
@@ -1292,9 +1304,11 @@ func TestIsStale(t *testing.T) {
 		{"zero time", "open", time.Time{}, false},
 	}
 	for _, c := range cases {
-		if got := isStale(c.status, c.updated, insightsNow); got != c.want {
-			t.Errorf("isStale(%s) = %v, want %v", c.name, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if got := isStale(c.status, c.updated, insightsNow); got != c.want {
+				t.Errorf("isStale = %v, want %v", got, c.want)
+			}
+		})
 	}
 }
 
@@ -1426,8 +1440,9 @@ func TestBeadPath(t *testing.T) {
 	}
 }
 
-// TestInsightsFragmentRenders: the dashboard returns its panels, the view-toggle
-// (with Insights active and links back to the other views), and the computed values.
+// TestInsightsFragmentRenders: the dashboard returns its panels, the scope marker
+// app.js reads to keep the top tab strip on Insights at this epic, and the computed
+// values. The view switcher itself is now top-level page chrome, not per-fragment.
 func TestInsightsFragmentRenders(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: insightsIssues, deps: insightsDeps})
 	srv.now = func() time.Time { return insightsNow }
@@ -1442,13 +1457,13 @@ func TestInsightsFragmentRenders(t *testing.T) {
 		"Move these",              // influence headline (consequence, not algorithm)
 		"Unblock these",           // bottleneck headline
 		"PageRank", "betweenness", // method survives as small provenance
-		"Ready to dispatch",           // the new READY-by-influence card
-		`hx-get="/list?epic=demo-i"`,  // toggle back to Table
-		`hx-get="/board?epic=demo-i"`, // and Board
-		`hx-get="/bead/demo-i.1"`,     // ranked rows click → drawer
-		`hx-target="#drawer"`,         // ...into the detail panel
-		"Foundation",                  // top influence bead title
-		"untagged",                    // hygiene warning (demo-i.5)
+		"Ready to dispatch",       // the new READY-by-influence card
+		`data-view="insights"`,    // scope marker: app.js syncs the Insights tab as active
+		`data-epic="demo-i"`,      // ...scoped to this epic, so a tab switch keeps the scope
+		`hx-get="/bead/demo-i.1"`, // ranked rows click → drawer
+		`hx-target="#drawer"`,     // ...into the detail panel
+		"Foundation",              // top influence bead title
+		"untagged",                // hygiene warning (demo-i.5)
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("insights fragment missing %q", want)
@@ -1465,8 +1480,8 @@ func TestInsightsFragmentRenders(t *testing.T) {
 // from another epic must not appear in the critical path or leaderboards.
 func TestInsightsScopedToEpic(t *testing.T) {
 	mixed := append(append([]bd.Issue(nil), insightsIssues...),
-		bd.Issue{ID: "demo-z", Parent: "demo-root", Title: "Other epic", IssueType: "epic", Status: "open", Priority: 2, UpdatedAt: insFresh},
-		bd.Issue{ID: "demo-z.1", Parent: "demo-z", Title: "Elsewhere", Status: "open", Priority: 2, UpdatedAt: insFresh})
+		bd.Issue{ID: "demo-z", Parent: "demo-root", Title: "Other epic", IssueType: "epic", Status: "open", Priority: new(2), UpdatedAt: insFresh},
+		bd.Issue{ID: "demo-z.1", Parent: "demo-z", Title: "Elsewhere", Status: "open", Priority: new(2), UpdatedAt: insFresh})
 	srv := newTestServer(t, &stubBD{issues: mixed, deps: insightsDeps})
 	srv.now = func() time.Time { return insightsNow }
 	body := do(t, srv, "/insights?epic=demo-i").Body.String()

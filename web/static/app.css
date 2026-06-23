@@ -139,31 +139,70 @@ header {
 .ns-meta { margin-left: auto; display: flex; gap: var(--s-7); color: var(--ink-3); font-size: var(--fs-8); white-space: nowrap; }
 .ns-meta b { color: var(--ink); font-weight: 600; }
 
-/* ============================================================ split: navigator | beads */
-.split { flex: 1; display: grid; grid-template-columns: minmax(420px, 46fr) 54fr; min-height: 0; }
-.nav-pane { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.list-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg-1); }
-.list-pane > #listPane { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+/* ============================================================ view-centric layout
+   The active VIEW is the centerpiece (full-width center); the treemap is demoted to
+   a slim ambient minimap rail on the right. A LOUD primary tab strip up top is the
+   main control — it's how you move through the work, so it's the loudest chrome on
+   the page (spec §1/§2). */
+.viewport { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 
-/* pane heads */
+/* the loud primary view switcher — the cockpit's main control */
+.viewbar {
+  display: flex; align-items: stretch; gap: var(--s-2);
+  padding: var(--s-3) var(--s-6) 0; flex: 0 0 auto;
+  border-bottom: 1px solid var(--line); background: var(--bg-1);
+}
+.viewtab {
+  font: inherit; font-size: var(--fs-2); font-weight: 600; letter-spacing: -.01em;
+  padding: var(--s-4) var(--s-6) var(--s-5); border: 0; border-bottom: 2.5px solid transparent;
+  background: none; color: var(--ink-3); cursor: pointer; margin-bottom: -1px;
+}
+.viewtab:hover { color: var(--ink); }
+.viewtab.active { color: var(--ink); border-bottom-color: var(--p2); }
+.viewbar-spacer { flex: 1; }
+.viewbar-hint {
+  align-self: center; font-size: var(--fs-8); color: var(--ink-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32ch;
+}
+
+/* centerpiece (full width) | minimap rail (slim, ambient) */
+.workbench { flex: 1; display: grid; grid-template-columns: 1fr minmax(220px, 280px); min-height: 0; }
+.centerpiece { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg-1); }
+.centerpiece > #listPane { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+
+/* minimap — small persistent ambient widget, not half the screen */
+.minimap {
+  border-left: 1px solid var(--line); display: flex; flex-direction: column;
+  min-width: 0; min-height: 0; background: var(--bg);
+}
+.mm-head {
+  display: flex; align-items: center; gap: var(--s-3); flex: 0 0 auto;
+  padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--line);
+}
+.mm-title { font-size: var(--fs-9); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+.mm-clear {
+  margin-left: auto; font: inherit; font-size: var(--fs-9); font-weight: 600;
+  letter-spacing: .04em; text-transform: uppercase; padding: 1px var(--s-3);
+  border: 1px solid var(--line-2); border-radius: 4px; background: var(--bg-2);
+  color: var(--ink-2); cursor: pointer;
+}
+.mm-clear:hover { border-color: var(--st-open); color: var(--ink); }
+
+/* pane heads (centerpiece fragment scope label) */
 .pane-head {
   display: flex; align-items: center; gap: var(--s-4);
   padding: var(--s-5) var(--s-6); border-bottom: 1px solid var(--line); flex: 0 0 auto;
 }
-.pane-title { font-size: var(--fs-9); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
-.groupby {
-  display: inline-flex; align-items: center; gap: var(--s-2); margin-left: auto;
-  padding: var(--s-2) var(--s-4); border: 1px solid var(--line-2); border-radius: 6px;
-  background: var(--bg-2); color: var(--ink-2); font-size: var(--fs-8); cursor: pointer;
-}
-.groupby .k { color: var(--ink-3); }
-.groupby .caret { color: var(--ink-4); font-size: var(--fs-9); }
-.groupby[aria-disabled] { opacity: .8; }
 
-/* ============================================================ treemap navigator */
-/* Compact navigator: size to a capped box top-left, don't fill the pane. */
-.tmwrap { flex: 0 0 auto; padding: var(--s-5); min-height: 0; overflow: auto; }
-.treemap { position: relative; width: 100%; max-width: var(--tm-w, 440px); height: var(--tm-h, 300px); }
+/* ============================================================ treemap minimap */
+/* Ambient minimap: fills the rail, scales to its width; act from the glance. */
+.tmwrap { flex: 1; padding: var(--s-5); min-height: 0; overflow: auto; }
+.treemap { position: relative; width: 100%; height: var(--tm-h, 300px); }
+.mm-filter { cursor: pointer; }
+.mm-filter:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+/* the region/epic currently filtering the centerpiece reads as selected */
+.rg-head.mm-filter.on { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--rc) 60%, var(--ink)); }
+.tile.mm-filter.on { box-shadow: inset 0 0 0 1.5px var(--ink); }
 .region {
   position: absolute; overflow: hidden; background: transparent;
   display: flex; flex-direction: column;
@@ -237,16 +276,6 @@ tbody tr:hover td { background: var(--bg-2); }
 .dot.closed { background: var(--st-closed); } .dot.deferred { background: var(--st-deferred); }
 .dot.blocked { background: var(--st-blocked); }
 .empty { padding: var(--s-8) var(--s-6); color: var(--ink-3); }
-
-/* ============================================================ view toggle (table | board) */
-.view-toggle { margin-left: auto; display: inline-flex; gap: 2px; padding: 2px; background: var(--bg-2); border-radius: 7px; }
-.vt {
-  font: inherit; font-size: var(--fs-9); font-weight: 500; padding: var(--s-2) var(--s-4);
-  border: 0; border-radius: 5px; background: none; color: var(--ink-3); cursor: pointer;
-}
-.vt:hover { color: var(--ink); }
-.vt.active { background: var(--bg-1); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); cursor: default; }
-.lp-stat { margin-left: var(--s-6); }
 
 /* ============================================================ kanban board */
 .board-bar {

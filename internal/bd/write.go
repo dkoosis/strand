@@ -25,15 +25,26 @@ func requireID(id, op string) error {
 	return nil
 }
 
+// Logical field names for Update — the keys of updateFlags. strand callers name
+// the field through these consts rather than re-spelling the literal, so a typo
+// is a compile error and the set of writable fields has one source of truth.
+const (
+	FieldStatus      = "status"
+	FieldPriority    = "priority"
+	FieldAssignee    = "assignee"
+	FieldTitle       = "title"
+	FieldDescription = "description"
+)
+
 // updateFlags maps a logical field name to bd's `update` flag. Callers name the
 // field they mean; strand owns the flag spelling so a bd rename is a one-line fix.
 // Status writeback is `-s` (O7: there is no `set-state` subcommand in bd).
 var updateFlags = map[string]string{
-	"status":      "-s",
-	"priority":    "-p",
-	"assignee":    "-a",
-	"title":       "--title",
-	"description": "-d",
+	FieldStatus:      "-s",
+	FieldPriority:    "-p",
+	FieldAssignee:    "-a",
+	FieldTitle:       "--title",
+	FieldDescription: "-d",
 }
 
 // Update sets one field on an issue. id is always explicit — a bare `bd update`

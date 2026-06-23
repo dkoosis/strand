@@ -49,27 +49,38 @@
 </div>
 {{end}}
 
-<div class="split">
-  <section class="nav-pane">
-    <div class="pane-head">
-      <span class="pane-title">The forest</span>
-      <button class="groupby" type="button" aria-disabled="true" title="future: pivot the grouping — module · release · person">
-        group by <span class="k">module</span><span class="caret">▾</span>
-      </button>
-    </div>
-    <div class="hintbar idle" id="hintbar"><div class="hint-name">Hover a tile</div><div class="hint-meta"></div></div>
-    <div class="tmwrap">{{template "treemap" .Forest}}</div>
-  </section>
+<div class="viewport" id="viewport" data-view="list" data-epic="">
+  <nav class="viewbar" aria-label="View switcher">
+    <button class="viewtab active" type="button" data-view="list" aria-pressed="true"
+            hx-get="/list" hx-target="#listPane">Table</button>
+    <button class="viewtab" type="button" data-view="board" aria-pressed="false"
+            hx-get="/board" hx-target="#listPane">Board</button>
+    <button class="viewtab" type="button" data-view="insights" aria-pressed="false"
+            hx-get="/insights" hx-target="#listPane">Insights</button>
+    <span class="viewbar-spacer"></span>
+    <span class="viewbar-hint" id="scopeHint">Whole forest</span>
+  </nav>
 
-  <section class="list-pane">
-    <div id="listPane" hx-get="/list" hx-trigger="refreshList from:body">{{template "list" .List}}</div>
-  </section>
+  <div class="workbench">
+    <section class="centerpiece">
+      <div id="listPane" hx-get="/list" hx-trigger="refreshList from:body">{{template "list" .List}}</div>
+    </section>
+
+    <aside class="minimap" aria-label="Forest minimap">
+      <div class="mm-head">
+        <span class="mm-title">Forest</span>
+        <button class="mm-clear" id="mmClear" type="button" hidden hx-get="/list" hx-target="#listPane" title="Clear filter — show the whole forest">all</button>
+      </div>
+      <div class="hintbar idle" id="hintbar"><div class="hint-name">Hover a tile</div><div class="hint-meta"></div></div>
+      <div class="tmwrap">{{template "treemap" .Forest}}</div>
+    </aside>
+  </div>
 </div>
 
 <footer>
-  <span><b>Pick a region or tile</b> → its beads list right</span>
-  <span><b>Click a bead</b> → detail</span>
-  <span style="margin-left:auto">forest landing · model A · tiles sized by live open beads · §1a/§4a</span>
+  <span><b>Switch the view</b> up top — Table · Board · Insights</span>
+  <span><b>Click the minimap</b> → filter the view to that region or epic</span>
+  <span style="margin-left:auto">view-centric · minimap is ambient context · §1/§2</span>
   <button class="quit-btn" type="button" hx-post="/shutdown" hx-swap="outerHTML">Quit strand</button>
 </footer>
 {{end}}
