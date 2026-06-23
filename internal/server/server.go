@@ -68,6 +68,8 @@ type IssueSource interface {
 	Comment(ctx context.Context, id, text string) error
 	DepAdd(ctx context.Context, id, dependsOn string) error
 	DepRemove(ctx context.Context, id, dependsOn string) error
+	LabelAdd(ctx context.Context, id, label string) error
+	LabelRemove(ctx context.Context, id, label string) error
 	Create(ctx context.Context, opts *bd.CreateOpts) (*bd.Issue, error)
 	DeletePreview(ctx context.Context, id string) (string, error)
 	Delete(ctx context.Context, id string) error
@@ -172,6 +174,8 @@ func (s *Server) Routes() http.Handler {
 	s.mutate(mux, "POST /bead/{id}/comment", s.handleComment)
 	s.mutate(mux, "POST /bead/{id}/dep", s.handleDepAdd)
 	s.mutate(mux, "POST /bead/{id}/dep/remove", s.handleDepRemove)
+	s.mutate(mux, "POST /bead/{id}/label", s.handleLabelAdd)
+	s.mutate(mux, "POST /bead/{id}/label/remove", s.handleLabelRemove)
 	s.mutate(mux, "POST /bead/{id}/delete", s.handleDeletePreview)
 	s.mutate(mux, "DELETE /bead/{id}", s.handleDelete)
 	mux.HandleFunc("GET /new", s.handleNewForm)
@@ -1215,6 +1219,41 @@ func (s *Server) handleDepRemove(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleLabelAdd attaches a label from the drawer. A key-value pair posts as a
+// single `key=value` value; the form joins the two inputs, so this handler only
+// trims and forwards. Like the dep writes it returns no issue, so the redraw
+// re-reads — and renderDrawer reflows the chip list with the new label.
+func (s *Server) handleLabelAdd(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	label := labelFromForm(r)
+	s.writeAndRefresh(w, r, id, func(ctx context.Context, src IssueSource) (*bd.Issue, error) {
+		return nil, wrapWrite("label add", src.LabelAdd(ctx, id, label))
+	})
+}
+
+// handleLabelRemove detaches a label from the drawer's chip/pair list.
+func (s *Server) handleLabelRemove(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	label := strings.TrimSpace(r.FormValue("label"))
+	s.writeAndRefresh(w, r, id, func(ctx context.Context, src IssueSource) (*bd.Issue, error) {
+		return nil, wrapWrite("label remove", src.LabelRemove(ctx, id, label))
+	})
+}
+
+// labelFromForm reads the add form's value. A plain chip posts `label`; a
+// key-value pair posts `key` + `value`, which join into the `key=value` label
+// bd stores (the encoding the view layer owns). A bare key (no value) stays a
+// plain label so the field can't silently drop the `=`.
+func labelFromForm(r *http.Request) string {
+	if key := strings.TrimSpace(r.FormValue("key")); key != "" {
+		if val := strings.TrimSpace(r.FormValue("value")); val != "" {
+			return key + "=" + val
+		}
+		return key
+	}
+	return strings.TrimSpace(r.FormValue("label"))
+}
+
 // Parent-picker sentinels. The create form forces a deliberate parent choice:
 // the bead lands under an existing parent, off-trunk by explicit opt-out, or
 // under a parent minted inline. An empty value is no choice and is rejected, so
@@ -1670,6 +1709,22 @@ func (c *cachingSource) DepAdd(ctx context.Context, id, dependsOn string) error 
 
 func (c *cachingSource) DepRemove(ctx context.Context, id, dependsOn string) error {
 	err := c.IssueSource.DepRemove(ctx, id, dependsOn)
+	if err == nil {
+		c.cache.invalidate(c.repo)
+	}
+	return err
+}
+
+func (c *cachingSource) LabelAdd(ctx context.Context, id, label string) error {
+	err := c.IssueSource.LabelAdd(ctx, id, label)
+	if err == nil {
+		c.cache.invalidate(c.repo)
+	}
+	return err
+}
+
+func (c *cachingSource) LabelRemove(ctx context.Context, id, label string) error {
+	err := c.IssueSource.LabelRemove(ctx, id, label)
 	if err == nil {
 		c.cache.invalidate(c.repo)
 	}

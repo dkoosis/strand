@@ -40,10 +40,19 @@ type stubBD struct {
 	lastField string // the field/value of the most recent Update — lets the board
 	lastValue string // move test assert it issued the right bd update.
 
-	rankWrites []rankWrite // ordered log of SetRank calls, for the reorder tests.
-	depWrites  []depWrite  // ordered log of DepAdd/DepRemove calls, for the dep tests.
+	rankWrites  []rankWrite  // ordered log of SetRank calls, for the reorder tests.
+	depWrites   []depWrite   // ordered log of DepAdd/DepRemove calls, for the dep tests.
+	labelWrites []labelWrite // ordered log of LabelAdd/LabelRemove calls, for the label tests.
 
 	createOpts []bd.CreateOpts // ordered log of Create calls, for the create-path tests.
+}
+
+// labelWrite records one LabelAdd/LabelRemove call so a test can assert the
+// handler forwarded the right label (including an encoded key=value pair).
+type labelWrite struct {
+	op    string // "add" | "remove"
+	id    string
+	label string
 }
 
 // depWrite records one DepAdd/DepRemove call so a test can assert the handler
@@ -121,6 +130,39 @@ func (s *stubBD) DepRemove(_ context.Context, id, dependsOn string) error {
 		kept = append(kept, d)
 	}
 	s.deps = kept
+	return nil
+}
+
+// LabelAdd appends a label to the shown bead so the drawer re-read renders the new
+// chip; writeErr models a bd outage. labelWrites logs the call so a test can assert
+// the forwarded value (a key=value pair arrives already encoded).
+func (s *stubBD) LabelAdd(_ context.Context, id, label string) error {
+	if s.writeErr != nil {
+		return s.writeErr
+	}
+	s.labelWrites = append(s.labelWrites, labelWrite{op: "add", id: id, label: label})
+	if iss := s.show[id]; iss != nil {
+		iss.Labels = append(iss.Labels, label)
+	}
+	return nil
+}
+
+// LabelRemove drops the matching label so the re-read no longer renders its chip.
+func (s *stubBD) LabelRemove(_ context.Context, id, label string) error {
+	if s.writeErr != nil {
+		return s.writeErr
+	}
+	s.labelWrites = append(s.labelWrites, labelWrite{op: "remove", id: id, label: label})
+	if iss := s.show[id]; iss != nil {
+		kept := iss.Labels[:0]
+		for _, l := range iss.Labels {
+			if l == label {
+				continue
+			}
+			kept = append(kept, l)
+		}
+		iss.Labels = kept
+	}
 	return nil
 }
 
@@ -1553,6 +1595,71 @@ func TestDepRemoveDropsBlocker(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "No blockers") {
 		t.Errorf("drawer still lists a blocker after remove:\n%s", body)
+	}
+}
+
+// TestLabelAddChipReflects: adding a plain chip forwards the bare label and the
+// redrawn drawer renders it as a removable chip.
+func TestLabelAddChipReflects(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/label", "key=ui")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST label = %d, want 200", rec.Code)
+	}
+	if len(stub.labelWrites) != 1 || stub.labelWrites[0] != (labelWrite{op: "add", id: "demo-x", label: "ui"}) {
+		t.Errorf("label add issued %+v, want one add(demo-x, ui)", stub.labelWrites)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "dr-chip") || !strings.Contains(body, "ui") {
+		t.Errorf("redrawn drawer missing the new chip:\n%s", body)
+	}
+}
+
+// TestLabelAddKeyValueEncodes: a key + value pair joins into the `key=value`
+// label bd stores, and the redraw renders it as a key-value chip.
+func TestLabelAddKeyValueEncodes(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/label", "key=owner&value=dk")
+
+	if len(stub.labelWrites) != 1 || stub.labelWrites[0].label != "owner=dk" {
+		t.Errorf("label add issued %+v, want encoded owner=dk", stub.labelWrites)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "dr-chip-kv") {
+		t.Errorf("redrawn drawer missing the key-value chip:\n%s", body)
+	}
+}
+
+// TestLabelRemoveReflects: the chip's remove form forwards the raw label and the
+// redrawn drawer no longer renders it.
+func TestLabelRemoveReflects(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task", Labels: []string{"ui", "owner=dk"}})
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/label/remove", "label=owner%3Ddk")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST label remove = %d, want 200", rec.Code)
+	}
+	if len(stub.labelWrites) != 1 || stub.labelWrites[0] != (labelWrite{op: "remove", id: "demo-x", label: "owner=dk"}) {
+		t.Errorf("label remove issued %+v, want one remove(demo-x, owner=dk)", stub.labelWrites)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "owner") {
+		t.Errorf("drawer still renders the removed pair:\n%s", body)
+	}
+}
+
+// TestLabelAddError: a bd rejection surfaces in the drawer rather than a silent
+// 200-with-no-change.
+func TestLabelAddError(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	stub.writeErr = fmt.Errorf("bd label add: %w", bd.ErrBD)
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/label", "key=ui")
+
+	if !strings.Contains(rec.Body.String(), "label add") {
+		t.Errorf("rejected label add missing bd's message:\n%s", rec.Body.String())
 	}
 }
 

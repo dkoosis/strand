@@ -366,3 +366,54 @@ func TestDepEmptyIDsRejected(t *testing.T) {
 		t.Fatal("want error for empty target, got nil")
 	}
 }
+
+func TestLabelAddEmitsSubcommand(t *testing.T) {
+	c, log := fakeBD(t, ``)
+	if err := c.LabelAdd(context.Background(), "x-1", "ui"); err != nil {
+		t.Fatalf("LabelAdd: %v", err)
+	}
+	line := readLog(t, log)[0]
+	for _, want := range []string{"label", "add", "x-1", "ui"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("args %q missing %q", line, want)
+		}
+	}
+}
+
+// A key=value pair is just a label string — bd has no special support, so it
+// reaches `label add` verbatim.
+func TestLabelAddPassesKeyValueVerbatim(t *testing.T) {
+	c, log := fakeBD(t, ``)
+	if err := c.LabelAdd(context.Background(), "x-1", "owner=dk"); err != nil {
+		t.Fatalf("LabelAdd: %v", err)
+	}
+	if line := readLog(t, log)[0]; !strings.Contains(line, "owner=dk") {
+		t.Errorf("args %q missing key=value label", line)
+	}
+}
+
+func TestLabelRemoveEmitsSubcommand(t *testing.T) {
+	c, log := fakeBD(t, ``)
+	if err := c.LabelRemove(context.Background(), "x-1", "ui"); err != nil {
+		t.Fatalf("LabelRemove: %v", err)
+	}
+	line := readLog(t, log)[0]
+	for _, want := range []string{"label", "remove", "x-1", "ui"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("args %q missing %q", line, want)
+		}
+	}
+}
+
+func TestLabelEmptyArgsRejected(t *testing.T) {
+	c, _ := fakeBD(t, ``)
+	if err := c.LabelAdd(context.Background(), "", "ui"); err == nil {
+		t.Fatal("want error for empty id, got nil")
+	}
+	if err := c.LabelAdd(context.Background(), "x-1", ""); err == nil {
+		t.Fatal("want error for empty label, got nil")
+	}
+	if err := c.LabelRemove(context.Background(), "x-1", ""); err == nil {
+		t.Fatal("want error for empty label, got nil")
+	}
+}

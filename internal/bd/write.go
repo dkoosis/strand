@@ -183,6 +183,34 @@ func (c *Client) DepRemove(ctx context.Context, id, dependsOn string) error {
 	return err
 }
 
+// LabelAdd attaches label to an issue (bd label add <id> <label>). Labels are not
+// a single-value update flag — bd manages them with the add/remove subcommands —
+// so they route here, the way SetRank routes metadata outside updateFlags.
+// Key-value pairs are plain `key=value` label strings; bd gives them no special
+// support, so the view layer encodes/decodes them.
+func (c *Client) LabelAdd(ctx context.Context, id, label string) error {
+	if err := requireID(id, "label add"); err != nil {
+		return err
+	}
+	if label == "" {
+		return fmt.Errorf("label add: %w", ErrEmptyText)
+	}
+	_, err := c.run(ctx, "label", "add", id, label)
+	return err
+}
+
+// LabelRemove detaches label from an issue (bd label remove <id> <label>).
+func (c *Client) LabelRemove(ctx context.Context, id, label string) error {
+	if err := requireID(id, "label remove"); err != nil {
+		return err
+	}
+	if label == "" {
+		return fmt.Errorf("label remove: %w", ErrEmptyText)
+	}
+	_, err := c.run(ctx, "label", "remove", id, label)
+	return err
+}
+
 // Comment adds a comment to an issue (bd comment <id> "text").
 func (c *Client) Comment(ctx context.Context, id, text string) error {
 	if err := requireID(id, "comment"); err != nil {
