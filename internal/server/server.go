@@ -1297,17 +1297,50 @@ func newSnapshotCache(now func() time.Time) *snapshotCache {
 	return &snapshotCache{now: now, entries: map[string]*snapshot{}}
 }
 
-// live returns the repo's snapshot if present and within the TTL floor, else nil
-// (a miss). Caller holds nothing; live takes the lock itself.
-func (c *snapshotCache) live(repo string) *snapshot {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// entryLocked returns the repo's snapshot if present and within the TTL floor,
+// else nil (a miss). The caller MUST hold c.mu: putDeps mutates an entry's
+// deps/depsOK in place, so a reader that escapes the lock with the *snapshot
+// races that write (strand-4sd). The public accessors below copy the fields they
+// need out under the lock and never hand the pointer to a handler.
+func (c *snapshotCache) entryLocked(repo string) *snapshot {
 	e, ok := c.entries[repo]
 	if !ok || c.now().Sub(e.at) >= cacheTTL {
 		return nil
 	}
 	return e
 }
+
+// liveList returns the repo's cached list and true on a live snapshot. The slice
+// header is copied out under the lock; its backing array is the shared read-only
+// view (see the contract above putList), never mutated after publish.
+func (c *snapshotCache) liveList(repo string) ([]bd.Issue, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e := c.entryLocked(repo); e != nil {
+		return e.list, true
+	}
+	return nil, false
+}
+
+// liveDeps returns the repo-wide dependency edges and true only when a live
+// snapshot has them (depsOK). Read under the lock that putDeps writes under, so
+// the deps/depsOK fields never race; the returned slice is the shared read-only
+// view (see the contract above putList).
+func (c *snapshotCache) liveDeps(repo string) ([]bd.DepEdge, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e := c.entryLocked(repo); e != nil && e.depsOK {
+		return e.deps, true
+	}
+	return nil, false
+}
+
+// Shared-view contract (matches registry.Registry.Repos): a snapshot's list and
+// deps slices are published once and never mutated in place. liveList/liveDeps
+// hand the same backing array to every concurrent handler, which read it without
+// copying and filter into fresh slices. putList replaces the whole *snapshot on a
+// refresh rather than appending, so a handler holding an older slice keeps a
+// valid, immutable view. Callers must treat the returned slices as read-only.
 
 // putList records a fresh List result, opening the repo's snapshot and stamping it
 // with the fetch time the TTL ages against.
@@ -1350,8 +1383,8 @@ type cachingSource struct {
 // (or after the TTL lapses). The bead's reads pass no per-call filter that would
 // change the result (every caller uses allIssues), so one cached list is correct.
 func (c *cachingSource) List(ctx context.Context, args ...string) ([]bd.Issue, error) {
-	if e := c.cache.live(c.repo); e != nil {
-		return e.list, nil
+	if list, ok := c.cache.liveList(c.repo); ok {
+		return list, nil
 	}
 	list, err := c.IssueSource.List(ctx, args...)
 	if err != nil {
@@ -1368,8 +1401,8 @@ func (c *cachingSource) List(ctx context.Context, args ...string) ([]bd.Issue, e
 // structural views share one fetch. On a cold cache it fetches deps for the full
 // cached list's ids; if List hasn't run yet it falls back to the requested ids.
 func (c *cachingSource) Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, error) {
-	if e := c.cache.live(c.repo); e != nil && e.depsOK {
-		return e.deps, nil
+	if deps, ok := c.cache.liveDeps(c.repo); ok {
+		return deps, nil
 	}
 	fetchIDs := c.repoIDs(ids)
 	deps, err := c.IssueSource.Deps(ctx, fetchIDs...)
@@ -1384,13 +1417,13 @@ func (c *cachingSource) Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, 
 // one fetch covers all scopes), falling back to the caller's ids when the list
 // isn't cached yet (a Deps before any List — not a path the views take, but safe).
 func (c *cachingSource) repoIDs(reqIDs []string) []string {
-	e := c.cache.live(c.repo)
-	if e == nil || len(e.list) == 0 {
+	list, ok := c.cache.liveList(c.repo)
+	if !ok || len(list) == 0 {
 		return reqIDs
 	}
-	ids := make([]string, len(e.list))
-	for i := range e.list {
-		ids[i] = e.list[i].ID
+	ids := make([]string, len(list))
+	for i := range list {
+		ids[i] = list[i].ID
 	}
 	return ids
 }

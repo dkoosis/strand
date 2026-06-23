@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1395,6 +1396,72 @@ func TestSnapshotCacheRepoSwitchRescopes(t *testing.T) {
 	}
 	if srcB.listCalls != bBefore {
 		t.Errorf("repoB List spawned again (%d→%d) after switching away", bBefore, srcB.listCalls)
+	}
+}
+
+// TestSnapshotCacheConcurrentListDeps drives List and Deps on one repo's caching
+// source from many goroutines at once. Run under -race it trips if liveList /
+// liveDeps leak the shared *snapshot and a reader touches deps/depsOK while
+// putDeps writes them in place (strand-4sd). The first goroutines miss and fetch;
+// the rest are served from the snapshot — the point is the concurrent reads, not
+// the call count.
+func TestSnapshotCacheConcurrentListDeps(t *testing.T) {
+	src := &cachingSource{
+		IssueSource: &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}},
+		cache:       newSnapshotCache(func() time.Time { return cacheNow }),
+		repo:        "demo",
+	}
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	for range 50 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if _, err := src.List(ctx); err != nil {
+				t.Errorf("List: %v", err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if _, err := src.Deps(ctx, "demo-e1.a"); err != nil {
+				t.Errorf("Deps: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// TestSnapshotCacheTTLEviction exercises the TTL floor's true branch, which every
+// other cache test misses by freezing the clock: warm the snapshot, advance the
+// injected clock past cacheTTL, and prove the next read is a miss that re-fetches
+// (acceptance: TTL eviction covered). The clock is a mutable fake, not a real
+// sleep — the age check reads now()-at, so advancing now() is wall-clock truth
+// without the 3s wait.
+func TestSnapshotCacheTTLEviction(t *testing.T) {
+	src := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
+	clock := cacheNow
+	cache := newSnapshotCache(func() time.Time { return clock })
+	cs := &cachingSource{IssueSource: src, cache: cache, repo: "demo"}
+	ctx := context.Background()
+
+	if _, err := cs.List(ctx); err != nil { // miss → fetch #1
+		t.Fatalf("List: %v", err)
+	}
+	if _, err := cs.List(ctx); err != nil { // within TTL → served from snapshot
+		t.Fatalf("List: %v", err)
+	}
+	if src.listCalls != 1 {
+		t.Fatalf("List spawned %d times within TTL, want 1", src.listCalls)
+	}
+
+	clock = clock.Add(cacheTTL) // age the snapshot to exactly the floor → stale
+
+	if _, err := cs.List(ctx); err != nil { // miss → fetch #2
+		t.Fatalf("List: %v", err)
+	}
+	if src.listCalls != 2 {
+		t.Errorf("List spawned %d times after TTL lapse, want 2 — stale snapshot must re-fetch", src.listCalls)
 	}
 }
 
