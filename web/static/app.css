@@ -366,6 +366,25 @@ textarea.dr-desc { min-height: 11rem; line-height: 1.5; }
 .dr-dep-add button { font: inherit; font-size: var(--fs-8); padding: var(--s-2) var(--s-5); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; }
 .dr-dep-add button:hover { border-color: var(--st-open); color: var(--st-open); }
 
+/* drawer: editable label chips + key-value pairs */
+.dr-labels { display: flex; flex-wrap: wrap; gap: var(--s-2); margin: 0 0 var(--s-2); }
+.dr-labels .dr-note { width: 100%; margin: 0; }
+.dr-chip { display: inline-flex; align-items: center; gap: var(--s-2);
+  font-size: var(--fs-8); padding: var(--s-1) var(--s-2) var(--s-1) var(--s-3);
+  border: 1px solid var(--line); border-radius: 999px; background: var(--bg-2, var(--bg)); color: var(--ink-2); }
+.dr-chip .ck-key { color: var(--ink-2); }
+.dr-chip-kv { border-radius: 6px; }
+.dr-chip-kv .ck-key { color: var(--ink-3); }
+.dr-chip-kv .ck-key::after { content: "="; margin: 0 1px; color: var(--ink-4); }
+.dr-chip-kv .ck-val { color: var(--ink); font-weight: 600; }
+.dr-chip form { display: inline; margin: 0; }
+.ck-rm { font-size: var(--fs-base); line-height: 1; color: var(--ink-4); cursor: pointer; padding: 0; }
+.ck-rm:hover { color: var(--st-blocked, #ef4444); }
+.dr-label-add { display: flex; gap: var(--s-2); margin-top: var(--s-3); }
+.dr-label-add input { flex: 1; min-width: 0; font: inherit; font-size: var(--fs-base); padding: var(--s-2) var(--s-3); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+.dr-label-add button { font: inherit; font-size: var(--fs-8); padding: var(--s-2) var(--s-5); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; }
+.dr-label-add button:hover { border-color: var(--st-open); color: var(--st-open); }
+
 /* header: new-bead button */
 .newbead { font: inherit; font-size: var(--fs-8); font-weight: 500; padding: var(--s-2) var(--s-5); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; }
 .newbead:hover { border-color: var(--st-open); color: var(--st-open); }
