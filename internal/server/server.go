@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -136,7 +135,6 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /{$}", s.handleForest)
 	mux.HandleFunc("GET /list", s.handleList)
 	mux.HandleFunc("GET /board", s.handleBoard)
-	mux.HandleFunc("GET /graph", s.handleGraph)
 	mux.HandleFunc("GET /insights", s.handleInsights)
 	mux.HandleFunc("GET /bead/{id}", s.handleBead)
 	s.mutate(mux, "PATCH /bead/{id}", s.handleEdit)
@@ -664,98 +662,6 @@ func seedRanks(ctx context.Context, src IssueSource, order []string, present map
 	return nil
 }
 
-// graphData is the serialized dependency-graph model the fragment hands to
-// Cytoscape: a node per in-scope bead, an edge per kept "blocks" dependency, each
-// node carrying the gonum-computed metrics that drive size and highlight. The
-// client only lays out and draws (D8) — it computes nothing.
-type graphData struct {
-	Nodes []graphNode `json:"nodes"`
-	Edges []graphEdge `json:"edges"`
-}
-
-// graphNode is one bead: Score is its PageRank (node size — foundational beads
-// loom), InCycle marks a bead caught in a dependency cycle, OnPath a bead on the
-// single longest dependency chain (the critical path).
-type graphNode struct {
-	ID       string  `json:"id"`
-	Label    string  `json:"label"`
-	Status   string  `json:"status"`
-	Priority int     `json:"priority"`
-	Score    float64 `json:"score"`
-	InCycle  bool    `json:"inCycle"`
-	OnPath   bool    `json:"onPath"`
-}
-
-// graphEdge is one blocks dependency: Source (the dependent) is blocked by Target
-// (the dependency) — the DAG's "points at what it needs" direction.
-type graphEdge struct {
-	Source string `json:"source"`
-	Target string `json:"target"`
-}
-
-// graphView wraps the scope chrome (so the fragment reuses the list/board head)
-// with the marshaled model the client reads off a data-graph attribute. JSON is a
-// plain string so html/template escapes it for the attribute; the test reverses
-// that with html.UnescapeString.
-type graphView struct {
-	listView
-	JSON string
-}
-
-// handleGraph renders the dependency-graph view for the active scope (a region or
-// one epic), mirroring handleBoard. No repo or empty scope renders the same empty
-// pane the other views use.
-func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := reqContext(r)
-	defer cancel()
-	src, repo, ok := s.source()
-	if !ok {
-		s.render(w, "graph", graphView{})
-		return
-	}
-	f, err := s.buildForest(ctx, src, repo)
-	if err != nil {
-		s.renderError(w, err)
-		return
-	}
-	view := listViewFor(f, r.URL.Query().Get("epic"))
-	model, err := s.graphModel(ctx, src, &view)
-	if err != nil {
-		s.renderError(w, err)
-		return
-	}
-	s.render(w, "graph", graphView{listView: view, JSON: model})
-}
-
-// graphModel builds the serialized dependency graph for a scope. It uses the same
-// beads the table and board show (scopeBeads), fetches their dependencies, keeps
-// only the in-scope "blocks" edges, and folds in the gonum metrics. The edge
-// filter is load-bearing: bd's Deps can report an edge to a bead outside the scope
-// (its single-ID query synthesizes one), and dropping it keeps the DAG closed over
-// the visible nodes.
-func (s *Server) graphModel(ctx context.Context, src IssueSource, v *listView) (string, error) {
-	beads := scopeBeads(v)
-	ids, inScope := scopeIDs(beads)
-
-	gd := graphData{Edges: []graphEdge{}}
-	var compEdges []graph.Edge
-	if len(ids) > 0 {
-		deps, err := src.Deps(ctx, ids...)
-		if err != nil {
-			return "", fmt.Errorf("graph deps: %w", err)
-		}
-		compEdges, gd.Edges = blocksEdges(deps, inScope)
-	}
-	computed := graph.Compute(ids, compEdges)
-	gd.Nodes = metricNodes(beads, &computed)
-
-	raw, err := json.Marshal(gd)
-	if err != nil {
-		return "", fmt.Errorf("marshal graph: %w", err)
-	}
-	return string(raw), nil
-}
-
 // scopeIDs lists the scope's bead IDs and a membership set for the edge filter.
 func scopeIDs(beads []forest.Bead) ([]string, map[string]bool) {
 	ids := make([]string, len(beads))
@@ -767,69 +673,36 @@ func scopeIDs(beads []forest.Bead) ([]string, map[string]bool) {
 	return ids, in
 }
 
-// blocksEdges keeps the in-scope "blocks" dependencies, returning them as both
-// gonum compute-edges and serialized model edges. Edges of another type, or with
-// an endpoint outside the scope, are dropped so the DAG stays closed over the
-// visible nodes.
-func blocksEdges(deps []bd.DepEdge, inScope map[string]bool) ([]graph.Edge, []graphEdge) {
+// blocksEdges keeps the in-scope "blocks" dependencies as gonum compute-edges.
+// Edges of another type, or with an endpoint outside the scope, are dropped so the
+// DAG stays closed over the visible nodes.
+func blocksEdges(deps []bd.DepEdge, inScope map[string]bool) []graph.Edge {
 	compute := make([]graph.Edge, 0, len(deps))
-	model := make([]graphEdge, 0, len(deps))
 	for _, d := range deps {
 		if d.Type != "blocks" || !inScope[d.IssueID] || !inScope[d.DependsOnID] {
 			continue
 		}
 		compute = append(compute, graph.Edge{Dependent: d.IssueID, Dependency: d.DependsOnID})
-		model = append(model, graphEdge{Source: d.IssueID, Target: d.DependsOnID})
 	}
-	return compute, model
+	return compute
 }
 
-// metricNodes projects each scope bead to a graph node, folding in the metrics
-// that drive node size (PageRank) and highlight (cycle membership, critical path).
-func metricNodes(beads []forest.Bead, m *graph.Metrics) []graphNode {
-	inCycle := map[string]bool{}
-	for _, c := range m.Cycles {
-		for _, id := range c {
-			inCycle[id] = true
-		}
-	}
-	onPath := map[string]bool{}
-	for _, id := range m.CriticalPath {
-		onPath[id] = true
-	}
-	nodes := make([]graphNode, len(beads))
-	for i := range beads {
-		b := &beads[i]
-		nodes[i] = graphNode{
-			ID:       b.ID,
-			Label:    b.Title,
-			Status:   string(b.Status),
-			Priority: b.Priority,
-			Score:    m.PageRank[b.ID],
-			InCycle:  inCycle[b.ID],
-			OnPath:   onPath[b.ID],
-		}
-	}
-	return nodes
-}
-
-// insightsView wraps the scope chrome (so the fragment reuses the list/board/graph
+// insightsView wraps the scope chrome (so the fragment reuses the list/board
 // head) with the computed dashboard.
 type insightsView struct {
 	listView
 	Insights insights
 }
 
-// insights is the V4 dashboard (spec §10): quick-ref counts plus five panels over
+// insights is the V4 dashboard (spec §10): quick-ref counts plus the panels over
 // strand's own in-process metrics. Structural panels (Influence, Bottlenecks,
-// CritPath, Cycles) read the in-scope closed graph, mirroring V3; the triage counts
-// read all blockers (a bead can be blocked from outside the scope).
+// CritPath) read the in-scope closed graph; the triage counts read all blockers
+// (a bead can be blocked from outside the scope).
 type insights struct {
 	Counts     triageCounts
 	Influence  []rankedBead // top PageRank — foundational beads
 	Bottleneck []rankedBead // top betweenness — chokepoints
 	CritPath   []forest.Bead
-	Cycles     [][]string
 	Labels     []labelCount // label distribution over open beads, descending
 	Untagged   int          // open beads carrying no label at all
 }
@@ -860,7 +733,7 @@ const staleAfter = 14 * 24 * time.Hour
 const leaderboardSize = 5
 
 // handleInsights renders the V4 dashboard for the active scope (a region or one
-// epic), mirroring handleGraph. No repo or an empty scope renders the same empty
+// epic), mirroring handleBoard. No repo or an empty scope renders the same empty
 // pane the other views use. It lists once and reuses the issues for both the forest
 // (scope) and the metric/triage computation.
 func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
@@ -891,7 +764,7 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 // view. Deps drives both the in-scope structural graph and the all-blockers triage.
 func (s *Server) insightsModel(ctx context.Context, src IssueSource, v *listView, issues []bd.Issue) (insights, error) {
 	// Epics are containers, not actionable work: the dashboard is about the queue
-	// and the structure of real tasks, so it drops them (the graph view keeps them).
+	// and the structure of real tasks, so it drops them.
 	beads := actionable(scopeBeads(v))
 	ids, inScope := scopeIDs(beads)
 
@@ -902,14 +775,13 @@ func (s *Server) insightsModel(ctx context.Context, src IssueSource, v *listView
 			return insights{}, fmt.Errorf("insights deps: %w", err)
 		}
 	}
-	compEdges, _ := blocksEdges(deps, inScope)
+	compEdges := blocksEdges(deps, inScope)
 	m := graph.Compute(ids, compEdges)
 
 	idx := indexIssues(issues)
 	out := insights{
 		Counts:   triage(beads, deps, idx, s.now()),
 		CritPath: beadPath(m.CriticalPath, beadByID(beads)),
-		Cycles:   m.Cycles,
 		Labels:   labelHealth(beads, idx),
 		Untagged: untaggedOpen(beads, idx),
 	}
@@ -1375,8 +1247,8 @@ func (s *Server) synFor(repo registry.Repo) forest.Synthesis {
 }
 
 // snapshotCache holds one in-process read snapshot per repo, keyed by the repo's
-// path. Each view (forest/list/board/graph/insights) used to shell out to `bd
-// list --limit 0` (~0.5s, opens the Dolt store) and graph/insights added a `dep
+// path. Each view (forest/list/board/insights) used to shell out to `bd
+// list --limit 0` (~0.5s, opens the Dolt store) and insights added a `dep
 // list` call; the compute over the result is in-memory and negligible, so the bd
 // subprocess spawn is the whole cost, paid back-to-back through execMu on a
 // multi-fragment page. The snapshot folds the List result and the Deps result for
@@ -1404,7 +1276,7 @@ type snapshotCache struct {
 // snapshot is one repo's cached reads: the full `list --limit 0` result and the
 // repo-wide Deps result, stamped with the wall time they were fetched so the TTL
 // floor can age them out. List and Deps share one entry (and the TTL stamp set at
-// the List fetch) so forest/graph/insights are one logical snapshot — and Deps is
+// the List fetch) so forest/list/insights are one logical snapshot — and Deps is
 // fetched once over the whole repo, not per scope, so the second structural view
 // reuses the first's edges (depsOK distinguishes "no deps" from "not fetched yet").
 type snapshot struct {
