@@ -7,7 +7,6 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,7 +16,6 @@ import (
 
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/forest"
-	"github.com/dkoosis/strand/internal/graph"
 	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/web"
 )
@@ -1334,203 +1332,9 @@ var insightsDeps = []bd.DepEdge{
 	{IssueID: "demo-i.3", DependsOnID: "demo-i.2", Type: "blocks"},
 }
 
-// insScope returns the demo-i epic's beads and the full-repo issue index, the two
-// inputs the pure insight helpers take.
-func insScope(t *testing.T) ([]forest.Bead, map[string]bd.Issue) {
-	t.Helper()
-	f := forest.Build(insightsIssues, forest.Synthesis{Project: "demo"})
-	view := listViewFor(f, "demo-i")
-	if !view.HasEpic {
-		t.Fatal("fixture epic demo-i not found in forest")
-	}
-	// mirror insightsModel: the dashboard reasons over actionable work, not the
-	// epic container the forest folds into the scope.
-	return actionable(view.Epic.Beads), indexIssues(insightsIssues)
-}
-
-// TestTriageCounts pins the queue-shape math: ready/blocked weigh all blockers,
-// in-progress and stale are split out, and Total counts only live beads.
-func TestTriageCounts(t *testing.T) {
-	beads, idx := insScope(t)
-	got := triage(beads, blockerCounts(insightsDeps, idx), idx, insightsNow)
-	want := triageCounts{Total: 5, Open: 4, InProgress: 1, Ready: 2, Blocked: 2, Stale: 1}
-	if got != want {
-		t.Errorf("triage = %+v, want %+v", got, want)
-	}
-}
-
-// TestTriageAbsentBlockerIsResolved: a blocks-dep whose target isn't in the live
-// list (bd omits closed) must not keep the bead out of ready.
-func TestTriageAbsentBlockerIsResolved(t *testing.T) {
-	beads, idx := insScope(t)
-	deps := append(append([]bd.DepEdge(nil), insightsDeps...),
-		bd.DepEdge{IssueID: "demo-i.1", DependsOnID: "demo-gone", Type: "blocks"})
-	got := triage(beads, blockerCounts(deps, idx), idx, insightsNow)
-	if got.Ready != 2 || got.Blocked != 2 {
-		t.Errorf("absent blocker changed triage: ready=%d blocked=%d, want 2/2", got.Ready, got.Blocked)
-	}
-}
-
-// TestTriageExplicitlyBlocked: a bead bd reports with status "blocked" (not just
-// dependency-blocked) lands in Blocked, not lost between the open/in-progress cases.
-func TestTriageExplicitlyBlocked(t *testing.T) {
-	beads := []forest.Bead{{ID: "b1", Status: bd.StatusBlocked}}
-	idx := map[string]bd.Issue{"b1": {ID: "b1", Status: bd.StatusBlocked}}
-	got := triage(beads, blockerCounts(nil, idx), idx, insightsNow)
-	if got.Total != 1 || got.Blocked != 1 {
-		t.Errorf("explicitly blocked bead: got %+v, want Total=1 Blocked=1", got)
-	}
-}
-
-// TestIsStale: only live work past the cutoff is stale; a zero timestamp isn't.
-func TestIsStale(t *testing.T) {
-	cases := []struct {
-		name    string
-		status  bd.Status
-		updated time.Time
-		want    bool
-	}{
-		{"old open", "open", insStale, true},
-		{"fresh open", "open", insFresh, false},
-		{"old closed", "closed", insStale, false},
-		{"zero time", "open", time.Time{}, false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := isStale(c.status, c.updated, insightsNow); got != c.want {
-				t.Errorf("isStale = %v, want %v", got, c.want)
-			}
-		})
-	}
-}
-
-// TestLeaderboard: ranks by score descending, caps the list, and sizes the leader's
-// bar at 100%. The foundational bead (most depended-on) tops PageRank.
-func TestLeaderboard(t *testing.T) {
-	beads, _ := insScope(t)
-	compEdges := []graph.Edge{
-		{Dependent: "demo-i.2", Dependency: "demo-i.1"},
-		{Dependent: "demo-i.3", Dependency: "demo-i.2"},
-	}
-	m := graph.Compute([]string{"demo-i.1", "demo-i.2", "demo-i.3", "demo-i.4", "demo-i.5"}, compEdges)
-	board := leaderboard(beads, m.PageRank)
-	if len(board) == 0 {
-		t.Fatal("leaderboard empty; expected ranked beads")
-	}
-	if board[0].ID != "demo-i.1" {
-		t.Errorf("top influence = %s, want demo-i.1 (foundational)", board[0].ID)
-	}
-	if board[0].Width != 100 {
-		t.Errorf("leader bar = %d%%, want 100%%", board[0].Width)
-	}
-	for i := 1; i < len(board); i++ {
-		if board[i-1].Score < board[i].Score {
-			t.Errorf("leaderboard not descending at %d: %v < %v", i, board[i-1].Score, board[i].Score)
-		}
-	}
-}
-
-// TestLeaderboardEmptyWithoutEdges: an all-zero metric (no deps) yields no rows.
-func TestLeaderboardEmptyWithoutEdges(t *testing.T) {
-	beads, _ := insScope(t)
-	if board := leaderboard(beads, map[string]float64{}); len(board) != 0 {
-		t.Errorf("leaderboard over zero scores = %d rows, want 0", len(board))
-	}
-}
-
-// TestReadyQueue: the dispatch queue lists only ready beads (open, no open blocker),
-// ranked by influence (PageRank) descending, sized against the leader. In the fixture
-// demo-i.1 (foundational) and demo-i.5 (stale, no deps) are ready; the chained i.2/i.3
-// are blocked and the in-progress i.4 is not ready.
-func TestReadyQueue(t *testing.T) {
-	beads, idx := insScope(t)
-	m := graph.Compute(
-		[]string{"demo-i.1", "demo-i.2", "demo-i.3", "demo-i.4", "demo-i.5"},
-		[]graph.Edge{
-			{Dependent: "demo-i.2", Dependency: "demo-i.1"},
-			{Dependent: "demo-i.3", Dependency: "demo-i.2"},
-		})
-	q := readyQueue(beads, blockerCounts(insightsDeps, idx), idx, m.PageRank, insightsNow)
-	ids := make([]string, len(q))
-	for i := range q {
-		ids[i] = q[i].ID
-	}
-	if !slices.Contains(ids, "demo-i.1") || !slices.Contains(ids, "demo-i.5") {
-		t.Fatalf("ready queue = %v, want demo-i.1 and demo-i.5", ids)
-	}
-	if slices.Contains(ids, "demo-i.2") || slices.Contains(ids, "demo-i.3") || slices.Contains(ids, "demo-i.4") {
-		t.Errorf("ready queue leaked a non-ready bead: %v", ids)
-	}
-	if q[0].ID != "demo-i.1" {
-		t.Errorf("ready queue top = %s, want demo-i.1 (most influence)", q[0].ID)
-	}
-	if q[0].Width != 100 {
-		t.Errorf("ready leader bar = %d%%, want 100%%", q[0].Width)
-	}
-	// The stale ready bead carries the stale cross-flag.
-	for _, b := range q {
-		if b.ID == "demo-i.5" && !b.Stale {
-			t.Error("ready bead demo-i.5 should carry the stale cross-flag")
-		}
-	}
-}
-
-// TestCrossFlag: a leaderboard row whose bead is also blocked/stale gets marked —
-// the one act-now signal. demo-i.2 tops betweenness and is blocked by demo-i.1, so
-// it carries the Blocked flag.
-func TestCrossFlag(t *testing.T) {
-	beads, idx := insScope(t)
-	m := graph.Compute(
-		[]string{"demo-i.1", "demo-i.2", "demo-i.3", "demo-i.4", "demo-i.5"},
-		[]graph.Edge{
-			{Dependent: "demo-i.2", Dependency: "demo-i.1"},
-			{Dependent: "demo-i.3", Dependency: "demo-i.2"},
-		})
-	board := crossFlag(leaderboard(beads, m.Betweenness), blockerCounts(insightsDeps, idx), idx, insightsNow)
-	var mid *rankedBead
-	for i := range board {
-		if board[i].ID == "demo-i.2" {
-			mid = &board[i]
-		}
-	}
-	if mid == nil {
-		t.Fatal("demo-i.2 not in bottleneck board")
-	}
-	if !mid.Blocked {
-		t.Error("demo-i.2 is dependency-blocked; want Blocked cross-flag set")
-	}
-}
-
-// TestLabelHealth: counts labels over open beads (in-progress excluded), descending
-// by count then name, and flags untagged open beads.
-func TestLabelHealth(t *testing.T) {
-	beads, idx := insScope(t)
-	labels := labelHealth(beads, idx)
-	want := []labelCount{{Label: "core", Count: 2}, {Label: "ui", Count: 2}}
-	if len(labels) != len(want) {
-		t.Fatalf("labelHealth = %+v, want %+v", labels, want)
-	}
-	for i := range want {
-		if labels[i] != want[i] {
-			t.Errorf("label[%d] = %+v, want %+v", i, labels[i], want[i])
-		}
-	}
-	if n := untaggedOpen(beads, idx); n != 1 {
-		t.Errorf("untaggedOpen = %d, want 1 (demo-i.5)", n)
-	}
-}
-
-// TestBeadPath resolves the critical-path ids to scope beads, dropping unknowns.
-func TestBeadPath(t *testing.T) {
-	beads, _ := insScope(t)
-	path := beadPath([]string{"demo-i.3", "demo-i.2", "demo-i.1", "demo-gone"}, beadByID(beads))
-	if len(path) != 3 {
-		t.Fatalf("beadPath len = %d, want 3 (unknown dropped)", len(path))
-	}
-	if path[0].ID != "demo-i.3" || path[2].ID != "demo-i.1" {
-		t.Errorf("beadPath order wrong: %s..%s", path[0].ID, path[2].ID)
-	}
-}
+// The pure analytics tests (triage/leaderboard/rank math/label health) moved to
+// internal/insight with the domain logic they cover (str-hh4). The fixtures above
+// stay because the handler tests below still drive the /insights render path.
 
 // TestInsightsFragmentRenders: the dashboard returns its panels, the scope marker
 // app.js reads to keep the top tab strip on Insights at this epic, and the computed
