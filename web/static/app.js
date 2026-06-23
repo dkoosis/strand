@@ -33,6 +33,94 @@ document.addEventListener("mouseover", (e) => {
 });
 document.querySelector(".treemap")?.addEventListener("mouseleave", idleHint);
 
+// ---- view-centric chrome: tab strip + minimap filter ----
+// The active VIEW (Table/Board/Insights) is the centerpiece; the tab strip up top
+// is the primary control, and the treemap is a demoted ambient minimap. Two pieces
+// of state drive it: which view is active and which epic (if any) it's scoped to.
+// Both live on #viewport's data-attrs and are re-synced from each swapped fragment's
+// pane-head, so a minimap click filters whatever view is active — not just the list.
+const viewport = document.getElementById("viewport");
+const VIEW_PATHS = { list: "/list", board: "/board", insights: "/insights" };
+
+// activeView/activeEpic read the single source of truth on #viewport.
+function activeView() {
+  return viewport?.dataset.view || "list";
+}
+function activeEpic() {
+  return viewport?.dataset.epic || "";
+}
+// viewURL builds the fragment endpoint for a view scoped to an epic (or the whole
+// forest when epic is empty). One place owns the ?epic= shape so tabs and minimap
+// clicks can't drift.
+function viewURL(view, epic) {
+  const path = VIEW_PATHS[view] || VIEW_PATHS.list;
+  return epic ? `${path}?epic=${encodeURIComponent(epic)}` : path;
+}
+// syncChrome reflects the active view+epic into the chrome: the tab strip's pressed
+// state, the scope hint, and the minimap's "all" clear affordance.
+function syncChrome() {
+  const view = activeView();
+  const epic = activeEpic();
+  document.querySelectorAll(".viewtab").forEach((tab) => {
+    const on = tab.dataset.view === view;
+    tab.classList.toggle("active", on);
+    tab.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+  const hint = document.getElementById("scopeHint");
+  if (hint) {
+    const name = epic
+      ? document.querySelector(`.tile[data-epic="${CSS.escape(epic)}"]`)?.dataset.name
+      : "";
+    hint.textContent = epic ? `Filtered · ${name || epic}` : "Whole forest";
+  }
+  const clear = document.getElementById("mmClear");
+  if (clear) clear.hidden = !epic;
+  document.querySelectorAll(".mm-filter").forEach((el) => {
+    el.classList.toggle("on", !!epic && el.dataset.epic === epic);
+  });
+}
+// A tab click loads its view at the CURRENT scope. The button's hx-get is static
+// (the bare view), so rewrite it just before htmx fires to carry the active epic.
+document.body.addEventListener("htmx:configRequest", (e) => {
+  const tab = e.detail.elt.closest?.(".viewtab");
+  if (tab) e.detail.path = viewURL(tab.dataset.view, activeEpic());
+});
+// A minimap region/epic click filters the ACTIVE view to that scope (spec §2). An
+// epic tile scopes to its id; a region head clears the scope (the whole region is
+// the forest's first region). Routes through htmx.ajax so the active view's
+// endpoint renders, not a hardcoded /list.
+function minimapFilter(el) {
+  const epic = el.dataset.epic || "";
+  viewport.dataset.epic = epic;
+  htmx.ajax("GET", viewURL(activeView(), epic), { target: "#listPane", swap: "innerHTML" });
+}
+document.addEventListener("click", (e) => {
+  const f = e.target.closest(".mm-filter");
+  if (f) minimapFilter(f);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const f = e.target.closest?.(".mm-filter");
+  if (f) {
+    e.preventDefault();
+    minimapFilter(f);
+  }
+});
+// After any centerpiece swap, re-read the fragment's own scope (pane-head carries
+// data-view/data-epic) into #viewport, so the chrome and the minimap highlight
+// follow the truth the server just rendered — including a tab click that changed
+// the view, or the refreshList re-render.
+document.body.addEventListener("htmx:afterSwap", (e) => {
+  if (e.detail.target.id !== "listPane") return;
+  const head = e.detail.target.querySelector(".pane-head[data-view]");
+  if (head) {
+    viewport.dataset.view = head.dataset.view;
+    viewport.dataset.epic = head.dataset.epic || "";
+  }
+  syncChrome();
+});
+syncChrome();
+
 // ---- repo selector ----
 // The header button loads the menu fragment into #repoMenu over htmx; show it
 // once the fragment lands and dismiss it on an outside click. Picking a repo
