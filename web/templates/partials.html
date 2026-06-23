@@ -277,7 +277,7 @@
       {{else}}<span class="ck-key">{{$l.Key}}</span>{{end}}
       <form hx-post="/bead/{{$.ID}}/label/remove" hx-target="#drawer">
         <input type="hidden" name="label" value="{{$l.Raw}}">
-        <button class="ck-rm icon-btn" type="submit" aria-label="remove label {{$l.Raw}}">×</button>
+        <button class="ck-rm" type="submit" aria-label="remove label {{$l.Raw}}">×</button>
       </form>
     </span>
     {{else}}
