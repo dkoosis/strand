@@ -250,17 +250,22 @@ header {
 .list-body { flex: 1; overflow: auto; min-height: 0; }
 .epic-group { border-bottom: 1px solid var(--line); }
 .eg-head {
-  position: sticky; top: 0; z-index: 1; display: flex; align-items: baseline; gap: var(--s-3);
+  position: sticky; top: 0; z-index: 1; display: flex; align-items: baseline; gap: var(--s-3); min-width: 0;
   padding: var(--s-3) var(--s-6); background: var(--bg-2);
-  font-size: var(--fs-9); letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); font-weight: 600;
+  font-size: var(--fs-8); letter-spacing: .01em; color: var(--ink-2); font-weight: 600;
   border-bottom: 1px solid var(--line); cursor: pointer;
 }
-.eg-head .eo { margin-left: auto; color: var(--ink-2); }
+/* one-line clamp so a long epic title never wraps to two lines (str-6k0.5) */
+.eg-head .eg-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eg-head .eo { margin-left: auto; color: var(--ink-3); flex: 0 0 auto; }
 .eg-head:hover { color: var(--ink); }
 table { width: 100%; border-collapse: collapse; }
 tbody td { padding: 0 var(--s-4); height: 33px; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; color: var(--ink-2); }
 tbody tr { cursor: pointer; }
 tbody tr:hover td { background: var(--bg-2); }
+/* keyboard focus is visible on the now-focusable rows (role=button, str-6k0.5) */
+tbody tr:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.eg-head:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .r-id { color: var(--ink-4); font-size: var(--fs-9); width: 92px; padding-left: var(--s-6) !important; }
 .r-pri { width: 26px; }
 .pchip { display: inline-block; width: 20px; text-align: center; font-size: 10px; font-weight: 600;
@@ -310,6 +315,7 @@ tbody tr:hover td { background: var(--bg-2); }
   padding: var(--s-3) var(--s-4); cursor: grab; transition: border-color .1s;
 }
 .bcard:hover { border-color: var(--st-open); }
+.bcard:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .bcard:active { cursor: grabbing; }
 .bc-title { font-size: var(--fs-base); font-weight: 500; color: var(--ink); line-height: 1.3; margin-bottom: var(--s-3); }
 .bc-foot { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; }
@@ -340,7 +346,7 @@ tbody tr:hover td { background: var(--bg-2); }
 
 /* editable detail panel (V1 writes) */
 .dr-title-edit { margin: var(--s-4) 0 0; }
-input.dr-title { width: 100%; border: 1px solid transparent; border-radius: 6px; background: transparent; padding: var(--s-2) var(--s-3); margin-left: calc(-1 * var(--s-3)); }
+input.dr-title { width: 100%; border: 1px solid transparent; border-radius: 6px; background: transparent; padding: var(--s-2) var(--s-3); margin-left: calc(-1 * var(--s-3)); text-overflow: ellipsis; }
 input.dr-title:hover { border-color: var(--line); }
 input.dr-title:focus { border-color: var(--st-open); outline: none; background: var(--bg); }
 .dr-err { margin: var(--s-4) 0 0; padding: var(--s-3) var(--s-4); border-radius: 6px; background: color-mix(in srgb, var(--st-blocked) 12%, transparent); color: var(--st-blocked); font-size: var(--fs-8); }
