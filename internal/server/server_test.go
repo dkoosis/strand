@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -38,6 +39,15 @@ type stubBD struct {
 
 	lastField string // the field/value of the most recent Update — lets the board
 	lastValue string // move test assert it issued the right bd update.
+
+	rankWrites []rankWrite // ordered log of SetRank calls, for the reorder tests.
+}
+
+// rankWrite records one SetRank call so a test can assert the handler issued the
+// minimal write (one midpoint) or the full reseed (dense 1..N).
+type rankWrite struct {
+	id   string
+	rank float64
 }
 
 func (s *stubBD) List(context.Context, ...string) ([]bd.Issue, error) {
@@ -134,6 +144,26 @@ func (s *stubBD) Update(_ context.Context, id, field, value string) (*bd.Issue, 
 		iss.Status = value
 	}
 	return iss, nil
+}
+
+// SetRank logs the write and reflects it in the issue list so a follow-up
+// buildForest re-read sees the new rank — mirroring bd's metadata round-trip.
+// writeErr models a bd outage: the list is left untouched and the handler must
+// surface the error rather than report a phantom reorder.
+func (s *stubBD) SetRank(_ context.Context, id string, rank float64) (*bd.Issue, error) {
+	if s.writeErr != nil {
+		return nil, s.writeErr
+	}
+	s.rankWrites = append(s.rankWrites, rankWrite{id, rank})
+	for i := range s.issues {
+		if s.issues[i].ID == id {
+			if s.issues[i].Metadata == nil {
+				s.issues[i].Metadata = map[string]any{}
+			}
+			s.issues[i].Metadata["rank"] = rank
+		}
+	}
+	return nil, nil //nolint:nilnil // bd may answer silently; the handler re-reads, not this value.
 }
 
 func (s *stubBD) Claim(_ context.Context, id string) (*bd.Issue, error) {
@@ -337,6 +367,189 @@ func TestBoardMoveErrorReverts(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "error-fragment") {
 		t.Errorf("rejected move missing the error fragment:\n%s", rec.Body.String())
+	}
+}
+
+// rankedEpic is a fully-ranked epic group (root included — it's a member of its
+// own list), the post-seed state where midpoint inserts apply. Ranks are 1..4 in
+// id order so the rank order and the obvious reading order line up.
+func rankedEpic() []bd.Issue {
+	return []bd.Issue{
+		{ID: "r-1", Title: "Ranked epic", IssueType: "epic", Status: "open", Priority: 1, Metadata: map[string]any{"rank": 1.0}},
+		{ID: "r-1.a", Parent: "r-1", Title: "A", Status: "open", Priority: 0, Metadata: map[string]any{"rank": 2.0}},
+		{ID: "r-1.b", Parent: "r-1", Title: "B", Status: "open", Priority: 2, Metadata: map[string]any{"rank": 3.0}},
+		{ID: "r-1.c", Parent: "r-1", Title: "C", Status: "open", Priority: 2, Metadata: map[string]any{"rank": 4.0}},
+	}
+}
+
+// rankOf returns the rank a SetRank call wrote for id, or NaN if the handler never
+// touched it — so a test can assert both the value and that nothing else moved.
+func rankOf(writes []rankWrite, id string) float64 {
+	for _, w := range writes {
+		if w.id == id {
+			return w.rank
+		}
+	}
+	return math.NaN()
+}
+
+// TestRankSeedsUntouchedGroup: the first drag on an epic with no manual rank yet
+// seeds dense ranks 1..N over the post-drop order, turning the whole group ranked
+// in one pass (the sortBeads invariant). Success is 204 — the client keeps its
+// optimistic DOM.
+func TestRankSeedsUntouchedGroup(t *testing.T) {
+	stub := &stubBD{issues: append([]bd.Issue(nil), sampleIssues...)}
+	srv := newTestServer(t, stub)
+	// demo-e1 group is {demo-e1, demo-e1.a, demo-e1.b}; drop b to the front.
+	rec := send(t, srv, http.MethodPost, "/bead/demo-e1.b/rank",
+		"order=demo-e1.b,demo-e1.a,demo-e1")
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("seed reorder = %d, want 204", rec.Code)
+	}
+	want := []rankWrite{{"demo-e1.b", 1}, {"demo-e1.a", 2}, {"demo-e1", 3}}
+	if len(stub.rankWrites) != len(want) {
+		t.Fatalf("seed wrote %v, want dense 1..3 over the order", stub.rankWrites)
+	}
+	for i, w := range want {
+		if stub.rankWrites[i] != w {
+			t.Errorf("seed write %d = %+v, want %+v", i, stub.rankWrites[i], w)
+		}
+	}
+}
+
+// TestRankSeedSkipsAbsentID: an id in the posted order that the forest no longer
+// yields (closed mid-drag) gets no rank write — only the live survivors are seeded,
+// and they stay dense.
+func TestRankSeedSkipsAbsentID(t *testing.T) {
+	stub := &stubBD{issues: append([]bd.Issue(nil), sampleIssues...)}
+	srv := newTestServer(t, stub)
+	// "ghost" is not in the forest; the live demo-e1 group is the other three.
+	rec := send(t, srv, http.MethodPost, "/bead/demo-e1.b/rank",
+		"order=demo-e1.b,ghost,demo-e1.a,demo-e1")
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("seed-with-absent reorder = %d, want 204", rec.Code)
+	}
+	if !math.IsNaN(rankOf(stub.rankWrites, "ghost")) {
+		t.Errorf("wrote a rank to the absent id: %v", stub.rankWrites)
+	}
+	want := []rankWrite{{"demo-e1.b", 1}, {"demo-e1.a", 2}, {"demo-e1", 3}}
+	if len(stub.rankWrites) != len(want) {
+		t.Fatalf("seed wrote %v, want dense 1..3 over live ids only", stub.rankWrites)
+	}
+	for i, w := range want {
+		if stub.rankWrites[i] != w {
+			t.Errorf("seed write %d = %+v, want %+v", i, stub.rankWrites[i], w)
+		}
+	}
+}
+
+// TestRankMidpointInsert: a single move inside an already-ranked group writes one
+// bead to the midpoint of its new neighbors — not a full reseed.
+func TestRankMidpointInsert(t *testing.T) {
+	stub := &stubBD{issues: rankedEpic()}
+	srv := newTestServer(t, stub)
+	// Move r-1.c between r-1 (rank 1) and r-1.a (rank 2): midpoint 1.5.
+	rec := send(t, srv, http.MethodPost, "/bead/r-1.c/rank",
+		"order=r-1,r-1.c,r-1.a,r-1.b")
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("midpoint reorder = %d, want 204", rec.Code)
+	}
+	if len(stub.rankWrites) != 1 {
+		t.Fatalf("midpoint wrote %v, want exactly one", stub.rankWrites)
+	}
+	if got := rankOf(stub.rankWrites, "r-1.c"); got != 1.5 {
+		t.Errorf("moved bead rank = %v, want 1.5", got)
+	}
+}
+
+// TestRankHeadAndTailEdges: dropping a bead at either end ranks it one step past
+// the edge it now leads or trails, with no priority floor to collide with.
+func TestRankHeadAndTailEdges(t *testing.T) {
+	t.Run("head", func(t *testing.T) {
+		stub := &stubBD{issues: rankedEpic()}
+		srv := newTestServer(t, stub)
+		// r-1.c to the front: just below r-1 (rank 1) → 0.
+		rec := send(t, srv, http.MethodPost, "/bead/r-1.c/rank",
+			"order=r-1.c,r-1,r-1.a,r-1.b")
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("head reorder = %d, want 204", rec.Code)
+		}
+		if len(stub.rankWrites) != 1 || rankOf(stub.rankWrites, "r-1.c") != 0 {
+			t.Errorf("head writes = %v, want one {r-1.c 0}", stub.rankWrites)
+		}
+	})
+	t.Run("tail", func(t *testing.T) {
+		stub := &stubBD{issues: rankedEpic()}
+		srv := newTestServer(t, stub)
+		// r-1 to the back: just above r-1.c (rank 4) → 5.
+		rec := send(t, srv, http.MethodPost, "/bead/r-1/rank",
+			"order=r-1.a,r-1.b,r-1.c,r-1")
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("tail reorder = %d, want 204", rec.Code)
+		}
+		if len(stub.rankWrites) != 1 || rankOf(stub.rankWrites, "r-1") != 5 {
+			t.Errorf("tail writes = %v, want one {r-1 5}", stub.rankWrites)
+		}
+	})
+}
+
+// TestRankRenormalizesOnExhaustion: when the new neighbors sit on adjacent floats,
+// no midpoint exists, so the handler reseeds the whole group dense instead of
+// writing a colliding rank.
+func TestRankRenormalizesOnExhaustion(t *testing.T) {
+	tight := rankedEpic()
+	tight[1].Metadata["rank"] = math.Nextafter(1, 2) // r-1.a one ulp above r-1
+	stub := &stubBD{issues: tight}
+	srv := newTestServer(t, stub)
+	// Drop r-1.c between r-1 (1) and r-1.a (1+ulp): the midpoint rounds back to 1.
+	rec := send(t, srv, http.MethodPost, "/bead/r-1.c/rank",
+		"order=r-1,r-1.c,r-1.a,r-1.b")
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("renorm reorder = %d, want 204", rec.Code)
+	}
+	if len(stub.rankWrites) != 4 {
+		t.Fatalf("exhausted midpoint wrote %v, want a full 4-bead reseed", stub.rankWrites)
+	}
+	for i, id := range []string{"r-1", "r-1.c", "r-1.a", "r-1.b"} {
+		if stub.rankWrites[i] != (rankWrite{id, float64(i + 1)}) {
+			t.Errorf("reseed %d = %+v, want {%s %d}", i, stub.rankWrites[i], id, i+1)
+		}
+	}
+}
+
+// TestRankErrorReverts: a bd write failure returns non-2xx with the error
+// fragment, the client's signal to revert the optimistic drag.
+func TestRankErrorReverts(t *testing.T) {
+	stub := &stubBD{issues: rankedEpic()}
+	stub.writeErr = fmt.Errorf("bd update r-1.c: %w", bd.ErrBD)
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/bead/r-1.c/rank",
+		"order=r-1,r-1.c,r-1.a,r-1.b")
+
+	if rec.Code == http.StatusNoContent {
+		t.Fatal("rejected reorder returned 204; client would not revert")
+	}
+	if !strings.Contains(rec.Body.String(), "error-fragment") {
+		t.Errorf("rejected reorder missing the error fragment:\n%s", rec.Body.String())
+	}
+}
+
+// TestRankSingleIDNoOp: an order of one id has nothing to reorder, so the handler
+// short-circuits to 204 without touching bd.
+func TestRankSingleIDNoOp(t *testing.T) {
+	stub := &stubBD{issues: rankedEpic()}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/bead/r-1.a/rank", "order=r-1.a")
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("single-id reorder = %d, want 204", rec.Code)
+	}
+	if len(stub.rankWrites) != 0 {
+		t.Errorf("single-id reorder wrote %v, want no bd calls", stub.rankWrites)
 	}
 }
 

@@ -73,6 +73,41 @@ func TestBuildBeadsSortPriorityThenID(t *testing.T) {
 	}
 }
 
+// A manually-ranked epic orders by rank (ascending), overriding priority. The
+// rank lives in bd metadata; a P3 ranked ahead of a P0 leads the list.
+func TestBuildRankedEpicSortsByRank(t *testing.T) {
+	// The seed invariant ranks every member, including the epic root (a member of
+	// its own list, P2 here), so the group is wholly rank-ordered.
+	issues := []bd.Issue{
+		{ID: "p-1", Title: "E", IssueType: "epic", Status: "open", Priority: 2, Metadata: map[string]any{"rank": 4.0}},
+		{ID: "p-1.a", Parent: "p-1", Status: "open", Priority: 0, Metadata: map[string]any{"rank": 3.0}},
+		{ID: "p-1.b", Parent: "p-1", Status: "open", Priority: 3, Metadata: map[string]any{"rank": 1.0}},
+		{ID: "p-1.c", Parent: "p-1", Status: "open", Priority: 1, Metadata: map[string]any{"rank": 2.0}},
+	}
+	f := Build(issues, Synthesis{Project: "demo"})
+	beads := f.Regions[0].Epics[0].Beads
+	want := []string{"p-1.b", "p-1.c", "p-1.a", "p-1"} // rank 1,2,3,4 — not priority order
+	for i, id := range want {
+		if beads[i].ID != id {
+			t.Errorf("bead[%d] = %s, want %s", i, beads[i].ID, id)
+		}
+	}
+}
+
+// Equal ranks tiebreak by id, deterministically.
+func TestBuildRankTiebreaksByID(t *testing.T) {
+	issues := []bd.Issue{
+		{ID: "p-1", Title: "E", IssueType: "epic", Status: "open", Priority: 2, Metadata: map[string]any{"rank": 9.0}},
+		{ID: "p-1.y", Parent: "p-1", Status: "open", Priority: 0, Metadata: map[string]any{"rank": 5.0}},
+		{ID: "p-1.x", Parent: "p-1", Status: "open", Priority: 0, Metadata: map[string]any{"rank": 5.0}},
+	}
+	f := Build(issues, Synthesis{Project: "demo"})
+	beads := f.Regions[0].Epics[0].Beads
+	if beads[0].ID != "p-1.x" || beads[1].ID != "p-1.y" {
+		t.Errorf("equal ranks should tiebreak by id: got %s, %s", beads[0].ID, beads[1].ID)
+	}
+}
+
 // TestBuildEmptyHasNoRegions: a workspace with no live work yields an empty
 // forest, not a region with zero tiles.
 func TestBuildEmptyHasNoRegions(t *testing.T) {

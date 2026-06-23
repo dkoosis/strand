@@ -67,6 +67,7 @@ type IssueSource interface {
 	Update(ctx context.Context, id, field, value string) (*bd.Issue, error)
 	Claim(ctx context.Context, id string) (*bd.Issue, error)
 	Close(ctx context.Context, id, reason string) (*bd.Issue, error)
+	SetRank(ctx context.Context, id string, rank float64) (*bd.Issue, error)
 	Comment(ctx context.Context, id, text string) error
 	Create(ctx context.Context, opts bd.CreateOpts) (*bd.Issue, error)
 	DeletePreview(ctx context.Context, id string) (string, error)
@@ -135,6 +136,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /bead/{id}", s.handleBead)
 	s.mutate(mux, "PATCH /bead/{id}", s.handleEdit)
 	s.mutate(mux, "POST /bead/{id}/move", s.handleMove)
+	s.mutate(mux, "POST /bead/{id}/rank", s.handleRank)
 	s.mutate(mux, "POST /bead/{id}/claim", s.handleClaim)
 	s.mutate(mux, "POST /bead/{id}/close", s.handleClose)
 	s.mutate(mux, "POST /bead/{id}/reopen", s.handleReopen)
@@ -466,6 +468,193 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.render(w, "boardCard", forest.NewBead(issue))
+}
+
+// handleRank persists a drag-to-reorder of the V1 bead list. SortableJS posts only
+// the post-drop order (comma-separated ids of the affected epic group); the server
+// is authoritative — it re-reads ranks from bd, computes the minimal write, and
+// stores it back as bd metadata (D5). The client keeps its optimistic DOM, so on
+// success the response is 204 (no swap, no Sortable re-init churn); a write error
+// renders the error fragment at a non-2xx status, the client's revert signal.
+//
+// Two write paths preserve the pure-rank-after-seed invariant (forest.sortBeads):
+// a group with no manual rank yet is seeded with dense ranks 1..N over the new
+// order; an already-ranked group moves one bead to the midpoint of its new
+// neighbors (or just past an edge), renormalizing the whole group only when float
+// space between neighbors is exhausted.
+func (s *Server) handleRank(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := reqContext(r)
+	defer cancel()
+	src, repo, ok := s.source()
+	if !ok {
+		s.renderError(w, errNoRepo)
+		return
+	}
+	order := splitIDs(r.FormValue("order"))
+	if len(order) <= 1 {
+		w.WriteHeader(http.StatusNoContent) // nothing to order
+		return
+	}
+
+	f, err := s.buildForest(ctx, src, repo)
+	if err != nil {
+		s.renderError(w, err)
+		return
+	}
+	ranks, present, allRanked := groupRanks(f, order)
+
+	if !allRanked {
+		if err := seedRanks(ctx, src, order, present); err != nil {
+			s.renderError(w, err) // seedRanks already wraps with wrapWrite
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	moved := movedID(order, ranks)
+	newRank, renorm := rankFor(order, ranks, moved)
+	if renorm {
+		if err := seedRanks(ctx, src, order, present); err != nil {
+			s.renderError(w, err) // seedRanks already wraps with wrapWrite
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if _, err := src.SetRank(ctx, moved, newRank); err != nil {
+		s.renderError(w, wrapWrite("rank", err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// splitIDs parses a comma-separated id list, dropping blanks so a trailing comma
+// or empty field never yields a phantom "" id.
+func splitIDs(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// walkBeads visits every bead in the forest. It flattens the region/epic/bead
+// nesting so callers read as one loop, not three.
+func walkBeads(f forest.Forest, fn func(forest.Bead)) {
+	for ri := range f.Regions {
+		for ei := range f.Regions[ri].Epics {
+			for _, b := range f.Regions[ri].Epics[ei].Beads {
+				fn(b)
+			}
+		}
+	}
+}
+
+// groupRanks reads the current rank of every id in order from the forest and
+// reports which ids the forest actually yielded (present) and whether the whole
+// group is already manually ranked. A group that is not wholly ranked must be
+// seeded, not midpoint-inserted (the sortBeads invariant). An id the forest never
+// yielded (closed mid-drag, say) reads as not-ranked and not-present, so a partial
+// group seeds over only its live members rather than mis-inserting.
+func groupRanks(f forest.Forest, order []string) (ranks map[string]float64, present map[string]bool, allRanked bool) {
+	want := make(map[string]bool, len(order))
+	for _, id := range order {
+		want[id] = true
+	}
+	ranks = make(map[string]float64, len(order))
+	present = make(map[string]bool, len(order))
+	unranked := false
+	walkBeads(f, func(b forest.Bead) {
+		if !want[b.ID] {
+			return
+		}
+		present[b.ID] = true
+		if b.HasRank {
+			ranks[b.ID] = b.Rank
+		} else {
+			unranked = true
+		}
+	})
+	return ranks, present, !unranked && len(present) == len(order)
+}
+
+// movedID finds the one bead a single drag relocated: deleting it from the posted
+// order yields the same sequence as deleting it from the prior (rank-sorted) order.
+// A pure swap matches on either element; the first is a fine, stable choice.
+func movedID(order []string, ranks map[string]float64) string {
+	prior := make([]string, len(order))
+	copy(prior, order)
+	slices.SortStableFunc(prior, func(a, b string) int {
+		if c := cmp.Compare(ranks[a], ranks[b]); c != 0 {
+			return c
+		}
+		return cmp.Compare(a, b)
+	})
+	for _, m := range order {
+		if slices.Equal(without(order, m), without(prior, m)) {
+			return m
+		}
+	}
+	return order[0] // unreachable for a real single move; safe default
+}
+
+// without returns ids with the first occurrence of m removed.
+func without(ids []string, m string) []string {
+	out := make([]string, 0, len(ids))
+	dropped := false
+	for _, id := range ids {
+		if !dropped && id == m {
+			dropped = true
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
+}
+
+// rankFor computes the new rank for the moved bead from its neighbors in the
+// post-drop order: the midpoint of the two it now sits between, or one step past
+// the edge it now leads or trails. It returns renorm=true when the neighbors leave
+// no representable gap (float exhaustion), the signal to reseed the whole group.
+func rankFor(order []string, ranks map[string]float64, moved string) (rank float64, renorm bool) {
+	j := slices.Index(order, moved)
+	switch {
+	case j <= 0: // new head: just below the next bead
+		next := ranks[order[1]]
+		r := next - 1
+		return r, r >= next
+	case j >= len(order)-1: // new tail: just above the prior bead
+		prev := ranks[order[j-1]]
+		r := prev + 1
+		return r, r <= prev
+	default: // interior: midpoint of the two neighbors
+		prev, next := ranks[order[j-1]], ranks[order[j+1]]
+		r := prev + (next-prev)/2
+		return r, r <= prev || r >= next
+	}
+}
+
+// seedRanks writes dense ranks 1..M over the live ids in order, making the group
+// wholly rank-ordered. Used to seed an untouched group on its first drag and to
+// renormalize when midpoint space runs out. An id absent from present (closed
+// mid-drag) is skipped so no rank lands on a bead the forest no longer shows; the
+// counter only advances on a write, keeping the survivors' ranks dense.
+func seedRanks(ctx context.Context, src IssueSource, order []string, present map[string]bool) error {
+	rank := 1
+	for _, id := range order {
+		if !present[id] {
+			continue
+		}
+		if _, err := src.SetRank(ctx, id, float64(rank)); err != nil {
+			return wrapWrite("rank", err)
+		}
+		rank++
+	}
+	return nil
 }
 
 // graphData is the serialized dependency-graph model the fragment hands to

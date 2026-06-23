@@ -84,6 +84,24 @@ func (c *Client) Close(ctx context.Context, id, reason string) (*Issue, error) {
 	return firstIssue(out)
 }
 
+// SetRank writes the manual-rank order into bd metadata (rank=<float>), the
+// store D5 settled on (no sidecar). It bypasses updateFlags because metadata is
+// one repeatable `--set-metadata key=value` token, not a single-value flag. The
+// float is formatted without exponent so bd round-trips it as a plain number.
+// Returns the updated issue when bd emits one (nil if it stays silent — callers
+// that need the new order re-read).
+func (c *Client) SetRank(ctx context.Context, id string, rank float64) (*Issue, error) {
+	if err := requireID(id, "setrank"); err != nil {
+		return nil, err
+	}
+	kv := "rank=" + strconv.FormatFloat(rank, 'f', -1, 64)
+	out, err := c.run(ctx, "update", id, "--set-metadata", kv, "--json")
+	if err != nil {
+		return nil, err
+	}
+	return firstIssue(out)
+}
+
 // CreateOpts carries the fields bd create accepts. Title is required; the rest
 // are sent only when set, so bd applies its own defaults.
 type CreateOpts struct {
