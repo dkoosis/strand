@@ -338,6 +338,16 @@ input.dr-title:focus { border-color: var(--st-open); outline: none; background: 
 .dr-comment-add button { margin-top: var(--s-2); font: inherit; font-size: var(--fs-8); padding: var(--s-2) var(--s-5); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; }
 .dr-comment-add button:hover { border-color: var(--st-open); color: var(--st-open); }
 
+/* drawer: dependency (blocked-by) list + add form */
+.dr-dep { display: flex; align-items: center; gap: var(--s-3); margin: 0 0 var(--s-2); }
+.dd-id { font-size: var(--fs-base); color: var(--ink-2); }
+.dd-rm { font-size: var(--fs-base); line-height: 1; color: var(--ink-4); cursor: pointer; }
+.dd-rm:hover { color: var(--st-blocked, #ef4444); }
+.dr-dep-add { display: flex; gap: var(--s-2); margin-top: var(--s-3); }
+.dr-dep-add input { flex: 1; font: inherit; font-size: var(--fs-base); padding: var(--s-2) var(--s-3); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+.dr-dep-add button { font: inherit; font-size: var(--fs-8); padding: var(--s-2) var(--s-5); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; }
+.dr-dep-add button:hover { border-color: var(--st-open); color: var(--st-open); }
+
 /* header: new-bead button */
 .newbead { font: inherit; font-size: var(--fs-8); font-weight: 500; padding: var(--s-2) var(--s-5); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; }
 .newbead:hover { border-color: var(--st-open); color: var(--st-open); }

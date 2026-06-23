@@ -308,3 +308,42 @@ func cyclePairs(n int) []string {
 	}
 	return out
 }
+
+func TestDepAddWiresPositionalEdge(t *testing.T) {
+	c, log := fakeBD(t, ``)
+	if err := c.DepAdd(context.Background(), "x-1", "x-2"); err != nil {
+		t.Fatalf("DepAdd: %v", err)
+	}
+	line := readLog(t, log)[0]
+	for _, want := range []string{"dep", "add", "x-1", "x-2"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("args %q missing %q", line, want)
+		}
+	}
+}
+
+func TestDepRemovePassesBothIDs(t *testing.T) {
+	c, log := fakeBD(t, ``)
+	if err := c.DepRemove(context.Background(), "x-1", "x-2"); err != nil {
+		t.Fatalf("DepRemove: %v", err)
+	}
+	line := readLog(t, log)[0]
+	for _, want := range []string{"dep", "remove", "x-1", "x-2"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("args %q missing %q", line, want)
+		}
+	}
+}
+
+func TestDepEmptyIDsRejected(t *testing.T) {
+	c, _ := fakeBD(t, ``)
+	if err := c.DepAdd(context.Background(), "", "x-2"); err == nil {
+		t.Fatal("want error for empty id, got nil")
+	}
+	if err := c.DepAdd(context.Background(), "x-1", ""); err == nil {
+		t.Fatal("want error for empty target, got nil")
+	}
+	if err := c.DepRemove(context.Background(), "x-1", ""); err == nil {
+		t.Fatal("want error for empty target, got nil")
+	}
+}
