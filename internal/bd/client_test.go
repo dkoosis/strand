@@ -77,6 +77,9 @@ func TestDecodeIssueAbsentPriorityIsIndistinguishable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode absent: %v", err)
 	}
+	if len(withZero) != 1 || len(absent) != 1 {
+		t.Fatalf("expected exactly 1 issue in each decoded result, got len(withZero)=%d, len(absent)=%d", len(withZero), len(absent))
+	}
 	if withZero[0].Priority != absent[0].Priority {
 		t.Fatalf("present-0 (%d) and absent (%d) now differ — the int collapse is "+
 			"closed; update Priority's guarantee comment and this test",

@@ -227,7 +227,7 @@ var demoRepo = registry.Repo{Name: "demo", Path: "/demo"}
 // readSource, not the fat IssueSource, so a source with no write methods drives
 // them. If a read helper grew a write call, buildForest/insightsModel/renderDrawer
 // would no longer accept this type and the package would not compile.
-type readOnlyStub struct{ inner stubBD }
+type readOnlyStub struct{ inner *stubBD }
 
 func (r *readOnlyStub) List(ctx context.Context, args ...string) ([]bd.Issue, error) {
 	return r.inner.List(ctx, args...)
@@ -248,7 +248,7 @@ var _ readSource = (*readOnlyStub)(nil)
 // that has no write methods, proving they bind to readSource (strand-8zg).
 func TestReadHelpersTakeReadSource(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: sampleIssues, deps: sampleDeps})
-	src := &readOnlyStub{inner: stubBD{issues: sampleIssues, deps: sampleDeps}}
+	src := &readOnlyStub{inner: &stubBD{issues: sampleIssues, deps: sampleDeps}}
 	ctx := context.Background()
 
 	f, err := srv.buildForest(ctx, src, demoRepo)
