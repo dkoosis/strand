@@ -1431,6 +1431,122 @@ func TestDepRemoveDropsBlocker(t *testing.T) {
 	}
 }
 
+// countingBD wraps stubBD to tally List/Deps invocations, so the snapshot-cache
+// tests can prove a second view hit memory (no second bd spawn) rather than the
+// source again. Writes delegate to the embedded stub.
+type countingBD struct {
+	stubBD
+	listCalls int
+	depsCalls int
+}
+
+func (c *countingBD) List(ctx context.Context, args ...string) ([]bd.Issue, error) {
+	c.listCalls++
+	return c.stubBD.List(ctx, args...)
+}
+
+func (c *countingBD) Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, error) {
+	c.depsCalls++
+	return c.stubBD.Deps(ctx, ids...)
+}
+
+// TestSnapshotCacheCrossView: navigating forest→list→board→graph→insights on one
+// repo fetches List and Deps once each; every later view is served from the
+// in-process snapshot (acceptance: cross-view nav hits memory after first load).
+func TestSnapshotCacheCrossView(t *testing.T) {
+	src := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
+	srv := newTestServer(t, src)
+	srv.now = func() time.Time { return cacheNow }
+
+	for _, p := range []string{"/", "/list", "/board", "/graph", "/insights"} {
+		if rec := do(t, srv, p); rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200", p, rec.Code)
+		}
+	}
+	if src.listCalls != 1 {
+		t.Errorf("List spawned %d times across five views, want 1 (cache miss only on first load)", src.listCalls)
+	}
+	if src.depsCalls != 1 {
+		t.Errorf("Deps spawned %d times, want 1 (graph+insights share one fetch)", src.depsCalls)
+	}
+}
+
+// TestSnapshotCacheInvalidatesOnWrite: a successful write drops the repo's
+// snapshot, so the next view re-reads bd's truth (acceptance: writes invalidate
+// the cache so the UI still shows bd truth).
+func TestSnapshotCacheInvalidatesOnWrite(t *testing.T) {
+	src := &countingBD{stubBD: stubBD{
+		issues: sampleIssues,
+		deps:   sampleDeps,
+		show:   map[string]*bd.Issue{"demo-e1.a": {ID: "demo-e1.a", Title: "Wire the thing", Status: "open"}},
+	}}
+	srv := newTestServer(t, src)
+	srv.now = func() time.Time { return cacheNow }
+
+	do(t, srv, "/")     // warms the snapshot (List #1)
+	do(t, srv, "/list") // served from cache (still List #1)
+	if src.listCalls != 1 {
+		t.Fatalf("List spawned %d times before write, want 1", src.listCalls)
+	}
+
+	// A successful edit must invalidate the snapshot.
+	if rec := send(t, srv, http.MethodPatch, "/bead/demo-e1.a", "field=title&value=Renamed"); rec.Code != http.StatusOK {
+		t.Fatalf("PATCH = %d, want 200", rec.Code)
+	}
+
+	do(t, srv, "/list") // must re-read bd's truth (List #2)
+	if src.listCalls != 2 {
+		t.Errorf("List spawned %d times, want 2 — a write must invalidate the snapshot", src.listCalls)
+	}
+}
+
+// TestSnapshotCacheRepoSwitchRescopes: switching the active repo serves the new
+// repo's source, not the prior repo's cached snapshot (acceptance: repo switch
+// re-scopes). Two repos back two distinct counting sources.
+func TestSnapshotCacheRepoSwitchRescopes(t *testing.T) {
+	tmpl, err := web.Templates()
+	if err != nil {
+		t.Fatalf("parse templates: %v", err)
+	}
+	srcA := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
+	srcB := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
+	repoA := registry.Repo{Name: "alpha", Path: "/alpha"}
+	repoB := registry.Repo{Name: "bravo", Path: "/bravo"}
+	reg := registry.InMemory(repoA, repoB)
+	srcFor := func(r registry.Repo) IssueSource {
+		if r.Path == "/bravo" {
+			return srcB
+		}
+		return srcA
+	}
+	srv := New(srcFor, reg, tmpl, web.Static(), forest.Synthesis{NorthStar: "x"})
+	srv.now = func() time.Time { return cacheNow }
+
+	// Warm repoB's snapshot (InMemory makes the last-added repo active).
+	do(t, srv, "/")
+	bBefore := srcB.listCalls
+
+	// Switch to repoA, then load a view: it must fetch repoA's source, not serve
+	// repoB's snapshot.
+	if rec := send(t, srv, http.MethodPost, "/repo", "path=/alpha"); rec.Code != http.StatusNoContent {
+		t.Fatalf("POST /repo = %d, want 204", rec.Code)
+	}
+	do(t, srv, "/")
+	if srcA.listCalls != 1 {
+		t.Errorf("repoA List spawned %d times after switch, want 1 — switch must re-scope", srcA.listCalls)
+	}
+	if srcB.listCalls != bBefore {
+		t.Errorf("repoB List spawned again (%d→%d) after switching away", bBefore, srcB.listCalls)
+	}
+}
+
+var cacheNow = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// sampleDeps gives the graph/insights views one in-scope blocks edge so a Deps
+// fetch has something to return — the cache tests only count the call, not the
+// payload.
+var sampleDeps = []bd.DepEdge{{IssueID: "demo-e1.a", DependsOnID: "demo-e1.b", Type: "blocks"}}
+
 // TestDrawerListsBlockers: the detail panel renders the bead's existing "blocks"
 // dependencies and ignores non-blocks edges (epic parent-child et al).
 func TestDrawerListsBlockers(t *testing.T) {

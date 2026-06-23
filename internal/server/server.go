@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
@@ -88,6 +89,7 @@ type Server struct {
 	syn      forest.Synthesis
 	shutdown func()           // raised by POST /shutdown; a test seam over the interrupt hook
 	now      func() time.Time // clock for the stale cutoff; a test seam (default time.Now)
+	cache    *snapshotCache   // per-repo in-process read cache (strand-9s6)
 }
 
 // defaultShutdown raises os.Interrupt at strand's own process, so the Quit button
@@ -106,7 +108,9 @@ func defaultShutdown() {
 // server stays free of embed. syn is the human-shaped synthesis layer (north
 // star); the project label follows the active repo.
 func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, static http.Handler, syn forest.Synthesis) *Server {
-	return &Server{srcFor: srcFor, reg: reg, tmpl: tmpl, static: static, syn: syn, shutdown: defaultShutdown, now: time.Now}
+	s := &Server{srcFor: srcFor, reg: reg, tmpl: tmpl, static: static, syn: syn, shutdown: defaultShutdown, now: time.Now}
+	s.cache = newSnapshotCache(func() time.Time { return s.now() })
+	return s
 }
 
 // source resolves the active repo's issue source. ok is false when no repo is
@@ -116,7 +120,11 @@ func (s *Server) source() (IssueSource, registry.Repo, bool) {
 	if !ok {
 		return nil, registry.Repo{}, false
 	}
-	return s.srcFor(repo), repo, true
+	// Wrap the bd source in the snapshot cache, keyed by the active repo's path.
+	// Reads (List/Deps) are served from the per-repo snapshot; writes pass through
+	// and drop that repo's snapshot. Keying on the path makes a repo switch a
+	// natural miss — the new repo has no entry — so switching re-scopes for free.
+	return &cachingSource{IssueSource: s.srcFor(repo), cache: s.cache, repo: repo.Path}, repo, true
 }
 
 // Routes returns the mux: the forest page, its htmx fragments, and static assets.
@@ -1364,6 +1372,231 @@ func (s *Server) synFor(repo registry.Repo) forest.Synthesis {
 	syn := s.syn
 	syn.Project = repo.Name
 	return syn
+}
+
+// snapshotCache holds one in-process read snapshot per repo, keyed by the repo's
+// path. Each view (forest/list/board/graph/insights) used to shell out to `bd
+// list --limit 0` (~0.5s, opens the Dolt store) and graph/insights added a `dep
+// list` call; the compute over the result is in-memory and negligible, so the bd
+// subprocess spawn is the whole cost, paid back-to-back through execMu on a
+// multi-fragment page. The snapshot folds the List result and the Deps result for
+// one repo so every view after the first hits memory.
+//
+// strand is the SOLE writer to its repos, so the snapshot stays correct by
+// invalidating on every successful write (cachingSource's write methods drop the
+// repo's entry) and on repo switch (a switched-to path is a different key, hence a
+// miss — no explicit hook needed). execMu in package bd is untouched: it still
+// serializes the bd calls that do happen, but the cache removes the contention by
+// removing the calls.
+//
+// Out-of-band staleness — a bd CLI run or another agent editing the same repo's
+// store while strand holds a snapshot — is the one case writes can't catch. The
+// documented mitigation is a TTL floor: an entry older than cacheTTL is treated as
+// a miss, so out-of-band edits surface within a few seconds without any UI work.
+// The manual-reload path is the browser refresh / re-navigation that re-issues the
+// GET after the TTL lapses; no template change is needed for it.
+type snapshotCache struct {
+	mu      sync.Mutex
+	now     func() time.Time
+	entries map[string]*snapshot
+}
+
+// snapshot is one repo's cached reads: the full `list --limit 0` result and the
+// repo-wide Deps result, stamped with the wall time they were fetched so the TTL
+// floor can age them out. List and Deps share one entry (and the TTL stamp set at
+// the List fetch) so forest/graph/insights are one logical snapshot — and Deps is
+// fetched once over the whole repo, not per scope, so the second structural view
+// reuses the first's edges (depsOK distinguishes "no deps" from "not fetched yet").
+type snapshot struct {
+	at     time.Time
+	list   []bd.Issue
+	deps   []bd.DepEdge
+	depsOK bool
+}
+
+// cacheTTL is the out-of-band staleness backstop: a snapshot older than this is a
+// miss, so a bd CLI / fleet edit to the same repo surfaces on the next navigation
+// within a few seconds even though strand didn't make the write. It is a floor,
+// not a refresh interval — writes still invalidate immediately, so the steady
+// single-writer path never waits on it. Kept short (the bead's ~2-5s window).
+const cacheTTL = 3 * time.Second
+
+func newSnapshotCache(now func() time.Time) *snapshotCache {
+	return &snapshotCache{now: now, entries: map[string]*snapshot{}}
+}
+
+// live returns the repo's snapshot if present and within the TTL floor, else nil
+// (a miss). Caller holds nothing; live takes the lock itself.
+func (c *snapshotCache) live(repo string) *snapshot {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[repo]
+	if !ok || c.now().Sub(e.at) >= cacheTTL {
+		return nil
+	}
+	return e
+}
+
+// putList records a fresh List result, opening the repo's snapshot and stamping it
+// with the fetch time the TTL ages against.
+func (c *snapshotCache) putList(repo string, list []bd.Issue) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[repo] = &snapshot{at: c.now(), list: list}
+}
+
+// putDeps records the repo-wide Deps result into the existing snapshot. If the
+// snapshot lapsed between the List fetch and here, it is skipped — the next read
+// re-warms List, and Deps follows.
+func (c *snapshotCache) putDeps(repo string, deps []bd.DepEdge) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.entries[repo]; ok {
+		e.deps, e.depsOK = deps, true
+	}
+}
+
+// invalidate drops a repo's snapshot. Every successful write calls this so the
+// next read re-fetches bd's truth.
+func (c *snapshotCache) invalidate(repo string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, repo)
+}
+
+// cachingSource wraps a repo's bd issue source so reads are served from the
+// snapshot and writes drop it. It embeds IssueSource, so every method strand
+// doesn't override (Show, Comments, the writes' default pass-through) goes
+// straight to bd; only List, Deps, and the mutating methods carry cache behavior.
+type cachingSource struct {
+	IssueSource
+	cache *snapshotCache
+	repo  string
+}
+
+// List serves the repo's cached `list --limit 0` snapshot, fetching once on a miss
+// (or after the TTL lapses). The bead's reads pass no per-call filter that would
+// change the result (every caller uses allIssues), so one cached list is correct.
+func (c *cachingSource) List(ctx context.Context, args ...string) ([]bd.Issue, error) {
+	if e := c.cache.live(c.repo); e != nil {
+		return e.list, nil
+	}
+	list, err := c.IssueSource.List(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	c.cache.putList(c.repo, list)
+	return list, nil
+}
+
+// Deps serves the repo-wide dependency edges, fetching once over the whole repo on
+// a miss and caching the superset. Callers pass a scope's ids (graph/insights) or
+// one id (drawer), but every caller already filters the result to its in-scope
+// "blocks" edges (blocksEdges / blockerIDs), so a superset is correct and lets all
+// structural views share one fetch. On a cold cache it fetches deps for the full
+// cached list's ids; if List hasn't run yet it falls back to the requested ids.
+func (c *cachingSource) Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, error) {
+	if e := c.cache.live(c.repo); e != nil && e.depsOK {
+		return e.deps, nil
+	}
+	fetchIDs := c.repoIDs(ids)
+	deps, err := c.IssueSource.Deps(ctx, fetchIDs...)
+	if err != nil {
+		return nil, err
+	}
+	c.cache.putDeps(c.repo, deps)
+	return deps, nil
+}
+
+// repoIDs returns the id set to fetch deps over: every id in the cached list (so
+// one fetch covers all scopes), falling back to the caller's ids when the list
+// isn't cached yet (a Deps before any List — not a path the views take, but safe).
+func (c *cachingSource) repoIDs(reqIDs []string) []string {
+	e := c.cache.live(c.repo)
+	if e == nil || len(e.list) == 0 {
+		return reqIDs
+	}
+	ids := make([]string, len(e.list))
+	for i := range e.list {
+		ids[i] = e.list[i].ID
+	}
+	return ids
+}
+
+// The write methods pass through to bd, then drop the repo's snapshot on success so
+// the next read reflects the change (strand is the sole writer — invalidate exactly
+// on a successful write). A failed write leaves the snapshot, since nothing changed.
+
+func (c *cachingSource) Update(ctx context.Context, id, field, value string) (*bd.Issue, error) {
+	iss, err := c.IssueSource.Update(ctx, id, field, value)
+	if err == nil {
+		c.cache.invalidate(c.repo)
+	}
+	return iss, err
+}
+
+func (c *cachingSource) Claim(ctx context.Context, id string) (*bd.Issue, error) {
+	iss, err := c.IssueSource.Claim(ctx, id)
+	if err == nil {
+		c.cache.invalidate(c.repo)
+	}
+	return iss, err
+}
+
+func (c *cachingSource) Close(ctx context.Context, id, reason string) (*bd.Issue, error) {
+	iss, err := c.IssueSource.Close(ctx, id, reason)
+	if err == nil {
+		c.cache.invalidate(c.repo)
+	}
+	return iss, err
+}
+
+func (c *cachingSource) SetRank(ctx context.Context, id string, rank float64) (*bd.Issue, error) {
+	iss, err := c.IssueSource.SetRank(ctx, id, rank)
+	if err == nil {
+		c.cache.invalidate(c.repo)
+	}
+	return iss, err
+}
+
+func (c *cachingSource) Comment(ctx context.Context, id, text string) error {
+	err := c.IssueSource.Comment(ctx, id, text)
+	if err == nil {
+		c.cache.invalidate(c.repo)
+	}
+	return err
+}
+
+func (c *cachingSource) DepAdd(ctx context.Context, id, dependsOn string) error {
+	err := c.IssueSource.DepAdd(ctx, id, dependsOn)
+	if err == nil {
+		c.cache.invalidate(c.repo)
+	}
+	return err
+}
+
+func (c *cachingSource) DepRemove(ctx context.Context, id, dependsOn string) error {
+	err := c.IssueSource.DepRemove(ctx, id, dependsOn)
+	if err == nil {
+		c.cache.invalidate(c.repo)
+	}
+	return err
+}
+
+func (c *cachingSource) Create(ctx context.Context, opts bd.CreateOpts) (*bd.Issue, error) {
+	iss, err := c.IssueSource.Create(ctx, opts)
+	if err == nil {
+		c.cache.invalidate(c.repo)
+	}
+	return iss, err
+}
+
+func (c *cachingSource) Delete(ctx context.Context, id string) error {
+	err := c.IssueSource.Delete(ctx, id)
+	if err == nil {
+		c.cache.invalidate(c.repo)
+	}
+	return err
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {
