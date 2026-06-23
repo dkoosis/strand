@@ -781,6 +781,56 @@ func TestDrawerShapingLeadsAgentOpsDemoted(t *testing.T) {
 	}
 }
 
+// TestDrawerSystemMetadataReadOnly: the system-metadata block shows the agent/
+// rubric-owned fields (rank, kg_project, requires_test, difficulty, est_cost_usd)
+// for orientation, but exposes NO edit affordance — clobber-protection is the
+// whole point (str-6k0.6.4). The block must render the values and contain no
+// input/textarea/select/hx-patch that would let a human stomp what agents depend on.
+func TestDrawerSystemMetadataReadOnly(t *testing.T) {
+	srv := newTestServer(t, &stubBD{show: map[string]*bd.Issue{
+		"demo-m": {
+			ID: "demo-m", Title: "Meta bead", Status: "open", IssueType: "task",
+			Metadata: map[string]any{
+				"rank":          7.0,
+				"kg_project":    "strand",
+				"requires_test": true,
+				"difficulty":    "medium",
+				"est_cost_usd":  4.5,
+			},
+		},
+	}})
+	body := do(t, srv, "/bead/demo-m").Body.String()
+
+	// The block renders, below the shaping zone (after the demoted agent-ops zone).
+	sys := strings.Index(body, `class="dr-sys"`)
+	if sys < 0 {
+		t.Fatalf("drawer missing the system-metadata block:\n%s", body)
+	}
+	if ops := strings.Index(body, "dr-overflow"); ops < 0 || ops > sys {
+		t.Errorf("system metadata not below the shaping zone (ops=%d, sys=%d)", ops, sys)
+	}
+
+	// Every field's value renders.
+	for _, want := range []string{"strand", "yes", "medium", "4.5", "7"} {
+		if !strings.Contains(body[sys:], want) {
+			t.Errorf("system-metadata block missing value %q:\n%s", want, body[sys:])
+		}
+	}
+
+	// No edit affordance inside the block: scope the scan to dr-sys..</dl> so the
+	// drawer's other (legitimately editable) controls don't mask a leak here.
+	end := strings.Index(body[sys:], "</dl>")
+	if end < 0 {
+		t.Fatalf("system-metadata block not closed with </dl>:\n%s", body[sys:])
+	}
+	block := body[sys : sys+end]
+	for _, banned := range []string{"<input", "<textarea", "<select", "hx-patch", "hx-post"} {
+		if strings.Contains(block, banned) {
+			t.Errorf("system-metadata block exposes a write control %q (clobber-protection breached):\n%s", banned, block)
+		}
+	}
+}
+
 // TestBeadNotFoundIs404: a missing bead surfaces the bd sentinel as a 404 with an
 // error fragment, not a 200 with an empty drawer.
 func TestBeadNotFoundIs404(t *testing.T) {

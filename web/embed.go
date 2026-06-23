@@ -41,7 +41,48 @@ var funcs = template.FuncMap{
 	"regionLabel": regionLabel,
 	"priorities":  priorities,
 	"beadTypes":   func() []string { return beadTypes },
+	"metaVal":     metaVal,
+	"rankLabel":   rankLabel,
 	"labelPart":   labelPart,
+}
+
+// metaVal renders a bd metadata value for display in the read-only system-metadata
+// block. It is view-only: the drawer never writes these back, so this is a one-way
+// any→string projection. Absent keys render as an em dash so the row reads as
+// "unset" rather than disappearing. Floats that are whole numbers (rank, est_cost)
+// drop the trailing ".0"; bd emits JSON numbers as float64.
+func metaVal(meta map[string]any, key string) string {
+	v, ok := meta[key]
+	if !ok || v == nil {
+		return "—"
+	}
+	switch t := v.(type) {
+	case string:
+		if t == "" {
+			return "—"
+		}
+		return t
+	case bool:
+		if t {
+			return "yes"
+		}
+		return "no"
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	default:
+		return fmt.Sprint(t)
+	}
+}
+
+// rankLabel renders an *bd.Issue's manual rank for the read-only metadata block,
+// or an em dash when the bead is unranked. Rank() returns (float64, bool); a
+// template can't consume the second value, so collapse it here.
+func rankLabel(i *bd.Issue) string {
+	r, ok := i.Rank()
+	if !ok {
+		return "—"
+	}
+	return strconv.FormatFloat(r, 'f', -1, 64)
 }
 
 // LabelPart decodes one label string for the drawer. A `key=value` label renders

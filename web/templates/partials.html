@@ -307,6 +307,16 @@
       <button type="button" class="danger" hx-post="/bead/{{.ID}}/delete" hx-target="#drawer">Delete</button>
     </div>
   </details>
+  {{/* System metadata: agent/rubric-owned fields, read-only by design. No form,
+       no hx-patch, no input — clobber-protected so a human shaping the bead can't
+       stomp values agents depend on. Display markup only (str-6k0.6.4). */}}
+  <dl class="dr-sys" aria-label="System metadata (read-only)">
+    <div class="dr-sys-row"><dt>Rank</dt><dd>{{rankLabel .Issue}}</dd></div>
+    <div class="dr-sys-row"><dt>KG project</dt><dd>{{metaVal .Metadata "kg_project"}}</dd></div>
+    <div class="dr-sys-row"><dt>Requires test</dt><dd>{{metaVal .Metadata "requires_test"}}</dd></div>
+    <div class="dr-sys-row"><dt>Difficulty</dt><dd>{{metaVal .Metadata "difficulty"}}</dd></div>
+    <div class="dr-sys-row"><dt>Est. cost (USD)</dt><dd>{{metaVal .Metadata "est_cost_usd"}}</dd></div>
+  </dl>
 </div>
 {{end}}
 
