@@ -43,6 +43,7 @@ var funcs = template.FuncMap{
 	"beadTypes":   func() []string { return beadTypes },
 	"metaVal":     metaVal,
 	"rankLabel":   rankLabel,
+	"labelPart":   labelPart,
 }
 
 // metaVal renders a bd metadata value for display in the read-only system-metadata
@@ -82,6 +83,25 @@ func rankLabel(i *bd.Issue) string {
 		return "—"
 	}
 	return strconv.FormatFloat(r, 'f', -1, 64)
+}
+
+// LabelPart decodes one label string for the drawer. A `key=value` label renders
+// as a key-value pair; anything else is a plain chip. bd has no native pairs —
+// the convention lives here and in the add handler, the one encode/decode seam.
+type LabelPart struct {
+	Raw   string // the full label as bd stores it (what remove posts back)
+	Key   string // pair key, or the whole label when not a pair
+	Value string // pair value, empty for a plain chip
+	Pair  bool   // true when the label is a key=value pair
+}
+
+// labelPart splits a label into its rendered parts. A pair needs a non-empty key
+// before the first `=`; "=v" or a bare label stays a plain chip.
+func labelPart(label string) LabelPart {
+	if key, val, ok := strings.Cut(label, "="); ok && key != "" {
+		return LabelPart{Raw: label, Key: key, Value: val, Pair: true}
+	}
+	return LabelPart{Raw: label, Key: label}
 }
 
 // beadTypes are the issue types the create form offers, matching bd's --type.

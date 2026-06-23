@@ -25,15 +25,26 @@ func requireID(id, op string) error {
 	return nil
 }
 
+// Logical field names for Update — the keys of updateFlags. strand callers name
+// the field through these consts rather than re-spelling the literal, so a typo
+// is a compile error and the set of writable fields has one source of truth.
+const (
+	FieldStatus      = "status"
+	FieldPriority    = "priority"
+	FieldAssignee    = "assignee"
+	FieldTitle       = "title"
+	FieldDescription = "description"
+)
+
 // updateFlags maps a logical field name to bd's `update` flag. Callers name the
 // field they mean; strand owns the flag spelling so a bd rename is a one-line fix.
 // Status writeback is `-s` (O7: there is no `set-state` subcommand in bd).
 var updateFlags = map[string]string{
-	"status":      "-s",
-	"priority":    "-p",
-	"assignee":    "-a",
-	"title":       "--title",
-	"description": "-d",
+	FieldStatus:      "-s",
+	FieldPriority:    "-p",
+	FieldAssignee:    "-a",
+	FieldTitle:       "--title",
+	FieldDescription: "-d",
 }
 
 // Update sets one field on an issue. id is always explicit — a bare `bd update`
@@ -110,10 +121,16 @@ type CreateOpts struct {
 	Type        string // task | bug | feature | epic
 	Priority    *int   // 0–4; nil leaves bd's default
 	Assignee    string
+	// Parent is the parent issue id for the forest's tree axis. Empty means the
+	// bead is created off-trunk (no --parent); the create handler enforces that
+	// an empty Parent is a deliberate off-trunk choice, never an accidental
+	// parentless bead.
+	Parent string
 }
 
-// Create makes a new issue and returns it.
-func (c *Client) Create(ctx context.Context, opts CreateOpts) (*Issue, error) {
+// Create makes a new issue and returns it. opts is taken by pointer (it grew
+// past the by-value lint threshold once Parent was added); callers pass &opts.
+func (c *Client) Create(ctx context.Context, opts *CreateOpts) (*Issue, error) {
 	if opts.Title == "" {
 		return nil, fmt.Errorf("create: %w", ErrEmptyTitle)
 	}
@@ -129,6 +146,9 @@ func (c *Client) Create(ctx context.Context, opts CreateOpts) (*Issue, error) {
 	}
 	if opts.Assignee != "" {
 		args = append(args, "--assignee", opts.Assignee)
+	}
+	if opts.Parent != "" {
+		args = append(args, "--parent", opts.Parent)
 	}
 	out, err := c.run(ctx, append(args, "--json")...)
 	if err != nil {
@@ -160,6 +180,34 @@ func (c *Client) DepRemove(ctx context.Context, id, dependsOn string) error {
 		return err
 	}
 	_, err := c.run(ctx, "dep", "remove", id, dependsOn)
+	return err
+}
+
+// LabelAdd attaches label to an issue (bd label add <id> <label>). Labels are not
+// a single-value update flag — bd manages them with the add/remove subcommands —
+// so they route here, the way SetRank routes metadata outside updateFlags.
+// Key-value pairs are plain `key=value` label strings; bd gives them no special
+// support, so the view layer encodes/decodes them.
+func (c *Client) LabelAdd(ctx context.Context, id, label string) error {
+	if err := requireID(id, "label add"); err != nil {
+		return err
+	}
+	if label == "" {
+		return fmt.Errorf("label add: %w", ErrEmptyText)
+	}
+	_, err := c.run(ctx, "label", "add", id, label)
+	return err
+}
+
+// LabelRemove detaches label from an issue (bd label remove <id> <label>).
+func (c *Client) LabelRemove(ctx context.Context, id, label string) error {
+	if err := requireID(id, "label remove"); err != nil {
+		return err
+	}
+	if label == "" {
+		return fmt.Errorf("label remove: %w", ErrEmptyText)
+	}
+	_, err := c.run(ctx, "label", "remove", id, label)
 	return err
 }
 

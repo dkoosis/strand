@@ -1,16 +1,20 @@
+{{/* The minimap is an ambient filter, not a navigator. A region head or epic
+     tile carries its identity in data-attrs; app.js routes the click to whatever
+     view is active (Table/Board/Insights) so the click filters the centerpiece,
+     not just the list. role/tabindex make each a real, keyboard-reachable control. */}}
 {{define "treemap"}}
 <div class="treemap">
   {{range .Regions}}
   <div class="region" style="--rc:{{.Color}};left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%">
-    <div class="rg-head" hx-get="/list" hx-target="#listPane">
+    <div class="rg-head mm-filter" role="button" tabindex="0" data-name="{{.Name}}">
       <span class="nm">{{.Name}}</span><span class="ct tnum">{{.Open}}</span>
     </div>
     <div class="rg-body">
       {{range .Epics}}
-      <div class="tile"
+      <div class="tile mm-filter" role="button" tabindex="0"
+           aria-label="{{cleanName .Name}}"
            style="--rc:{{.Color}};left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%"
-           data-name="{{cleanName .Name}}" data-open="{{.Open}}" data-flag="{{if .Flag}}1{{end}}"
-           hx-get="/list?epic={{.ID}}" hx-target="#listPane">
+           data-name="{{cleanName .Name}}" data-epic="{{.ID}}" data-open="{{.Open}}" data-flag="{{if .Flag}}1{{end}}">
         {{if .Flag}}<span class="flag"></span>{{end}}
       </div>
       {{end}}
@@ -22,15 +26,10 @@
 
 {{define "list"}}
 {{if .Region.Epics}}
-<div class="pane-head">
+<div class="pane-head" data-view="list" data-epic="{{if .HasEpic}}{{.Epic.ID}}{{end}}">
   <div class="lp-scope">
     <span class="lp-dot" style="background:{{.Region.Color}}"></span>
     <span class="lp-name">{{if .HasEpic}}{{cleanName .Epic.Name}}{{else}}{{.Region.Name}}{{end}}</span>
-  </div>
-  <div class="view-toggle">
-    <button class="vt active" type="button" disabled>Table</button>
-    <button class="vt" type="button" hx-get="/board{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Board</button>
-    <button class="vt" type="button" hx-get="/insights{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Insights</button>
   </div>
   <div class="lp-stat">
     {{if .HasEpic}}<span><b>{{.Epic.Open}}</b> open beads</span>
@@ -49,15 +48,10 @@
 
 {{define "board"}}
 {{if .Region.Epics}}
-<div class="pane-head">
+<div class="pane-head" data-view="board" data-epic="{{if .HasEpic}}{{.Epic.ID}}{{end}}">
   <div class="lp-scope">
     <span class="lp-dot" style="background:{{.Region.Color}}"></span>
     <span class="lp-name">{{if .HasEpic}}{{cleanName .Epic.Name}}{{else}}{{.Region.Name}}{{end}}</span>
-  </div>
-  <div class="view-toggle">
-    <button class="vt" type="button" hx-get="/list{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Table</button>
-    <button class="vt active" type="button" disabled>Board</button>
-    <button class="vt" type="button" hx-get="/insights{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Insights</button>
   </div>
 </div>
 <div class="board-bar">
@@ -99,15 +93,10 @@
 
 {{define "insights"}}
 {{if .Region.Epics}}
-<div class="pane-head">
+<div class="pane-head" data-view="insights" data-epic="{{if .HasEpic}}{{.Epic.ID}}{{end}}">
   <div class="lp-scope">
     <span class="lp-dot" style="background:{{.Region.Color}}"></span>
     <span class="lp-name">{{if .HasEpic}}{{cleanName .Epic.Name}}{{else}}{{.Region.Name}}{{end}}</span>
-  </div>
-  <div class="view-toggle">
-    <button class="vt" type="button" hx-get="/list{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Table</button>
-    <button class="vt" type="button" hx-get="/board{{if .HasEpic}}?epic={{.Epic.ID}}{{end}}" hx-target="#listPane">Board</button>
-    <button class="vt active" type="button" disabled>Insights</button>
   </div>
 </div>
 {{with .Insights}}
@@ -269,6 +258,26 @@
     <input name="depends_on" placeholder="blocker bead id…" aria-label="blocker bead id" required>
     <button type="submit">Add</button>
   </form>
+  <h3>Labels</h3>
+  <div class="dr-labels">
+    {{range .Labels}}{{$l := labelPart .}}
+    <span class="dr-chip{{if $l.Pair}} dr-chip-kv{{end}}">
+      {{if $l.Pair}}<span class="ck-key">{{$l.Key}}</span><span class="ck-val">{{$l.Value}}</span>
+      {{else}}<span class="ck-key">{{$l.Key}}</span>{{end}}
+      <form hx-post="/bead/{{$.ID}}/label/remove" hx-target="#drawer">
+        <input type="hidden" name="label" value="{{$l.Raw}}">
+        <button class="ck-rm" type="submit" aria-label="remove label {{$l.Raw}}">×</button>
+      </form>
+    </span>
+    {{else}}
+    <p class="dr-note">No labels.</p>
+    {{end}}
+  </div>
+  <form class="dr-label-add" hx-post="/bead/{{.ID}}/label" hx-target="#drawer">
+    <input name="key" placeholder="label or key…" aria-label="label or key" required>
+    <input name="value" placeholder="value (optional)" aria-label="label value">
+    <button type="submit">Add</button>
+  </form>
   <h3>Comments</h3>
   {{range .Comments}}
   <div class="dr-comment">
@@ -325,6 +334,17 @@
       <select name="type">
         {{$t := .Type}}{{range $v := beadTypes}}<option value="{{$v}}" {{if eq $v $t}}selected{{end}}>{{$v}}</option>{{end}}
       </select></label></div>
+    <div class="dr-field"><label>Parent
+      <select name="parent" required
+              onchange="const p = this.closest('form').querySelector('.cf-new-parent'); p.hidden = this.value !== '__new__'; p.querySelector('input').required = this.value === '__new__'">
+        {{$pp := .Parent}}
+        <option value="" {{if eq $pp ""}}selected{{end}} disabled>Choose a parent…</option>
+        <option value="__off_trunk__" {{if eq $pp "__off_trunk__"}}selected{{end}}>Off-trunk (no parent)</option>
+        <option value="__new__" {{if eq $pp "__new__"}}selected{{end}}>＋ Create a new parent…</option>
+        {{range .Parents}}<option value="{{.ID}}" {{if eq $pp .ID}}selected{{end}}>{{shortID .ID}} · {{cleanName .Title}}</option>{{end}}
+      </select></label></div>
+    <div class="dr-field cf-new-parent" {{if ne .Parent "__new__"}}hidden{{end}}>
+      <label>New parent title <input name="parent_new" value="{{.ParentNewTitle}}" placeholder="Name the parent epic…" {{if eq .Parent "__new__"}}required{{end}}></label></div>
     <div class="dr-field"><label>Priority
       <select name="priority">
         {{$p := .Priority}}{{range $i := priorities}}<option value="{{$i}}" {{if eq (printf "%d" $i) $p}}selected{{end}}>P{{$i}}</option>{{end}}

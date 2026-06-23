@@ -40,8 +40,19 @@ type stubBD struct {
 	lastField string // the field/value of the most recent Update — lets the board
 	lastValue string // move test assert it issued the right bd update.
 
-	rankWrites []rankWrite // ordered log of SetRank calls, for the reorder tests.
-	depWrites  []depWrite  // ordered log of DepAdd/DepRemove calls, for the dep tests.
+	rankWrites  []rankWrite  // ordered log of SetRank calls, for the reorder tests.
+	depWrites   []depWrite   // ordered log of DepAdd/DepRemove calls, for the dep tests.
+	labelWrites []labelWrite // ordered log of LabelAdd/LabelRemove calls, for the label tests.
+
+	createOpts []bd.CreateOpts // ordered log of Create calls, for the create-path tests.
+}
+
+// labelWrite records one LabelAdd/LabelRemove call so a test can assert the
+// handler forwarded the right label (including an encoded key=value pair).
+type labelWrite struct {
+	op    string // "add" | "remove"
+	id    string
+	label string
 }
 
 // depWrite records one DepAdd/DepRemove call so a test can assert the handler
@@ -122,19 +133,59 @@ func (s *stubBD) DepRemove(_ context.Context, id, dependsOn string) error {
 	return nil
 }
 
+// LabelAdd appends a label to the shown bead so the drawer re-read renders the new
+// chip; writeErr models a bd outage. labelWrites logs the call so a test can assert
+// the forwarded value (a key=value pair arrives already encoded).
+func (s *stubBD) LabelAdd(_ context.Context, id, label string) error {
+	if s.writeErr != nil {
+		return s.writeErr
+	}
+	s.labelWrites = append(s.labelWrites, labelWrite{op: "add", id: id, label: label})
+	if iss := s.show[id]; iss != nil {
+		iss.Labels = append(iss.Labels, label)
+	}
+	return nil
+}
+
+// LabelRemove drops the matching label so the re-read no longer renders its chip.
+func (s *stubBD) LabelRemove(_ context.Context, id, label string) error {
+	if s.writeErr != nil {
+		return s.writeErr
+	}
+	s.labelWrites = append(s.labelWrites, labelWrite{op: "remove", id: id, label: label})
+	if iss := s.show[id]; iss != nil {
+		kept := iss.Labels[:0]
+		for _, l := range iss.Labels {
+			if l == label {
+				continue
+			}
+			kept = append(kept, l)
+		}
+		iss.Labels = kept
+	}
+	return nil
+}
+
 // Create mints a bead with a fixed id and stores it so the post-create drawer
 // re-read finds it; an empty title fails like bd's validation does.
-func (s *stubBD) Create(_ context.Context, opts bd.CreateOpts) (*bd.Issue, error) {
+func (s *stubBD) Create(_ context.Context, opts *bd.CreateOpts) (*bd.Issue, error) {
 	if s.writeErr != nil {
 		return nil, s.writeErr
 	}
 	if opts.Title == "" {
 		return nil, bd.ErrEmptyTitle
 	}
-	iss := &bd.Issue{ID: "demo-new", Title: opts.Title, IssueType: opts.Type, Status: "open"}
-	if opts.Priority != nil {
-		iss.Priority = *opts.Priority
+	// The first Create of a request keeps the legacy demo-new id (the common
+	// single create, and the new-parent mint which always runs first). A second
+	// Create in the same request — the child under a freshly-minted parent — gets
+	// a distinct id so both land in the show map.
+	id := "demo-new"
+	if len(s.createOpts) > 0 {
+		id = "demo-child"
 	}
+	s.createOpts = append(s.createOpts, *opts)
+	iss := &bd.Issue{ID: id, Title: opts.Title, IssueType: opts.Type, Status: "open"}
+	iss.Priority = opts.Priority
 	if s.show == nil {
 		s.show = map[string]*bd.Issue{}
 	}
@@ -172,7 +223,9 @@ func (s *stubBD) Update(_ context.Context, id, field, value string) (*bd.Issue, 
 	case "title":
 		iss.Title = value
 	case "priority":
-		iss.Priority, _ = strconv.Atoi(value)
+		if p, err := strconv.Atoi(value); err == nil {
+			iss.Priority = &p
+		}
 	case "assignee":
 		iss.Assignee = value
 	case "description":
@@ -304,14 +357,16 @@ func oneBead(iss *bd.Issue) *stubBD {
 
 var sampleIssues = []bd.Issue{
 	{ID: "demo-root", Title: "DEMO trunk", IssueType: "epic", Status: "open"}, // region; epics below are tiles
-	{ID: "demo-e1", Parent: "demo-root", Title: "Forest epic", IssueType: "epic", Status: "open", Priority: 1},
-	{ID: "demo-e1.a", Parent: "demo-e1", Title: "Wire the thing", Status: "open", Priority: 0},
-	{ID: "demo-e1.b", Parent: "demo-e1", Title: "Test the thing", Status: "in_progress", Priority: 2},
-	{ID: "demo-e2", Parent: "demo-root", Title: "Lone task", IssueType: "task", Status: "open", Priority: 3},
+	{ID: "demo-e1", Parent: "demo-root", Title: "Forest epic", IssueType: "epic", Status: "open", Priority: new(1)},
+	{ID: "demo-e1.a", Parent: "demo-e1", Title: "Wire the thing", Status: "open", Priority: new(0)},
+	{ID: "demo-e1.b", Parent: "demo-e1", Title: "Test the thing", Status: "in_progress", Priority: new(2)},
+	{ID: "demo-e2", Parent: "demo-root", Title: "Lone task", IssueType: "task", Status: "open", Priority: new(3)},
 }
 
-// TestForestPageRenders pins the landing: the page renders the north star, the
-// treemap, and a sized tile per epic with htmx wiring to the list pane.
+// TestForestPageRenders pins the view-centric landing: the page renders the north
+// star, the loud primary view-switcher (Table/Board/Insights tabs), the minimap
+// treemap with a tile per epic carrying its filter identity (data-epic, routed to
+// the active view by app.js), and the centerpiece list.
 func TestForestPageRenders(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: sampleIssues})
 	rec := do(t, srv, "/")
@@ -322,9 +377,14 @@ func TestForestPageRenders(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"remember across sessions", // north star
+		`class="viewbar"`,          // loud primary view switcher
+		`class="viewtab active" type="button" data-view="list"`, // Table is the default loud tab
+		`data-view="board"`,    // Board tab present
+		`data-view="insights"`, // Insights tab present
+		`class="minimap"`,      // treemap demoted to ambient minimap rail
 		`class="treemap"`,
-		`hx-get="/list?epic=demo-e1"`, // tile drills into its epic
-		`hx-get="/list?epic=demo-e2"`,
+		`data-epic="demo-e1"`, // tile carries its filter identity (app.js routes the click)
+		`data-epic="demo-e2"`,
 		`class="flag"`, // demo-e1 holds P0/P1 work
 	} {
 		if !strings.Contains(body, want) {
@@ -445,6 +505,11 @@ func TestBoardScopedToEpic(t *testing.T) {
 	if strings.Contains(body, "Lone task") {
 		t.Error("epic board leaked a bead from another epic")
 	}
+	// The board head carries the scope marker app.js reads to keep the top tab strip
+	// on Board at this epic, so a minimap click filters the active (board) view.
+	if !strings.Contains(body, `data-view="board"`) || !strings.Contains(body, `data-epic="demo-e1"`) {
+		t.Error("board fragment missing data-view/data-epic scope marker")
+	}
 }
 
 // TestBoardMoveUpdates: a column move issues the matching bd update and returns
@@ -492,10 +557,10 @@ func TestBoardMoveErrorReverts(t *testing.T) {
 func rankedEpic() []bd.Issue {
 	return []bd.Issue{
 		{ID: "r-root", Title: "RANK trunk", IssueType: "epic", Status: "open"}, // region; r-1 is the tile
-		{ID: "r-1", Parent: "r-root", Title: "Ranked epic", IssueType: "epic", Status: "open", Priority: 1, Metadata: map[string]any{"rank": 1.0}},
-		{ID: "r-1.a", Parent: "r-1", Title: "A", Status: "open", Priority: 0, Metadata: map[string]any{"rank": 2.0}},
-		{ID: "r-1.b", Parent: "r-1", Title: "B", Status: "open", Priority: 2, Metadata: map[string]any{"rank": 3.0}},
-		{ID: "r-1.c", Parent: "r-1", Title: "C", Status: "open", Priority: 2, Metadata: map[string]any{"rank": 4.0}},
+		{ID: "r-1", Parent: "r-root", Title: "Ranked epic", IssueType: "epic", Status: "open", Priority: new(1), Metadata: map[string]any{"rank": 1.0}},
+		{ID: "r-1.a", Parent: "r-1", Title: "A", Status: "open", Priority: new(0), Metadata: map[string]any{"rank": 2.0}},
+		{ID: "r-1.b", Parent: "r-1", Title: "B", Status: "open", Priority: new(2), Metadata: map[string]any{"rank": 3.0}},
+		{ID: "r-1.c", Parent: "r-1", Title: "C", Status: "open", Priority: new(2), Metadata: map[string]any{"rank": 4.0}},
 	}
 }
 
@@ -674,7 +739,7 @@ func TestRankSingleIDNoOp(t *testing.T) {
 // description.
 func TestBeadDrawerRendersDetail(t *testing.T) {
 	srv := newTestServer(t, &stubBD{show: map[string]*bd.Issue{
-		"demo-e1.a": {ID: "demo-e1.a", Title: "Wire the thing", Status: "open", Priority: 0, IssueType: "task", Description: "do the wiring"},
+		"demo-e1.a": {ID: "demo-e1.a", Title: "Wire the thing", Status: "open", Priority: new(0), IssueType: "task", Description: "do the wiring"},
 	}})
 	rec := do(t, srv, "/bead/demo-e1.a")
 
@@ -901,24 +966,36 @@ func TestAddEmptyCommentIsHonest(t *testing.T) {
 	}
 }
 
-// TestCreateFormRenders: the new-bead form opens with the type options.
+// TestCreateFormRenders: the new-bead form opens with the type options, the
+// forced-parent picker (off-trunk + new-inline choices), and the candidate
+// parents loaded from the source.
 func TestCreateFormRenders(t *testing.T) {
-	srv := newTestServer(t, &stubBD{})
+	srv := newTestServer(t, &stubBD{issues: sampleIssues})
 	rec := do(t, srv, "/new")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /new = %d, want 200", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), `hx-post="/new"`) {
-		t.Errorf("create form missing its post target:\n%s", rec.Body.String())
+	body := rec.Body.String()
+	if !strings.Contains(body, `hx-post="/new"`) {
+		t.Errorf("create form missing its post target:\n%s", body)
+	}
+	for _, want := range []string{`name="parent"`, `value="__off_trunk__"`, `value="__new__"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("create form missing forced-parent picker part %q:\n%s", want, body)
+		}
+	}
+	if !strings.Contains(body, sampleIssues[0].ID) {
+		t.Errorf("create form did not offer candidate parent %q:\n%s", sampleIssues[0].ID, body)
 	}
 }
 
-// TestCreateReflects: a valid create shows the new bead's drawer and fires
-// refreshList so the list pane picks up the addition.
+// TestCreateReflects: a valid create under an existing parent shows the new
+// bead's drawer, fires refreshList, and threads the parent id through to bd.
 func TestCreateReflects(t *testing.T) {
-	srv := newTestServer(t, &stubBD{show: map[string]*bd.Issue{}})
-	rec := send(t, srv, http.MethodPost, "/new", "title=Fresh+bead&type=task&priority=2")
+	stub := &stubBD{show: map[string]*bd.Issue{}}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/new", "title=Fresh+bead&type=task&priority=2&parent=epic-1")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /new = %d, want 200", rec.Code)
@@ -929,13 +1006,90 @@ func TestCreateReflects(t *testing.T) {
 	if rec.Header().Get("HX-Trigger") != "refreshList" {
 		t.Errorf("create did not fire refreshList, got %q", rec.Header().Get("HX-Trigger"))
 	}
+	if len(stub.createOpts) != 1 || stub.createOpts[0].Parent != "epic-1" {
+		t.Errorf("create did not thread the parent id, got %+v", stub.createOpts)
+	}
 }
 
-// TestCreateEmptyTitleIsHonest: a titleless create re-renders the form with bd's
-// error, not a half-made bead.
+// TestCreateForcesParent: a create with no parent choice is rejected — the form
+// re-renders with the forced-parent error and no bead is created. The forest's
+// tree axis can't be skipped by omission (str-6k0.6.2).
+func TestCreateForcesParent(t *testing.T) {
+	stub := &stubBD{show: map[string]*bd.Issue{}}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/new", "title=Orphan&type=task&priority=2")
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `hx-post="/new"`) {
+		t.Errorf("rejected create did not re-render the form:\n%s", body)
+	}
+	if !strings.Contains(body, errNoParent.Error()) {
+		t.Errorf("form hides the forced-parent error:\n%s", body)
+	}
+	if len(stub.createOpts) != 0 {
+		t.Errorf("a parentless create reached bd: %+v", stub.createOpts)
+	}
+}
+
+// TestCreateOffTrunk: the off-trunk choice is a deliberate root — the bead is
+// created with no parent id and no error.
+func TestCreateOffTrunk(t *testing.T) {
+	stub := &stubBD{show: map[string]*bd.Issue{}}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/new", "title=Root&type=task&priority=2&parent=__off_trunk__")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /new = %d, want 200", rec.Code)
+	}
+	if len(stub.createOpts) != 1 || stub.createOpts[0].Parent != "" {
+		t.Errorf("off-trunk create should carry no parent, got %+v", stub.createOpts)
+	}
+}
+
+// TestCreateNewParentInline: the create-new-inline path mints the parent epic
+// first, then creates the child under it — two creates, the child carrying the
+// minted parent's id.
+func TestCreateNewParentInline(t *testing.T) {
+	stub := &stubBD{show: map[string]*bd.Issue{}}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/new",
+		"title=Child&type=task&priority=2&parent=__new__&parent_new=New+Epic")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /new = %d, want 200", rec.Code)
+	}
+	if len(stub.createOpts) != 2 {
+		t.Fatalf("inline new-parent should create parent then child, got %+v", stub.createOpts)
+	}
+	if stub.createOpts[0].Title != "New Epic" || stub.createOpts[0].Type != "epic" {
+		t.Errorf("first create should mint the parent epic, got %+v", stub.createOpts[0])
+	}
+	if stub.createOpts[1].Title != "Child" || stub.createOpts[1].Parent != "demo-new" {
+		t.Errorf("child should hang under the minted parent, got %+v", stub.createOpts[1])
+	}
+}
+
+// TestCreateNewParentNeedsTitle: choosing create-new-inline without a title is
+// rejected; nothing is created.
+func TestCreateNewParentNeedsTitle(t *testing.T) {
+	stub := &stubBD{show: map[string]*bd.Issue{}}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/new", "title=Child&type=task&priority=2&parent=__new__&parent_new=")
+
+	body := rec.Body.String()
+	if !strings.Contains(body, errNoParentTitle.Error()) {
+		t.Errorf("form hides the new-parent-title error:\n%s", body)
+	}
+	if len(stub.createOpts) != 0 {
+		t.Errorf("a titleless new-parent reached bd: %+v", stub.createOpts)
+	}
+}
+
+// TestCreateEmptyTitleIsHonest: a titleless create (with a valid parent choice)
+// re-renders the form with bd's error, not a half-made bead.
 func TestCreateEmptyTitleIsHonest(t *testing.T) {
 	srv := newTestServer(t, &stubBD{})
-	rec := send(t, srv, http.MethodPost, "/new", "title=&type=task&priority=2")
+	rec := send(t, srv, http.MethodPost, "/new", "title=&type=task&priority=2&parent=__off_trunk__")
 
 	body := rec.Body.String()
 	if !strings.Contains(body, `hx-post="/new"`) {
@@ -1167,12 +1321,12 @@ var (
 // one stale untagged bead. bd list omits closed, so no closed beads appear.
 var insightsIssues = []bd.Issue{
 	{ID: "demo-root", Title: "DEMO trunk", IssueType: "epic", Status: "open"}, // region; demo-i is the tile
-	{ID: "demo-i", Parent: "demo-root", Title: "Insights epic", IssueType: "epic", Status: "open", Priority: 1, UpdatedAt: insFresh},
-	{ID: "demo-i.1", Parent: "demo-i", Title: "Foundation", Status: "open", Priority: 1, Labels: []string{"core"}, UpdatedAt: insFresh},
-	{ID: "demo-i.2", Parent: "demo-i", Title: "Mid", Status: "open", Priority: 2, Labels: []string{"core", "ui"}, UpdatedAt: insFresh},
-	{ID: "demo-i.3", Parent: "demo-i", Title: "Leaf", Status: "open", Priority: 2, Labels: []string{"ui"}, UpdatedAt: insFresh},
-	{ID: "demo-i.4", Parent: "demo-i", Title: "Active", Status: "in_progress", Priority: 2, Labels: []string{"core"}, UpdatedAt: insFresh},
-	{ID: "demo-i.5", Parent: "demo-i", Title: "Stale", Status: "open", Priority: 3, UpdatedAt: insStale},
+	{ID: "demo-i", Parent: "demo-root", Title: "Insights epic", IssueType: "epic", Status: "open", Priority: new(1), UpdatedAt: insFresh},
+	{ID: "demo-i.1", Parent: "demo-i", Title: "Foundation", Status: "open", Priority: new(1), Labels: []string{"core"}, UpdatedAt: insFresh},
+	{ID: "demo-i.2", Parent: "demo-i", Title: "Mid", Status: "open", Priority: new(2), Labels: []string{"core", "ui"}, UpdatedAt: insFresh},
+	{ID: "demo-i.3", Parent: "demo-i", Title: "Leaf", Status: "open", Priority: new(2), Labels: []string{"ui"}, UpdatedAt: insFresh},
+	{ID: "demo-i.4", Parent: "demo-i", Title: "Active", Status: "in_progress", Priority: new(2), Labels: []string{"core"}, UpdatedAt: insFresh},
+	{ID: "demo-i.5", Parent: "demo-i", Title: "Stale", Status: "open", Priority: new(3), UpdatedAt: insStale},
 }
 
 var insightsDeps = []bd.DepEdge{
@@ -1242,9 +1396,11 @@ func TestIsStale(t *testing.T) {
 		{"zero time", "open", time.Time{}, false},
 	}
 	for _, c := range cases {
-		if got := isStale(c.status, c.updated, insightsNow); got != c.want {
-			t.Errorf("isStale(%s) = %v, want %v", c.name, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if got := isStale(c.status, c.updated, insightsNow); got != c.want {
+				t.Errorf("isStale = %v, want %v", got, c.want)
+			}
+		})
 	}
 }
 
@@ -1376,8 +1532,9 @@ func TestBeadPath(t *testing.T) {
 	}
 }
 
-// TestInsightsFragmentRenders: the dashboard returns its panels, the view-toggle
-// (with Insights active and links back to the other views), and the computed values.
+// TestInsightsFragmentRenders: the dashboard returns its panels, the scope marker
+// app.js reads to keep the top tab strip on Insights at this epic, and the computed
+// values. The view switcher itself is now top-level page chrome, not per-fragment.
 func TestInsightsFragmentRenders(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: insightsIssues, deps: insightsDeps})
 	srv.now = func() time.Time { return insightsNow }
@@ -1392,13 +1549,13 @@ func TestInsightsFragmentRenders(t *testing.T) {
 		"Move these",              // influence headline (consequence, not algorithm)
 		"Unblock these",           // bottleneck headline
 		"PageRank", "betweenness", // method survives as small provenance
-		"Ready to dispatch",           // the new READY-by-influence card
-		`hx-get="/list?epic=demo-i"`,  // toggle back to Table
-		`hx-get="/board?epic=demo-i"`, // and Board
-		`hx-get="/bead/demo-i.1"`,     // ranked rows click → drawer
-		`hx-target="#drawer"`,         // ...into the detail panel
-		"Foundation",                  // top influence bead title
-		"untagged",                    // hygiene warning (demo-i.5)
+		"Ready to dispatch",       // the new READY-by-influence card
+		`data-view="insights"`,    // scope marker: app.js syncs the Insights tab as active
+		`data-epic="demo-i"`,      // ...scoped to this epic, so a tab switch keeps the scope
+		`hx-get="/bead/demo-i.1"`, // ranked rows click → drawer
+		`hx-target="#drawer"`,     // ...into the detail panel
+		"Foundation",              // top influence bead title
+		"untagged",                // hygiene warning (demo-i.5)
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("insights fragment missing %q", want)
@@ -1415,8 +1572,8 @@ func TestInsightsFragmentRenders(t *testing.T) {
 // from another epic must not appear in the critical path or leaderboards.
 func TestInsightsScopedToEpic(t *testing.T) {
 	mixed := append(append([]bd.Issue(nil), insightsIssues...),
-		bd.Issue{ID: "demo-z", Parent: "demo-root", Title: "Other epic", IssueType: "epic", Status: "open", Priority: 2, UpdatedAt: insFresh},
-		bd.Issue{ID: "demo-z.1", Parent: "demo-z", Title: "Elsewhere", Status: "open", Priority: 2, UpdatedAt: insFresh})
+		bd.Issue{ID: "demo-z", Parent: "demo-root", Title: "Other epic", IssueType: "epic", Status: "open", Priority: new(2), UpdatedAt: insFresh},
+		bd.Issue{ID: "demo-z.1", Parent: "demo-z", Title: "Elsewhere", Status: "open", Priority: new(2), UpdatedAt: insFresh})
 	srv := newTestServer(t, &stubBD{issues: mixed, deps: insightsDeps})
 	srv.now = func() time.Time { return insightsNow }
 	body := do(t, srv, "/insights?epic=demo-i").Body.String()
@@ -1488,6 +1645,71 @@ func TestDepRemoveDropsBlocker(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "No blockers") {
 		t.Errorf("drawer still lists a blocker after remove:\n%s", body)
+	}
+}
+
+// TestLabelAddChipReflects: adding a plain chip forwards the bare label and the
+// redrawn drawer renders it as a removable chip.
+func TestLabelAddChipReflects(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/label", "key=ui")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST label = %d, want 200", rec.Code)
+	}
+	if len(stub.labelWrites) != 1 || stub.labelWrites[0] != (labelWrite{op: "add", id: "demo-x", label: "ui"}) {
+		t.Errorf("label add issued %+v, want one add(demo-x, ui)", stub.labelWrites)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "dr-chip") || !strings.Contains(body, "ui") {
+		t.Errorf("redrawn drawer missing the new chip:\n%s", body)
+	}
+}
+
+// TestLabelAddKeyValueEncodes: a key + value pair joins into the `key=value`
+// label bd stores, and the redraw renders it as a key-value chip.
+func TestLabelAddKeyValueEncodes(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/label", "key=owner&value=dk")
+
+	if len(stub.labelWrites) != 1 || stub.labelWrites[0].label != "owner=dk" {
+		t.Errorf("label add issued %+v, want encoded owner=dk", stub.labelWrites)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "dr-chip-kv") {
+		t.Errorf("redrawn drawer missing the key-value chip:\n%s", body)
+	}
+}
+
+// TestLabelRemoveReflects: the chip's remove form forwards the raw label and the
+// redrawn drawer no longer renders it.
+func TestLabelRemoveReflects(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task", Labels: []string{"ui", "owner=dk"}})
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/label/remove", "label=owner%3Ddk")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST label remove = %d, want 200", rec.Code)
+	}
+	if len(stub.labelWrites) != 1 || stub.labelWrites[0] != (labelWrite{op: "remove", id: "demo-x", label: "owner=dk"}) {
+		t.Errorf("label remove issued %+v, want one remove(demo-x, owner=dk)", stub.labelWrites)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "owner") {
+		t.Errorf("drawer still renders the removed pair:\n%s", body)
+	}
+}
+
+// TestLabelAddError: a bd rejection surfaces in the drawer rather than a silent
+// 200-with-no-change.
+func TestLabelAddError(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	stub.writeErr = fmt.Errorf("bd label add: %w", bd.ErrBD)
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/label", "key=ui")
+
+	if !strings.Contains(rec.Body.String(), "label add") {
+		t.Errorf("rejected label add missing bd's message:\n%s", rec.Body.String())
 	}
 }
 
