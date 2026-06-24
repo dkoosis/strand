@@ -313,7 +313,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	}()
 	s.render(w, "page", pageData{
 		Strand: f,
-		List:   listViewFor(f, ""),
+		List:   listViewFor(f, "", "", ""),
 		Repos:  s.repoMenu(""),
 		AsOf:   s.asOf(repo),
 	})
@@ -357,27 +357,87 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// epic=<id> narrows the pane to a single tile; absent means the whole region.
-	s.render(w, "list", listViewFor(f, r.URL.Query().Get("epic")))
+	q := r.URL.Query()
+	s.render(w, "list", listViewFor(f, q.Get("epic"), q.Get("region"), q.Get("filter")))
 }
 
-// listViewFor builds the bead-list pane from the strand: its first region,
-// optionally narrowed to one epic by id. An empty strand yields an empty view.
-// Both the full-page render and the htmx list swap go through here, so the two
-// panes can't diverge.
-func listViewFor(f strand.Model, epicID string) listView {
+// listViewFor builds the bead-list pane from the strand. Scope precedence:
+// filter=="bugs" gathers every bug across all regions; else epicID narrows to one
+// tile; else regionKey narrows to one trunk; else the default is the whole strand
+// (every region flattened — "everything"). Epic and region are both searched
+// across all regions. An empty strand yields an empty view. The full-page render
+// and the htmx swaps all go through here, so the panes, board, and insights can't
+// diverge.
+func listViewFor(f strand.Model, epicID, regionKey, filter string) listView {
 	if len(f.Regions) == 0 {
 		return listView{}
 	}
-	view := listView{Region: f.Regions[0]}
+	if filter == "bugs" {
+		return listView{Region: bugRegion(f)}
+	}
 	if epicID != "" {
-		for _, e := range view.Region.Epics {
-			if e.ID == epicID {
-				view.Epic, view.HasEpic = e, true
-				break
+		for _, r := range f.Regions {
+			for _, e := range r.Epics {
+				if e.ID == epicID {
+					return listView{Region: r, Epic: e, HasEpic: true}
+				}
 			}
 		}
 	}
-	return view
+	if regionKey != "" {
+		for _, r := range f.Regions {
+			if r.Key == regionKey {
+				return listView{Region: r}
+			}
+		}
+	}
+	return listView{Region: everythingRegion(f)}
+}
+
+// everythingRegion flattens every trunk into one synthetic scope named
+// "Everything", so the unscoped list/board/insights show all live work, not just
+// the largest region. A single-region strand is returned as-is (it keeps its own
+// name — a no-trunk project reads as the project, not "Everything").
+func everythingRegion(f strand.Model) strand.Region {
+	if len(f.Regions) == 1 {
+		return f.Regions[0]
+	}
+	total := 0
+	for _, r := range f.Regions {
+		total += len(r.Epics)
+	}
+	out := strand.Region{Name: "Everything", Color: f.Regions[0].Color, Epics: make([]strand.Epic, 0, total)}
+	for _, r := range f.Regions {
+		out.Epics = append(out.Epics, r.Epics...)
+		out.Open += r.Open
+	}
+	return out
+}
+
+// bugRegion gathers every bug-type bead across all regions into one synthetic
+// scope named "Bugs", keeping each bug under its own epic (epics with no bug drop
+// out). It is the list-side companion to the treemap's bug dot.
+func bugRegion(f strand.Model) strand.Region {
+	out := strand.Region{Name: "Bugs", Color: f.Regions[0].Color}
+	for _, r := range f.Regions {
+		for _, e := range r.Epics {
+			var bugs []strand.Bead
+			for _, b := range e.Beads {
+				if b.Type == "bug" {
+					bugs = append(bugs, b)
+				}
+			}
+			if len(bugs) == 0 {
+				continue
+			}
+			scoped := e
+			scoped.Beads = bugs
+			scoped.Open = len(bugs)
+			out.Epics = append(out.Epics, scoped)
+			out.Open += len(bugs)
+		}
+	}
+	return out
 }
 
 // pivotField is one kanban axis: its name (the bd field a drop writes), the
@@ -445,8 +505,9 @@ func (s *Server) handleBoard(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, err)
 		return
 	}
-	view := listViewFor(f, r.URL.Query().Get("epic"))
-	s.render(w, "board", buildBoard(&view, r.URL.Query().Get("pivot")))
+	q := r.URL.Query()
+	view := listViewFor(f, q.Get("epic"), q.Get("region"), q.Get("filter"))
+	s.render(w, "board", buildBoard(&view, q.Get("pivot")))
 }
 
 // buildBoard pivots the scope's beads into columns. Both the whole-region and
@@ -762,7 +823,8 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f := strand.Build(issues, s.synFor(repo))
-	view := listViewFor(f, r.URL.Query().Get("epic"))
+	q := r.URL.Query()
+	view := listViewFor(f, q.Get("epic"), q.Get("region"), q.Get("filter"))
 	model, err := s.insightsModel(ctx, src, &view, issues)
 	if err != nil {
 		s.renderError(w, err)

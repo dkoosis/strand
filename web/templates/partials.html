@@ -5,8 +5,8 @@
 {{define "treemap"}}
 <div class="treemap">
   {{range .Regions}}
-  <div class="region" data-name="{{.Name}}" data-open="{{.Open}}" style="--rc:{{.Color}};left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%">
-    <div class="rg-head mm-filter" role="button" tabindex="0" data-name="{{.Name}}" aria-label="{{.Name}} — whole region"></div>
+  <div class="region" data-name="{{.Name}}" data-region="{{.Key}}" data-open="{{.Open}}" style="--rc:{{.Color}};left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%">
+    <div class="rg-head mm-filter" role="button" tabindex="0" data-name="{{.Name}}" data-region="{{.Key}}" aria-label="{{.Name}} — whole region"></div>
     <div class="rg-body">
       {{range .Epics}}
       <div class="tile mm-filter" role="button" tabindex="0"
@@ -56,7 +56,7 @@
   <span class="bb-label">pivot</span>
   {{$pv := .Pivot}}{{$ep := ""}}{{if .HasEpic}}{{$ep = .Epic.ID}}{{end}}
   {{range .Pivots}}
-  <button class="bb-pivot{{if eq . $pv}} active{{end}}" type="button"
+  <button class="bb-pivot{{if eq . $pv}} active{{end}}" type="button" data-pivot="{{.}}"
           hx-get="/board?pivot={{.}}{{if $ep}}&epic={{$ep}}{{end}}" hx-target="#listPane">{{.}}</button>
   {{end}}
 </div>

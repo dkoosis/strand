@@ -77,47 +77,110 @@ function activeView() {
 function activeEpic() {
   return viewport?.dataset.epic || "";
 }
-// viewURL builds the fragment endpoint for a view scoped to an epic (or the whole
-// strand when epic is empty). One place owns the ?epic= shape so tabs and minimap
-// clicks can't drift.
-function viewURL(view, epic) {
+// activeRegion reads the trunk scope (a region Key), set by a region-head click.
+function activeRegion() {
+  return viewport?.dataset.region || "";
+}
+// activeFilter reads the cross-strand scope filter ("" = everything, "bugs"). It
+// is orthogonal to the epic scope and overrides it: a filter is a whole-strand cut.
+function activeFilter() {
+  return viewport?.dataset.filter || "";
+}
+// viewURL builds the fragment endpoint for a view at the current scope. Precedence
+// matches the server's listViewFor: a filter (bugs) is a whole-strand cut and wins,
+// then one epic, then one region; with none, the bare view is the whole strand
+// ("everything"). One place owns the query shape so the tabs, scope chips, and
+// minimap clicks can't drift.
+function viewURL(view, epic, region, filter) {
   const path = VIEW_PATHS[view] || VIEW_PATHS.list;
-  return epic ? `${path}?epic=${encodeURIComponent(epic)}` : path;
+  if (filter) return `${path}?filter=${encodeURIComponent(filter)}`;
+  if (epic) return `${path}?epic=${encodeURIComponent(epic)}`;
+  if (region) return `${path}?region=${encodeURIComponent(region)}`;
+  return path;
 }
 // syncChrome reflects the active view+epic into the chrome: the tab strip's pressed
 // state, the scope hint, and the minimap's "all" clear affordance.
 function syncChrome() {
   const view = activeView();
   const epic = activeEpic();
+  const filter = activeFilter();
   document.querySelectorAll(".viewtab").forEach((tab) => {
     const on = tab.dataset.view === view;
     tab.classList.toggle("active", on);
     tab.setAttribute("aria-pressed", on ? "true" : "false");
   });
+  const region = activeRegion();
+  // Scope chips: "everything" is on when nothing narrows the strand; "bugs" when
+  // its filter is live. An epic or region scope (from the minimap) leaves both off.
+  document.querySelectorAll(".scopetab").forEach((tab) => {
+    const want = tab.dataset.scope === "bugs" ? "bugs" : "";
+    const on = !epic && !region && filter === want;
+    tab.classList.toggle("active", on);
+    tab.setAttribute("aria-pressed", on ? "true" : "false");
+  });
   const hint = document.getElementById("scopeHint");
   if (hint) {
-    const name = epic
-      ? document.querySelector(`.tile[data-epic="${CSS.escape(epic)}"]`)?.dataset.name
-      : "";
-    hint.textContent = epic ? `Filtered · ${name || epic}` : "Everything";
+    let name = "";
+    if (epic) name = document.querySelector(`.tile[data-epic="${CSS.escape(epic)}"]`)?.dataset.name || epic;
+    else if (region) name = document.querySelector(`.region[data-region="${CSS.escape(region)}"]`)?.dataset.name || region;
+    hint.textContent = name ? `Filtered · ${name}` : "";
   }
   const clear = document.getElementById("mmClear");
-  if (clear) clear.hidden = !epic;
-  // The active epic's tile lights up, and its parent module's border turns to the
-  // module's legend color (--rc) so the swatch and the map agree.
+  if (clear) clear.hidden = !epic && !region && !filter;
+  // The active epic's tile lights up; a region scope (or the region owning the
+  // active epic) lights the whole module's border in its legend color (--rc) so
+  // the swatch and the map agree.
   document.querySelectorAll(".tile.mm-filter").forEach((t) => {
     t.classList.toggle("on", !!epic && t.dataset.epic === epic);
   });
-  document.querySelectorAll(".treemap .region").forEach((region) => {
-    const owns = !!epic && region.querySelector(`.tile[data-epic="${CSS.escape(epic)}"]`);
-    region.classList.toggle("on", !!owns);
+  document.querySelectorAll(".treemap .region").forEach((rg) => {
+    const ownsEpic = !!epic && rg.querySelector(`.tile[data-epic="${CSS.escape(epic)}"]`);
+    const isScoped = !!region && rg.dataset.region === region;
+    rg.classList.toggle("on", !!ownsEpic || isScoped);
   });
 }
-// A tab click loads its view at the CURRENT scope. The button's hx-get is static
-// (the bare view), so rewrite it just before htmx fires to carry the active epic.
+// A tab click loads its view at the CURRENT scope; a scope chip switches the scope
+// in the ACTIVE view. Both buttons carry a static bare-view hx-get, so rewrite the
+// path just before htmx fires. A chip click also commits the new scope to #viewport
+// up front (afterSwap can't recover a filter from the server-rendered pane-head).
 document.body.addEventListener("htmx:configRequest", (e) => {
+  // A refreshList (after a create/edit/delete) reloads #listPane off its static
+  // hx-get="/list" — reload the ACTIVE view at the live scope instead, so an edit
+  // doesn't snap the pane back to an unscoped Table.
+  if (e.detail.elt.id === "listPane") {
+    e.detail.path = viewURL(activeView(), activeEpic(), activeRegion(), activeFilter());
+    return;
+  }
   const tab = e.detail.elt.closest?.(".viewtab");
-  if (tab) e.detail.path = viewURL(tab.dataset.view, activeEpic());
+  if (tab) {
+    e.detail.path = viewURL(tab.dataset.view, activeEpic(), activeRegion(), activeFilter());
+    return;
+  }
+  const chip = e.detail.elt.closest?.(".scopetab");
+  if (chip) {
+    const filter = chip.dataset.scope === "bugs" ? "bugs" : "";
+    viewport.dataset.epic = "";
+    viewport.dataset.region = "";
+    viewport.dataset.filter = filter;
+    e.detail.path = viewURL(activeView(), "", "", filter);
+    return;
+  }
+  // A board pivot carries a static /board?pivot= URL that omits the live filter/
+  // region scope — rewrite it onto the active scope so changing Status/Priority
+  // doesn't silently widen the board back to Everything.
+  const pivot = e.detail.elt.closest?.(".bb-pivot");
+  if (pivot) {
+    const base = viewURL("board", activeEpic(), activeRegion(), activeFilter());
+    e.detail.path = `${base}${base.includes("?") ? "&" : "?"}pivot=${encodeURIComponent(pivot.dataset.pivot)}`;
+    return;
+  }
+  // The minimap's foot clear drops every scope and reloads the active view whole.
+  if (e.detail.elt.id === "mmClear") {
+    viewport.dataset.epic = "";
+    viewport.dataset.region = "";
+    viewport.dataset.filter = "";
+    e.detail.path = viewURL(activeView(), "", "", "");
+  }
 });
 // A minimap region/epic click filters the ACTIVE view to that scope (spec §2). An
 // epic tile scopes to its id; a region head clears the scope (the whole region is
@@ -125,8 +188,11 @@ document.body.addEventListener("htmx:configRequest", (e) => {
 // endpoint renders, not a hardcoded /list.
 function minimapFilter(el) {
   const epic = el.dataset.epic || "";
+  const region = el.dataset.region || ""; // set on a region head, absent on a tile
   viewport.dataset.epic = epic;
-  htmx.ajax("GET", viewURL(activeView(), epic), { target: "#listPane", swap: "innerHTML" });
+  viewport.dataset.region = region;
+  viewport.dataset.filter = ""; // a map scope replaces any whole-strand filter
+  htmx.ajax("GET", viewURL(activeView(), epic, region, ""), { target: "#listPane", swap: "innerHTML" });
 }
 document.addEventListener("click", (e) => {
   const f = e.target.closest(".mm-filter");

@@ -307,7 +307,7 @@ func TestReadHelpersTakeReadSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildStrand: %v", err)
 	}
-	view := listViewFor(f, "")
+	view := listViewFor(f, "", "", "")
 	if _, err := srv.insightsModel(ctx, src, &view, sampleIssues); err != nil {
 		t.Fatalf("insightsModel: %v", err)
 	}
