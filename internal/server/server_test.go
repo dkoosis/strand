@@ -356,7 +356,7 @@ func oneBead(iss *bd.Issue) *stubBD {
 var sampleIssues = []bd.Issue{
 	{ID: "demo-root", Title: "DEMO trunk", IssueType: "epic", Status: "open"}, // region; epics below are tiles
 	{ID: "demo-e1", Parent: "demo-root", Title: "Strand epic", IssueType: "epic", Status: "open", Priority: new(1)},
-	{ID: "demo-e1.a", Parent: "demo-e1", Title: "Wire the thing", Status: "open", Priority: new(0)},
+	{ID: "demo-e1.a", Parent: "demo-e1", Title: "Wire the thing", IssueType: "bug", Status: "open", Priority: new(0)},
 	{ID: "demo-e1.b", Parent: "demo-e1", Title: "Test the thing", Status: "in_progress", Priority: new(2)},
 	{ID: "demo-e2", Parent: "demo-root", Title: "Lone task", IssueType: "task", Status: "open", Priority: new(3)},
 }
@@ -383,7 +383,7 @@ func TestStrandPageRenders(t *testing.T) {
 		`class="treemap"`,
 		`data-epic="demo-e1"`, // tile carries its filter identity (app.js routes the click)
 		`data-epic="demo-e2"`,
-		`class="flag"`, // demo-e1 holds P0/P1 work
+		`class="flag"`, // demo-e1 holds a bug bead
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing %q", want)

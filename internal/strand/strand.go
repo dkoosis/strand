@@ -61,8 +61,8 @@ type Bead struct {
 
 // defaultPriority is the render priority for a bead whose bd.Issue omitted the
 // field (Issue.Priority == nil). It matches bd's own default (P2) and keeps an
-// absent-priority bead off the P0/P1 active-work flag and the top of priority-asc
-// sort — never a false P0 (str-zvh).
+// absent-priority bead off the top of the priority-asc sort — never a false P0
+// (str-zvh).
 const defaultPriority = 2
 
 // NewBead projects a bd.Issue onto the render-facing Bead — the one place that
@@ -87,7 +87,7 @@ func NewBead(i *bd.Issue) Bead {
 }
 
 // Epic is a story tile: a root issue plus its open descendants. Open is the tile
-// weight; Flag marks an epic holding active P0/P1 work.
+// weight; Flag marks an epic holding a bug-type bead (the "bug dot").
 type Epic struct {
 	ID    string
 	Name  string
@@ -348,7 +348,7 @@ func buildEpic(rootID string, members []bd.Issue, byID map[string]bd.Issue) Epic
 	e.Beads = make([]Bead, 0, len(members))
 	for i := range members {
 		b := NewBead(&members[i])
-		if b.Priority <= 1 {
+		if b.Type == "bug" {
 			e.Flag = true
 		}
 		e.Beads = append(e.Beads, b)

@@ -15,7 +15,7 @@ func TestBuildRegionsFromTrunks(t *testing.T) {
 		{ID: "t-sub", Title: "SUBSTRATE trunk — code health", IssueType: "epic", Status: "open"}, // region
 		{ID: "e-1", Title: "Epic one", IssueType: "epic", Parent: "t-sub", Status: "open"},       // tile
 		{ID: "e-1.a", Parent: "e-1", Status: "open", Priority: new(2)},
-		{ID: "e-1.b", Parent: "e-1", Status: "in_progress", Priority: new(0)},
+		{ID: "e-1.b", Parent: "e-1", IssueType: "bug", Status: "in_progress", Priority: new(0)},
 		{ID: "e-1.c", Parent: "e-1", Status: "closed", Priority: new(2)},                                              // excluded
 		{ID: "e-2", Title: "Lone feature epic", IssueType: "epic", Parent: "t-sub", Status: "open", Priority: new(3)}, // tile, 1 open
 		{ID: "loose-1", Title: "Standalone", IssueType: "task", Status: "open", Priority: new(2)},                     // catch-all
@@ -47,10 +47,10 @@ func TestBuildRegionsFromTrunks(t *testing.T) {
 		t.Errorf("tile[1] = %s/%d, want e-2/1", e[1].ID, e[1].Open)
 	}
 	if !e[0].Flag {
-		t.Error("tile e-1 holds a P0 bead, want Flag=true")
+		t.Error("tile e-1 holds a bug bead, want Flag=true")
 	}
 	if e[1].Flag {
-		t.Error("tile e-2 has only P3 work, want Flag=false")
+		t.Error("tile e-2 has no bug, want Flag=false")
 	}
 	loose := f.Regions[1]
 	if loose.Name != "off-trunk" || loose.Open != 1 {
@@ -208,7 +208,7 @@ func TestSquarifyEmptyAndZero(t *testing.T) {
 
 func TestNewBeadAbsentPriorityDefaultsToP2(t *testing.T) {
 	// Absent priority (nil) must NOT render as P0 — it defaults to P2 so it
-	// neither trips the epic P0/P1 flag nor sorts to the top of priority-asc.
+	// does not sort to the top of priority-asc.
 	got := NewBead(&bd.Issue{ID: "a", Priority: nil})
 	if got.Priority != 2 {
 		t.Errorf("absent priority -> %d, want 2 (P2 default)", got.Priority)
