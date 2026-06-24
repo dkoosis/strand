@@ -56,7 +56,7 @@
   <span class="bb-label">pivot</span>
   {{$pv := .Pivot}}{{$ep := ""}}{{if .HasEpic}}{{$ep = .Epic.ID}}{{end}}
   {{range .Pivots}}
-  <button class="bb-pivot{{if eq . $pv}} active{{end}}" type="button"
+  <button class="bb-pivot{{if eq . $pv}} active{{end}}" type="button" data-pivot="{{.}}"
           hx-get="/board?pivot={{.}}{{if $ep}}&epic={{$ep}}{{end}}" hx-target="#listPane">{{.}}</button>
   {{end}}
 </div>

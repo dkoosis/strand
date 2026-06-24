@@ -402,7 +402,11 @@ func everythingRegion(f strand.Model) strand.Region {
 	if len(f.Regions) == 1 {
 		return f.Regions[0]
 	}
-	out := strand.Region{Name: "Everything", Color: f.Regions[0].Color}
+	total := 0
+	for _, r := range f.Regions {
+		total += len(r.Epics)
+	}
+	out := strand.Region{Name: "Everything", Color: f.Regions[0].Color, Epics: make([]strand.Epic, 0, total)}
 	for _, r := range f.Regions {
 		out.Epics = append(out.Epics, r.Epics...)
 		out.Open += r.Open
