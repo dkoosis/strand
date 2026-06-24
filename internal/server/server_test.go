@@ -1601,6 +1601,12 @@ func TestHandleHomePrefetchesDeps(t *testing.T) {
 	if rec := do(t, srv, "/"); rec.Code != http.StatusOK {
 		t.Fatalf("GET / = %d, want 200", rec.Code)
 	}
+	// The prefetch runs in a background goroutine (so the landing never blocks on
+	// the spawn), so poll for it rather than asserting immediately.
+	deadline := time.Now().Add(2 * time.Second)
+	for src.depsCalls.Load() != 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
 	if src.depsCalls.Load() != 1 {
 		t.Errorf("Deps spawned %d times on open, want 1 — the landing must prefetch deps", src.depsCalls.Load())
 	}

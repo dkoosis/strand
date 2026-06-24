@@ -301,9 +301,15 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	// Open warms every view, not just this one: buildStrand warmed the List
 	// snapshot, so prefetch the repo-wide Deps too — that makes the first Insights
 	// click (the one view needing edges) hit memory instead of paying a cold `dep
-	// list` spawn (str-udl). A prefetch failure is non-fatal: the landing still
-	// renders, and Insights falls back to fetching its own deps on demand.
-	_, _ = src.Deps(ctx)
+	// list` spawn (str-udl). Warm it in the background on a detached context: the
+	// landing must not block on a ~0.5s spawn the user may never need, and the
+	// request ctx dies the moment handleHome returns. A prefetch failure is
+	// non-fatal — the landing renders and Insights fetches its own deps on demand.
+	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, _ = src.Deps(bgCtx)
+	}()
 	s.render(w, "page", pageData{
 		Strand: f,
 		List:   listViewFor(f, ""),
