@@ -1219,11 +1219,12 @@ func (s *Server) synFor(repo registry.Repo) strand.Synthesis {
 	return syn
 }
 
-// northStarMini returns the one-line North Star for a repo, read from
-// north-star-mini.md at the repo root (decision nug 952acad4aca2). It tolerates a
-// leading YAML frontmatter block (the file may be a vault nug) and a Markdown
-// heading marker. A missing or empty file yields "" so the masthead renders
-// blank instead of crashing (str-d2s).
+// northStarMini returns the North Star reminder for a repo, read from
+// north-star-mini.md at the repo root (decision nug 952acad4aca2). The file is a
+// few curated lines; the masthead renders them verbatim (newlines preserved). It
+// tolerates a leading YAML frontmatter block (the file may be a vault nug) and a
+// Markdown heading marker on the first line. A missing or empty file yields "" so
+// the masthead renders blank instead of crashing (str-d2s).
 func northStarMini(repoPath string) string {
 	if repoPath == "" {
 		return ""
@@ -1232,12 +1233,13 @@ func northStarMini(repoPath string) string {
 	if err != nil {
 		return ""
 	}
-	return firstContentLine(string(b))
+	return northStarBody(string(b))
 }
 
-// firstContentLine skips a leading --- frontmatter block and returns the first
-// non-empty line with any Markdown heading marker trimmed.
-func firstContentLine(s string) string {
+// northStarBody skips a leading --- frontmatter block and returns the remaining
+// body trimmed, with any Markdown heading marker stripped from the first line.
+// Internal newlines are preserved so a few-line reminder renders as a few lines.
+func northStarBody(s string) string {
 	lines := strings.Split(s, "\n")
 	i := 0
 	if len(lines) > 0 && strings.TrimSpace(lines[0]) == "---" {
@@ -1245,12 +1247,11 @@ func firstContentLine(s string) string {
 		}
 		i++ // skip the closing ---
 	}
-	for ; i < len(lines); i++ {
-		if line := strings.TrimSpace(lines[i]); line != "" {
-			return strings.TrimSpace(strings.TrimLeft(line, "#"))
-		}
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" { // drop leading blanks
+		i++
 	}
-	return ""
+	body := strings.TrimRight(strings.Join(lines[i:], "\n"), " \t\n")
+	return strings.TrimSpace(strings.TrimLeft(body, "#")) // strip a leading heading marker
 }
 
 // snapshotCache holds one in-process read snapshot per repo, keyed by the repo's

@@ -33,6 +33,8 @@ func TestNorthStarMiniReadsLine(t *testing.T) {
 		{"heading", "# Make the invisible legible.\n", "Make the invisible legible."},
 		{"frontmatter nug", "---\nid: abc\ntype: reference.decision\n---\nMake the invisible legible.\n", "Make the invisible legible."},
 		{"leading blanks", "\n\n  spaced line  \n", "spaced line"},
+		{"few lines preserved", "First line.\nSecond line.\nThird line.\n", "First line.\nSecond line.\nThird line."},
+		{"few lines under frontmatter", "---\nid: abc\n---\nA reminder.\nAnother.\n", "A reminder.\nAnother."},
 		{"empty file", "", ""},
 		{"frontmatter only", "---\nid: abc\n---\n", ""},
 	}
