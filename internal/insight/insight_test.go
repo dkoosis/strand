@@ -157,13 +157,13 @@ func TestLeaderboardEmptyWithoutEdges(t *testing.T) {
 // are blocked and the in-progress i.4 is not ready.
 func TestReadyQueue(t *testing.T) {
 	beads, idx := insScope(t)
-	m := graph.Compute(
-		[]string{"demo-i.1", "demo-i.2", "demo-i.3", "demo-i.4", "demo-i.5"},
-		[]graph.Edge{
-			{Dependent: "demo-i.2", Dependency: "demo-i.1"},
-			{Dependent: "demo-i.3", Dependency: "demo-i.2"},
-		})
-	q := readyQueue(beads, blockerCounts(insightsDeps, idx), idx, m.PageRank, insightsNow)
+	edges := []graph.Edge{
+		{Dependent: "demo-i.2", Dependency: "demo-i.1"},
+		{Dependent: "demo-i.3", Dependency: "demo-i.2"},
+	}
+	m := graph.Compute([]string{"demo-i.1", "demo-i.2", "demo-i.3", "demo-i.4", "demo-i.5"}, edges)
+	frees, down := downstreamReach(edges, beads)
+	q := readyQueue(beads, blockerCounts(insightsDeps, idx), idx, m.PageRank, frees, down, insightsNow)
 	ids := make([]string, len(q))
 	for i := range q {
 		ids[i] = q[i].ID

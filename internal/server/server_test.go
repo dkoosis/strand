@@ -1349,16 +1349,17 @@ func TestInsightsFragmentRenders(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"Triage", "Critical path", "Label health",
-		"Move these",              // influence headline (consequence, not algorithm)
-		"Unblock these",           // bottleneck headline
-		"PageRank", "betweenness", // method survives as small provenance
-		"Ready to dispatch",       // the new READY-by-influence card
+		"Shape of the work", "Critical path", "Label health",
+		"Do next",                 // the frees-ranked dispatch list
+		"Hotspots",                // load-bearing lens (was PageRank column)
+		"Bottlenecks",             // bridge lens (was betweenness column)
+		"frees",                   // do-next consequence framing
+		"lean on this",            // hotspot structural read
 		`data-view="insights"`,    // scope marker: app.js syncs the Insights tab as active
 		`data-epic="demo-i"`,      // ...scoped to this epic, so a tab switch keeps the scope
-		`hx-get="/bead/demo-i.1"`, // ranked rows click → drawer
+		`hx-get="/bead/demo-i.1"`, // referenced rows click → drawer
 		`hx-target="#drawer"`,     // ...into the detail panel
-		"Foundation",              // top influence bead title
+		"Foundation",              // top load-bearing bead title
 		"untagged",                // hygiene warning (demo-i.5)
 	} {
 		if !strings.Contains(body, want) {
