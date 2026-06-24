@@ -30,10 +30,14 @@ type Registry struct {
 	jobs map[string]string
 }
 
-// citeRE matches a `JTBD: <id>` citation anywhere in a description, case-
-// insensitive. The id is the bead-fmt id-token charset (letters, digits, dot,
-// dash, underscore); the first match wins.
-var citeRE = regexp.MustCompile(`(?i)JTBD:\s*([A-Za-z0-9._-]+)`)
+// citeRE matches a `JTBD: <id>` citation line, case-insensitive. The agreed
+// storage format is a dedicated line, so the match is anchored to line-start
+// (`(?m)^`) with only horizontal whitespace before the id — this keeps a prose
+// `JTBD:` heading (with the value on the next line) from capturing the wrong
+// token, and the line anchor alone rejects `NOTJTBD:`-style false positives.
+// The id is the bead-fmt id-token charset (letters, digits, dot, dash,
+// underscore); the first matching line wins.
+var citeRE = regexp.MustCompile(`(?im)^[ \t]*JTBD:[ \t]*([A-Za-z0-9._-]+)`)
 
 // Load reads docs/jtbd.md under repoPath and parses its pipe table into an
 // id→job map. A missing or unreadable file yields an empty Registry, not an
@@ -92,7 +96,9 @@ func parse(body string) Registry {
 // the line is a row at all (fenced by a leading and trailing `|`).
 func tableRow(line string) ([]string, bool) {
 	t := strings.TrimSpace(line)
-	if !strings.HasPrefix(t, "|") || !strings.HasSuffix(t, "|") {
+	// len(t) < 2 guards the slice below: a lone "|" is prefix and suffix "|" at
+	// once, so t[1:len(t)-1] would be t[1:0] — a low>high slice panic.
+	if len(t) < 2 || !strings.HasPrefix(t, "|") || !strings.HasSuffix(t, "|") {
 		return nil, false
 	}
 	parts := strings.Split(t[1:len(t)-1], "|")

@@ -7,9 +7,14 @@ import (
 )
 
 func TestParseTableResolves(t *testing.T) {
+	// The malformed rows (a lone pipe, empty pipes) must parse without panicking
+	// and contribute nothing — a stray `|` once paniced the slice in tableRow.
 	body := `# Jobs to be done
 
 Some prose before the table.
+
+|
+||
 
 | id    | job                          |
 |-------|------------------------------|
@@ -46,6 +51,11 @@ func TestCite(t *testing.T) {
 		{"jtbd: j-7.a citation lowercased", "j-7.a", true},
 		{"no citation here", "", false},
 		{"", "", false},
+		// A prose heading whose value is on the NEXT line must not capture it —
+		// the citation is a dedicated line, so a label-only "JTBD:" resolves nothing.
+		{"JTBD:\nSee why a bead matters", "", false},
+		// A word ending in JTBD: is not a citation (line-anchor rejects it).
+		{"NOTJTBD: j-001", "", false},
 	}
 	for _, tc := range tests {
 		gotID, gotOK := Cite(tc.desc)
