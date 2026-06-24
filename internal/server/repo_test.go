@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/dkoosis/strand/internal/bd"
-	"github.com/dkoosis/strand/internal/forest"
 	"github.com/dkoosis/strand/internal/registry"
+	"github.com/dkoosis/strand/internal/strand"
 	"github.com/dkoosis/strand/web"
 )
 
@@ -20,7 +20,7 @@ func serverFor(t *testing.T, reg *registry.Registry, byPath map[string]IssueSour
 		t.Fatalf("parse templates: %v", err)
 	}
 	srcFor := func(r registry.Repo) IssueSource { return byPath[r.Path] }
-	return New(srcFor, reg, tmpl, web.Static(), forest.Synthesis{NorthStar: "ns"})
+	return New(srcFor, reg, tmpl, web.Static(), strand.Synthesis{NorthStar: "ns"})
 }
 
 // TestHeaderShowsActiveRepo: the landing's repo selector is captioned with the

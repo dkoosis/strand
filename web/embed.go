@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/dkoosis/strand/internal/bd"
-	"github.com/dkoosis/strand/internal/forest"
+	"github.com/dkoosis/strand/internal/strand"
 )
 
 //go:embed templates static
@@ -122,7 +122,7 @@ func priorities() []int {
 
 // regionLabel is the repo-button caption: the first region's name, or a dash
 // when the forest is empty.
-func regionLabel(regions []forest.Region) string {
+func regionLabel(regions []strand.Region) string {
 	if len(regions) == 0 {
 		return "—"
 	}

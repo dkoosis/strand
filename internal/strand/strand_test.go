@@ -1,4 +1,4 @@
-package forest
+package strand
 
 import (
 	"math"
@@ -159,7 +159,7 @@ func TestBuildUnrankedBeadSortsLastInRankedGroup(t *testing.T) {
 }
 
 // TestBuildEmptyHasNoRegions: a workspace with no live work yields an empty
-// forest, not a region with zero tiles.
+// strand, not a region with zero tiles.
 func TestBuildEmptyHasNoRegions(t *testing.T) {
 	f := Build([]bd.Issue{{ID: "x", Status: "closed"}}, Synthesis{Project: "demo"})
 	if len(f.Regions) != 0 {

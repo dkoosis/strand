@@ -8,30 +8,54 @@ document.getElementById("theme")?.addEventListener("click", () => {
   r.dataset.theme = r.dataset.theme === "dark" ? "light" : "dark";
 });
 
-// ---- hover hint bar ----
-// Each tile carries its identity in data-attrs; sweeping the treemap updates the
-// fixed hint bar with no server round-trip.
-const hintbar = document.getElementById("hintbar");
-function showHint(tile) {
-  if (!hintbar) return;
-  hintbar.classList.remove("idle");
-  const open = tile.dataset.open || "0";
-  const esc = tile.dataset.flag ? ` · <span class="esc">escalated</span>` : "";
-  hintbar.querySelector(".hint-name").textContent = tile.dataset.name || "";
-  hintbar.querySelector(".hint-meta").innerHTML = `<b style="color:var(--ink-2)">${open}</b> open${esc}`;
+// ---- minimap readout ----
+// The map itself carries no text — area is open work, color is the module. The
+// readout under it does the naming: at rest a color legend (each module), and on
+// hover the hovered tile's module with its epics listed, the one under the cursor
+// lit. All read from the rendered DOM, no server round-trip. The region is the
+// hover unit, so you never have to land on a sliver of a tile to read its name.
+const mmReadout = document.getElementById("mmReadout");
+const mmEsc = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+function mmLegend() {
+  if (!mmReadout) return;
+  mmReadout.classList.add("idle");
+  const rows = [...document.querySelectorAll(".treemap .region")].map((r) => {
+    const rc = r.style.getPropertyValue("--rc").trim();
+    return `<div class="mm-row"><span class="mm-sw" style="background:${rc}"></span>` +
+      `<span class="mm-rn">${mmEsc(r.dataset.name)}</span>` +
+      `<span class="mm-rc tnum">${r.dataset.open || 0}</span></div>`;
+  }).join("");
+  mmReadout.innerHTML = `<div class="mm-cap">modules</div>${rows}`;
 }
-function idleHint() {
-  if (!hintbar) return;
-  hintbar.classList.add("idle");
-  hintbar.querySelector(".hint-name").textContent = "Hover a tile";
-  hintbar.querySelector(".hint-meta").innerHTML = "";
+function mmModule(region, hoverEpic) {
+  if (!mmReadout || !region) return;
+  mmReadout.classList.remove("idle");
+  const rc = region.style.getPropertyValue("--rc").trim();
+  const tiles = [...region.querySelectorAll(".tile")];
+  let flagged = 0;
+  const eps = tiles.map((t) => {
+    if (t.dataset.flag) flagged++;
+    const on = hoverEpic && t.dataset.epic === hoverEpic ? " on" : "";
+    return `<div class="mm-ep${on}"><span class="mm-en">${mmEsc(t.dataset.name)}</span>` +
+      (t.dataset.flag ? `<span class="mm-fl"></span>` : ``) +
+      `<span class="mm-eo tnum">${t.dataset.open || 0}</span></div>`;
+  }).join("");
+  mmReadout.innerHTML =
+    `<div class="mm-mod"><span class="mm-sw" style="background:${rc}"></span>` +
+    `<span class="mm-mn">${mmEsc(region.dataset.name)}</span></div>` +
+    `<div class="mm-meta">${region.dataset.open || 0} open · ${tiles.length} epics` +
+    `${flagged ? ` · ${flagged} flagged` : ``}</div>` +
+    `<div class="mm-eps">${eps}</div>`;
 }
 // Delegate so tiles swapped in by htmx keep working.
 document.addEventListener("mouseover", (e) => {
   const tile = e.target.closest(".tile");
-  if (tile) showHint(tile);
+  if (tile) { mmModule(tile.closest(".region"), tile.dataset.epic); return; }
+  const head = e.target.closest(".rg-head");
+  if (head) mmModule(head.closest(".region"), "");
 });
-document.querySelector(".treemap")?.addEventListener("mouseleave", idleHint);
+document.querySelector(".minimap")?.addEventListener("mouseleave", mmLegend);
+mmLegend();
 
 // ---- view-centric chrome: tab strip + minimap filter ----
 // The active VIEW (Table/Board/Insights) is the centerpiece; the tab strip up top
@@ -50,7 +74,7 @@ function activeEpic() {
   return viewport?.dataset.epic || "";
 }
 // viewURL builds the fragment endpoint for a view scoped to an epic (or the whole
-// forest when epic is empty). One place owns the ?epic= shape so tabs and minimap
+// strand when epic is empty). One place owns the ?epic= shape so tabs and minimap
 // clicks can't drift.
 function viewURL(view, epic) {
   const path = VIEW_PATHS[view] || VIEW_PATHS.list;
@@ -71,12 +95,12 @@ function syncChrome() {
     const name = epic
       ? document.querySelector(`.tile[data-epic="${CSS.escape(epic)}"]`)?.dataset.name
       : "";
-    hint.textContent = epic ? `Filtered · ${name || epic}` : "Whole forest";
+    hint.textContent = epic ? `Filtered · ${name || epic}` : "Everything";
   }
   const clear = document.getElementById("mmClear");
   if (clear) clear.hidden = !epic;
   document.querySelectorAll(".mm-filter").forEach((el) => {
-    // Region heads carry no data-epic — they represent "whole forest", so they
+    // Region heads carry no data-epic — they represent "everything", so they
     // light up when nothing is filtered. Tiles light up when their epic matches.
     const isRegion = el.classList.contains("rg-head");
     el.classList.toggle("on", isRegion ? !epic : (!!epic && el.dataset.epic === epic));
@@ -90,7 +114,7 @@ document.body.addEventListener("htmx:configRequest", (e) => {
 });
 // A minimap region/epic click filters the ACTIVE view to that scope (spec §2). An
 // epic tile scopes to its id; a region head clears the scope (the whole region is
-// the forest's first region). Routes through htmx.ajax so the active view's
+// the strand's first region). Routes through htmx.ajax so the active view's
 // endpoint renders, not a hardcoded /list.
 function minimapFilter(el) {
   const epic = el.dataset.epic || "";

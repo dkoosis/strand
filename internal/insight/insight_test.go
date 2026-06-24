@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
-	"github.com/dkoosis/strand/internal/forest"
+	"github.com/dkoosis/strand/internal/strand"
 	"github.com/dkoosis/strand/internal/graph"
 )
 
@@ -41,14 +41,14 @@ var insightsDeps = []bd.DepEdge{
 
 // insScope returns the demo-i epic's actionable beads and the full-repo issue index,
 // the two inputs the pure insight helpers take. It mirrors how the server narrows a
-// scope before Compute: build the forest, pick the epic, drop the epic container.
-func insScope(t *testing.T) ([]forest.Bead, map[string]bd.Issue) {
+// scope before Compute: build the strand, pick the epic, drop the epic container.
+func insScope(t *testing.T) ([]strand.Bead, map[string]bd.Issue) {
 	t.Helper()
-	f := forest.Build(insightsIssues, forest.Synthesis{Project: "demo"})
+	f := strand.Build(insightsIssues, strand.Synthesis{Project: "demo"})
 	if len(f.Regions) == 0 {
-		t.Fatal("fixture forest has no regions")
+		t.Fatal("fixture strand has no regions")
 	}
-	var beads []forest.Bead
+	var beads []strand.Bead
 	for _, e := range f.Regions[0].Epics {
 		if e.ID == "demo-i" {
 			beads = Actionable(e.Beads)
@@ -56,7 +56,7 @@ func insScope(t *testing.T) ([]forest.Bead, map[string]bd.Issue) {
 		}
 	}
 	if beads == nil {
-		t.Fatal("fixture epic demo-i not found in forest")
+		t.Fatal("fixture epic demo-i not found in strand")
 	}
 	return beads, indexIssues(insightsIssues)
 }
@@ -87,7 +87,7 @@ func TestTriageAbsentBlockerIsResolved(t *testing.T) {
 // TestTriageExplicitlyBlocked: a bead bd reports with status "blocked" (not just
 // dependency-blocked) lands in Blocked, not lost between the open/in-progress cases.
 func TestTriageExplicitlyBlocked(t *testing.T) {
-	beads := []forest.Bead{{ID: "b1", Status: bd.StatusBlocked}}
+	beads := []strand.Bead{{ID: "b1", Status: bd.StatusBlocked}}
 	idx := map[string]bd.Issue{"b1": {ID: "b1", Status: bd.StatusBlocked}}
 	got := triage(beads, blockerCounts(nil, idx), idx, insightsNow)
 	if got.Total != 1 || got.Blocked != 1 {
@@ -315,7 +315,7 @@ func TestComputeNoEdgesSkipsLeaderboards(t *testing.T) {
 // TestActionableDropsEpics confirms the scope-narrowing the server does before Compute:
 // epic containers are not actionable work and must not reach the dashboard math.
 func TestActionableDropsEpics(t *testing.T) {
-	in := []forest.Bead{
+	in := []strand.Bead{
 		{ID: "e", Type: "epic"},
 		{ID: "t1"},
 		{ID: "t2", Type: "task"},

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>strand · the forest</title>
+<title>strand</title>
 <link rel="preconnect" href="https://fonts.bunny.net">
 <link href="https://fonts.bunny.net/css?family=geist:400,500,600,700|geist-mono:400,500" rel="stylesheet">
 <link rel="stylesheet" href="/static/app.css">
@@ -21,6 +21,13 @@
     <div class="repo-menu" id="repoMenu"></div>
   </div>
   <span class="spacer"></span>
+  {{if .AsOf}}
+  <button class="icon-btn refresh-btn" id="refresh" type="button"
+          hx-post="/refresh" hx-swap="none" title="Refresh — re-read bd from disk">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+    <span class="asof">as of {{.AsOf}}</span>
+  </button>
+  {{end}}
   <button class="newbead" id="newBead" type="button" hx-get="/new" hx-target="#drawer" title="New bead">+ New</button>
   <button class="icon-btn" id="theme" type="button" title="Toggle theme">
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></svg>
@@ -36,15 +43,15 @@
 </div>
 {{else}}
 
-{{if .Forest.NorthStar}}
+{{if .Strand.NorthStar}}
 <div class="masthead">
   <div class="ns-left">
     <div class="ns-label">North star</div>
-    <div class="northstar">{{.Forest.NorthStar}}</div>
+    <div class="northstar">{{.Strand.NorthStar}}</div>
   </div>
   <div class="ns-meta">
-    <span><b class="tnum">{{len .Forest.Regions}}</b> region{{if ne (len .Forest.Regions) 1}}s{{end}}</span>
-    <span><b class="tnum">{{.Forest.Open}}</b> open · <b class="tnum">{{.Forest.InProgress}}</b> in progress</span>
+    <span><b class="tnum">{{len .Strand.Regions}}</b> region{{if ne (len .Strand.Regions) 1}}s{{end}}</span>
+    <span><b class="tnum">{{.Strand.Open}}</b> open · <b class="tnum">{{.Strand.InProgress}}</b> in progress</span>
   </div>
 </div>
 {{end}}
@@ -58,7 +65,7 @@
     <button class="viewtab" type="button" data-view="insights" aria-pressed="false"
             hx-get="/insights" hx-target="#listPane">Insights</button>
     <span class="viewbar-spacer"></span>
-    <span class="viewbar-hint" id="scopeHint">Whole forest</span>
+    <span class="viewbar-hint" id="scopeHint">Everything</span>
   </nav>
 
   <div class="workbench">
@@ -66,13 +73,10 @@
       <div id="listPane" hx-get="/list" hx-trigger="refreshList from:body">{{template "list" .List}}</div>
     </section>
 
-    <aside class="minimap" aria-label="Forest minimap">
-      <div class="mm-head">
-        <span class="mm-title">Forest</span>
-        <button class="mm-clear" id="mmClear" type="button" hidden hx-get="/list" hx-target="#listPane" title="Clear filter — show the whole forest">all</button>
-      </div>
-      <div class="hintbar idle" id="hintbar"><div class="hint-name">Hover a tile</div><div class="hint-meta"></div></div>
-      <div class="tmwrap">{{template "treemap" .Forest}}</div>
+    <aside class="minimap" aria-label="Strand minimap">
+      <div class="tmwrap">{{template "treemap" .Strand}}</div>
+      <div class="mm-readout idle" id="mmReadout"></div>
+      <button class="mm-clear" id="mmClear" type="button" hidden hx-get="/list" hx-target="#listPane" title="Clear filter">clear filter</button>
     </aside>
   </div>
 </div>
