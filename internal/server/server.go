@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -1209,7 +1210,48 @@ var allIssues = []string{"--limit", "0"}
 func (s *Server) synFor(repo registry.Repo) strand.Synthesis {
 	syn := s.syn
 	syn.Project = repo.Name
+	// A non-empty s.syn.NorthStar is the --northstar flag and wins; with no flag
+	// the masthead reads the active repo's canonical one-line North Star from
+	// north-star-mini.md (decision nug 952acad4aca2). Missing/empty → blank.
+	if syn.NorthStar == "" {
+		syn.NorthStar = northStarMini(repo.Path)
+	}
 	return syn
+}
+
+// northStarMini returns the North Star reminder for a repo, read from
+// north-star-mini.md at the repo root (decision nug 952acad4aca2). The file is a
+// few curated lines; the masthead renders them verbatim (newlines preserved). It
+// tolerates a leading YAML frontmatter block (the file may be a vault nug) and a
+// Markdown heading marker on the first line. A missing or empty file yields "" so
+// the masthead renders blank instead of crashing (str-d2s).
+func northStarMini(repoPath string) string {
+	if repoPath == "" {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(repoPath, "north-star-mini.md"))
+	if err != nil {
+		return ""
+	}
+	return northStarBody(string(b))
+}
+
+// northStarBody skips a leading --- frontmatter block and returns the remaining
+// body trimmed, with any Markdown heading marker stripped from the first line.
+// Internal newlines are preserved so a few-line reminder renders as a few lines.
+func northStarBody(s string) string {
+	lines := strings.Split(s, "\n")
+	i := 0
+	if len(lines) > 0 && strings.TrimSpace(lines[0]) == "---" {
+		for i = 1; i < len(lines) && strings.TrimSpace(lines[i]) != "---"; i++ {
+		}
+		i++ // skip the closing ---
+	}
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" { // drop leading blanks
+		i++
+	}
+	body := strings.TrimRight(strings.Join(lines[i:], "\n"), " \t\n")
+	return strings.TrimSpace(strings.TrimLeft(body, "#")) // strip a leading heading marker
 }
 
 // snapshotCache holds one in-process read snapshot per repo, keyed by the repo's

@@ -141,7 +141,7 @@ header {
 .ns-label::before { content: "★ "; color: var(--p1); }
 .northstar {
   font-size: var(--fs-4); font-weight: 600; line-height: 1.25; letter-spacing: -.012em;
-  max-width: 78ch; color: var(--ink);
+  max-width: 78ch; color: var(--ink); white-space: pre-line;
 }
 .ns-meta { margin-left: auto; display: flex; gap: var(--s-7); color: var(--ink-3); font-size: var(--fs-8); white-space: nowrap; }
 .ns-meta b { color: var(--ink); font-weight: 600; }
