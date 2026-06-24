@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
-	"github.com/dkoosis/strand/internal/strand"
 	"github.com/dkoosis/strand/internal/graph"
+	"github.com/dkoosis/strand/internal/strand"
 )
 
 // Model is the V4 dashboard (spec §10): quick-ref counts plus the panels over

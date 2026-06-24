@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
-	"github.com/dkoosis/strand/internal/strand"
 	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/internal/server"
+	"github.com/dkoosis/strand/internal/strand"
 	"github.com/dkoosis/strand/web"
 )
 

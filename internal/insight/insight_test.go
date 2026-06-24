@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
-	"github.com/dkoosis/strand/internal/strand"
 	"github.com/dkoosis/strand/internal/graph"
+	"github.com/dkoosis/strand/internal/strand"
 )
 
 // --- V4 insights fixtures (carved from internal/server, strand-hh4) ---
