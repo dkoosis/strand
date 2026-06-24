@@ -30,7 +30,7 @@
     <span class="lp-name">{{if .HasEpic}}{{cleanName .Epic.Name}}{{else}}{{.Region.Name}}{{end}}</span>
   </div>
   <div class="lp-stat">
-    {{if .HasEpic}}<span><b>{{.Epic.Open}}</b> open beads</span>
+    {{if .HasEpic}}<span><b>{{.Epic.Open}}</b> open bead{{if ne .Epic.Open 1}}s{{end}}</span>
     {{else}}<span><b>{{.Region.Open}}</b> open</span><span><b>{{len .Region.Epics}}</b> epics</span>{{end}}
   </div>
 </div>
