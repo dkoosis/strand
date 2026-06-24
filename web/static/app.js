@@ -6,6 +6,7 @@
 document.getElementById("theme")?.addEventListener("click", () => {
   const r = document.documentElement;
   r.dataset.theme = r.dataset.theme === "dark" ? "light" : "dark";
+  try { localStorage.setItem("theme", r.dataset.theme); } catch (e) {}
 });
 
 // ---- minimap readout ----
@@ -15,10 +16,12 @@ document.getElementById("theme")?.addEventListener("click", () => {
 // lit. All read from the rendered DOM, no server round-trip. The region is the
 // hover unit, so you never have to land on a sliver of a tile to read its name.
 const mmReadout = document.getElementById("mmReadout");
+const mmTitle = document.getElementById("mmTitle");
 const mmEsc = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
 function mmLegend() {
   if (!mmReadout) return;
   mmReadout.classList.add("idle");
+  if (mmTitle) mmTitle.textContent = "";
   const rows = [...document.querySelectorAll(".treemap .region")].map((r) => {
     const rc = r.style.getPropertyValue("--rc").trim();
     return `<div class="mm-row"><span class="mm-sw" style="background:${rc}"></span>` +
@@ -30,6 +33,7 @@ function mmLegend() {
 function mmModule(region, hoverEpic) {
   if (!mmReadout || !region) return;
   mmReadout.classList.remove("idle");
+  if (mmTitle) mmTitle.textContent = region.dataset.name || "";
   const rc = region.style.getPropertyValue("--rc").trim();
   const tiles = [...region.querySelectorAll(".tile")];
   let flagged = 0;
@@ -99,11 +103,14 @@ function syncChrome() {
   }
   const clear = document.getElementById("mmClear");
   if (clear) clear.hidden = !epic;
-  document.querySelectorAll(".mm-filter").forEach((el) => {
-    // Region heads carry no data-epic — they represent "everything", so they
-    // light up when nothing is filtered. Tiles light up when their epic matches.
-    const isRegion = el.classList.contains("rg-head");
-    el.classList.toggle("on", isRegion ? !epic : (!!epic && el.dataset.epic === epic));
+  // The active epic's tile lights up, and its parent module's border turns to the
+  // module's legend color (--rc) so the swatch and the map agree.
+  document.querySelectorAll(".tile.mm-filter").forEach((t) => {
+    t.classList.toggle("on", !!epic && t.dataset.epic === epic);
+  });
+  document.querySelectorAll(".treemap .region").forEach((region) => {
+    const owns = !!epic && region.querySelector(`.tile[data-epic="${CSS.escape(epic)}"]`);
+    region.classList.toggle("on", !!owns);
   });
 }
 // A tab click loads its view at the CURRENT scope. The button's hx-get is static
@@ -124,6 +131,18 @@ function minimapFilter(el) {
 document.addEventListener("click", (e) => {
   const f = e.target.closest(".mm-filter");
   if (f) minimapFilter(f);
+});
+
+// Insights "frees N" — toggle the list of beads this one would unblock. Delegated so
+// it keeps working after htmx swaps the insights fragment in.
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".dn-frees");
+  if (!btn) return;
+  const t = document.getElementById(btn.getAttribute("aria-controls"));
+  if (!t) return;
+  const opening = t.hidden;
+  t.hidden = !opening;
+  btn.setAttribute("aria-expanded", String(opening));
 });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Enter" && e.key !== " ") return;

@@ -191,6 +191,13 @@ header {
 }
 .mm-clear:hover { background: var(--sel); color: var(--ink); }
 
+/* hovered module name, pinned above the map (empty at rest) */
+.mm-title {
+  flex: 0 0 auto; min-height: 20px; padding: var(--s-4) var(--s-5) 0;
+  font-size: var(--fs-2); font-weight: 600; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
 /* pane heads (centerpiece fragment scope label) */
 .pane-head {
   display: flex; align-items: center; gap: var(--s-4);
@@ -199,30 +206,28 @@ header {
 
 /* ============================================================ treemap minimap */
 /* Ambient minimap: fills the rail, scales to its width; act from the glance. */
-.tmwrap { flex: 1; padding: var(--s-5); min-height: 0; overflow: auto; }
+.tmwrap { flex: 0 0 auto; padding: var(--s-5); overflow: auto; }
 .treemap { position: relative; width: 100%; height: var(--tm-h, 300px); }
 .mm-filter { cursor: pointer; }
 .mm-filter:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-/* the region/epic currently filtering the centerpiece reads as selected */
-.rg-head.mm-filter.on { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--rc) 60%, var(--ink)); }
+/* the epic currently filtering the centerpiece reads as selected */
 .tile.mm-filter.on { box-shadow: inset 0 0 0 1.5px var(--ink); }
+/* A module is one bordered block. The 2px border is a hairline separator (--line)
+   so modules read apart consistently, regardless of how pale a module's tiles are
+   — no header bar, so a small module keeps its full proportional area. When a
+   module owns the active scope its border turns to the module's legend color
+   (--rc), tying the readout swatch to the map. */
 .region {
   position: absolute; overflow: hidden; background: transparent;
-  display: flex; flex-direction: column;
+  border: 2px solid var(--line); transition: border-color .12s;
 }
-.rg-head {
-  flex: 0 0 auto; display: flex; align-items: baseline; gap: var(--s-3);
-  padding: 4px var(--s-4); cursor: pointer; min-width: 0;
-  background: color-mix(in srgb, var(--rc) var(--tile-mix), var(--card));
-  color: var(--ink); margin-bottom: 1.5px;
-}
-.rg-head .nm { font-weight: 700; font-size: var(--fs-9); letter-spacing: .06em; text-transform: uppercase;
-  color: color-mix(in srgb, var(--rc) 70%, var(--ink));
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rg-head .ct { margin-left: auto; font-size: var(--fs-9); font-weight: 600; color: var(--ink-2); }
-.rg-body { position: relative; flex: 1; min-height: 0; }
+.region.on { border-color: var(--rc); }
+/* rg-head is the region's invisible click + keyboard target; it sits under the
+   tiles and catches hovers in the gaps between them. */
+.rg-head { position: absolute; inset: 0; cursor: pointer; background: none; }
+.rg-body { position: absolute; inset: 0; pointer-events: none; }
 .tile {
-  position: absolute; overflow: hidden; cursor: pointer;
+  position: absolute; overflow: hidden; cursor: pointer; pointer-events: auto;
   background: color-mix(in srgb, var(--rc) var(--tile-mix), var(--card));
   transition: background .1s;
 }
@@ -235,7 +240,7 @@ header {
    color legend (each module: swatch · name · open); on hover it becomes the
    hovered tile's module — its epics listed, the one under the cursor lit. */
 .mm-readout {
-  flex: 0 0 auto; max-height: 46%; overflow: auto;
+  flex: 1 1 auto; min-height: 0; overflow: auto;
   padding: var(--s-4) var(--s-5); border-top: 1px solid var(--line);
   display: flex; flex-direction: column; gap: 2px;
 }
@@ -455,52 +460,91 @@ footer b { color: var(--ink-3); font-weight: 500; }
 .quit-btn:hover { border-color: var(--st-blocked); color: var(--st-blocked); }
 .stopped { color: var(--st-blocked); }
 
-/* V4 insights — Tufte panels over in-process metrics (§10) */
+/* V4 insights — Tuftian: square, thin rules, data-ink over chrome (§10).
+   No panel boxes; the only rule is a hairline under each panel head. */
 .insights {
-  flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-6);
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--s-6);
-  align-content: start;
+  flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-7);
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--s-8) var(--s-9); align-content: start;
 }
-.ipanel {
-  border: 1px solid var(--line); border-radius: 8px; background: var(--bg-1);
-  padding: var(--s-5) var(--s-6);
-}
-.ipanel.triage { grid-column: 1 / -1; }
+.ipanel { min-width: 0; }
+.ipanel.wide { grid-column: 1 / -1; }
 .ip-head {
   font-size: var(--fs-8); font-weight: 600; color: var(--ink-2);
-  text-transform: uppercase; letter-spacing: .06em; margin-bottom: var(--s-5);
+  text-transform: uppercase; letter-spacing: .06em; margin: 0 0 var(--s-4);
+  padding-bottom: var(--s-2); border-bottom: 1px solid var(--line);
 }
 .ip-sub { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--ink-3); }
 .ip-empty, .ip-warn { font-size: var(--fs-8); color: var(--ink-3); margin: 0; }
-.ip-warn { margin-top: var(--s-4); color: #e0746e; }
+.ip-warn { margin-top: var(--s-4); color: var(--st-blocked); }
 
-.counts { display: flex; flex-wrap: wrap; gap: var(--s-8); }
-.count { display: flex; flex-direction: column; gap: var(--s-1); }
-.count b { font-size: var(--fs-5); line-height: 1; }
-.count span { font-size: var(--fs-9); color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; }
-.count.warn b { color: #e0746e; }
+/* shape of the work — one proportional status bar */
+.shape-line { font-size: var(--fs-2); color: var(--ink-2); margin-bottom: var(--s-4); }
+.shape-line b { font-size: var(--fs-4); font-weight: 600; color: var(--ink); margin-right: var(--s-1); }
+.shape-line .sh-b { color: var(--st-blocked); } .shape-line .sh-r { color: var(--st-open); } .shape-line .sh-s { color: var(--st-prog); }
+.shapebar { display: flex; gap: 2px; height: 26px; }
+.seg { display: flex; align-items: center; justify-content: center; min-width: 16px;
+  font-size: var(--fs-9); font-weight: 600; font-variant-numeric: tabular-nums; }
+.seg-b { background: color-mix(in srgb, var(--st-blocked) 20%, var(--card)); color: var(--st-blocked); }
+.seg-p { background: color-mix(in srgb, var(--st-prog) 22%, var(--card)); color: var(--st-prog); }
+.seg-r { background: color-mix(in srgb, var(--st-open) 20%, var(--card)); color: var(--st-open); }
+.shape-legend { display: flex; gap: var(--s-6); margin-top: var(--s-3); font-size: var(--fs-9); color: var(--ink-3); }
+.shape-legend span { display: inline-flex; align-items: center; gap: var(--s-2); }
+.sw { width: 9px; height: 9px; display: inline-block; }
 
-.lboard { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-4); }
-.lb-item { cursor: pointer; border-radius: 5px; padding: var(--s-2) var(--s-3); margin: 0 calc(-1 * var(--s-3)); transition: background .1s; }
-.lb-item:hover, .lb-item:focus-visible { background: var(--bg-2); outline: none; }
-.lb-row { display: flex; align-items: baseline; gap: var(--s-4); }
-.lb-title { flex: 1; min-width: 0; font-size: var(--fs-8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lb-mag { font-size: var(--fs-9); color: var(--ink-3); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
-.lb-id { font-size: var(--fs-9); color: var(--ink-3); flex: 0 0 auto; }
-/* act-now cross-flag: a high-rank row that's also blocked/stale */
-.lb-flag {
-  flex: 0 0 auto; font-size: var(--fs-9); font-weight: 600; line-height: 1;
-  text-transform: uppercase; letter-spacing: .04em; padding: 1px var(--s-2);
-  border-radius: 3px; background: rgba(224,116,110,.16); color: #e0746e;
-}
-.lb-bar { height: 4px; margin-top: var(--s-2); background: var(--bg-2); border-radius: 2px; overflow: hidden; }
-.lb-bar span { display: block; height: 100%; background: var(--p2); border-radius: 2px; }
+/* do next — frees-ranked, with expandable downstream links */
+.donext { list-style: none; margin: 0; padding: 0; }
+.dn-item { padding: var(--s-3) 0; border-top: 1px solid var(--line); }
+.dn-item:first-child { border-top: 0; }
+.dn-row { display: flex; align-items: baseline; gap: var(--s-4); }
+.dn-title { flex: 1; min-width: 0; font-size: var(--fs-base); color: var(--ink); cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dn-title:hover, .dn-title:focus-visible { color: var(--st-open); outline: none; }
+.dn-frees { font: inherit; font-size: var(--fs-9); font-weight: 600; color: var(--st-open);
+  background: none; border: 0; border-bottom: 1px dotted var(--st-open); padding: 0; cursor: pointer; flex: 0 0 auto; }
+.dn-ready { font-size: var(--fs-9); color: var(--ink-3); flex: 0 0 auto; }
+.dn-bar { height: 3px; margin-top: var(--s-2); background: var(--bg-2); }
+.dn-bar span { display: block; height: 100%; background: var(--st-open); }
+.dn-down { display: flex; flex-wrap: wrap; gap: var(--s-3); margin-top: var(--s-3); }
+.dn-down[hidden] { display: none; }
+.dn-ref { font-size: var(--fs-9); color: var(--ink-2); border: 1px solid var(--line-2);
+  padding: 1px var(--s-3); cursor: pointer; white-space: nowrap; }
+.dn-ref:hover, .dn-ref:focus-visible { border-color: var(--st-open); color: var(--st-open); outline: none; }
+.dn-ref .mono { color: var(--ink-4); }
+
+/* hotspots — load-bearing beads, read by what leans on them (no bar) */
+.hots { display: flex; flex-direction: column; }
+.hot { display: flex; align-items: baseline; gap: var(--s-4); padding: var(--s-3) 0; border-top: 1px solid var(--line); }
+.hot:first-child { border-top: 0; }
+.hot-hub { flex: 1; min-width: 0; font-size: var(--fs-8); color: var(--ink); cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hot-hub:hover, .hot-hub:focus-visible { color: var(--st-open); outline: none; }
+.hot-hub .mono { color: var(--ink-4); }
+.hot-lean { font-size: var(--fs-9); color: var(--ink-3); flex: 0 0 auto; }
+
+/* bottlenecks — bridges */
+.bott { list-style: none; margin: 0; padding: 0; }
+.bott-item { display: flex; align-items: baseline; gap: var(--s-3); padding: var(--s-3) 0;
+  border-top: 1px solid var(--line); cursor: pointer; }
+.bott-item:first-child { border-top: 0; }
+.bott-item:hover .bott-title, .bott-item:focus-visible .bott-title { color: var(--st-open); }
+.bott-item:focus-visible { outline: none; }
+.bott-title { flex: 1; min-width: 0; font-size: var(--fs-8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.lb-flag { flex: 0 0 auto; font-size: var(--fs-9); font-weight: 600; line-height: 1;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--st-blocked); }
+.lb-id { font-size: var(--fs-9); color: var(--ink-4); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 
 .critpath { margin: 0; padding-left: var(--s-7); display: flex; flex-direction: column; gap: var(--s-3); }
-.critpath li { font-size: var(--fs-8); }
-.cp-id { font-size: var(--fs-9); color: var(--ink-3); }
+.critpath li { font-size: var(--fs-8); cursor: pointer; }
+.critpath li:hover, .critpath li:focus-visible { color: var(--st-open); outline: none; }
+.cp-id { font-size: var(--fs-9); color: var(--ink-4); }
 
 .labels { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-3); }
 .labels li { display: flex; justify-content: space-between; font-size: var(--fs-8); }
 .lbl { color: var(--ink-2); }
 .lbl-ct { color: var(--ink-3); }
+
+/* drawer: a blocker id is one-click to open that bead */
+.dd-id[role=button] { cursor: pointer; }
+.dd-id[role=button]:hover, .dd-id[role=button]:focus-visible { color: var(--st-open); outline: none; }

@@ -101,38 +101,69 @@
 </div>
 {{with .Insights}}
 <div class="insights">
-  <div class="ipanel triage">
-    <div class="ip-head">Triage</div>
-    <div class="counts">
-      <div class="count"><b class="tnum">{{.Counts.Total}}</b><span>total</span></div>
-      <div class="count"><b class="tnum">{{.Counts.Ready}}</b><span>ready</span></div>
-      <div class="count"><b class="tnum">{{.Counts.Blocked}}</b><span>blocked</span></div>
-      <div class="count"><b class="tnum">{{.Counts.InProgress}}</b><span>in progress</span></div>
-      <div class="count"><b class="tnum">{{.Counts.Open}}</b><span>open</span></div>
-      <div class="count{{if .Counts.Stale}} warn{{end}}"><b class="tnum">{{.Counts.Stale}}</b><span>stale</span></div>
+  <div class="ipanel wide">
+    <div class="ip-head">Shape of the work</div>
+    <div class="shape-line"><b class="tnum">{{.Counts.Total}}</b> open{{if .Counts.Blocked}} · <span class="sh-b">{{.Counts.Blocked}} blocked</span>{{end}}{{if .Counts.Ready}} · <span class="sh-r">{{.Counts.Ready}} ready</span>{{end}}{{if .Counts.Stale}} · <span class="sh-s">{{.Counts.Stale}} stale</span>{{end}}</div>
+    <div class="shapebar" role="img" aria-label="{{.Counts.Blocked}} blocked, {{.Counts.InProgress}} in progress, {{.Counts.Ready}} ready">
+      {{if .Counts.Blocked}}<span class="seg seg-b" style="flex:{{.Counts.Blocked}}">{{.Counts.Blocked}}</span>{{end}}
+      {{if .Counts.InProgress}}<span class="seg seg-p" style="flex:{{.Counts.InProgress}}">{{.Counts.InProgress}}</span>{{end}}
+      {{if .Counts.Ready}}<span class="seg seg-r" style="flex:{{.Counts.Ready}}">{{.Counts.Ready}}</span>{{end}}
+    </div>
+    <div class="shape-legend"><span><i class="sw seg-b"></i>blocked</span><span><i class="sw seg-p"></i>in progress</span><span><i class="sw seg-r"></i>ready</span></div>
+  </div>
+
+  <div class="ipanel wide">
+    <div class="ip-head">Do next <span class="ip-sub">frees the most, ready now</span></div>
+    {{if .Ready}}
+    <ul class="donext">
+      {{range .Ready}}
+      <li class="dn-item">
+        <div class="dn-row">
+          <span class="dn-title" role="button" tabindex="0" hx-get="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']">{{.Title}}</span>
+          {{if .Stale}}<span class="lb-flag" title="stale — act now">stale</span>{{end}}
+          {{if .Frees}}<button class="dn-frees" type="button" aria-expanded="false" aria-controls="ds-{{.ID}}">frees {{.Frees}}</button>{{else}}<span class="dn-ready">ready</span>{{end}}
+          <span class="lb-id mono">{{shortID .ID}}</span>
+        </div>
+        {{if .Frees}}<div class="dn-bar"><span style="width:{{.Width}}%"></span></div>
+        <div class="dn-down" id="ds-{{.ID}}" hidden>
+          {{range .Downstream}}<span class="dn-ref" role="button" tabindex="0" hx-get="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']">{{cleanName .Title}} <span class="mono">{{shortID .ID}}</span></span>{{end}}
+        </div>{{end}}
+      </li>
+      {{end}}
+    </ul>
+    {{else}}<p class="ip-empty">No ready beads — the queue is clear.</p>{{end}}
+  </div>
+
+  {{if .Influence}}
+  <div class="ipanel">
+    <div class="ip-head">Hotspots <span class="ip-sub">most load-bearing</span></div>
+    <div class="hots">
+      {{range .Influence}}
+      <div class="hot">
+        <span class="hot-hub" role="button" tabindex="0" hx-get="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']">{{cleanName .Title}} <span class="mono">{{shortID .ID}}</span></span>
+        {{if .Frees}}<span class="hot-lean">{{.Frees}} lean on this</span>{{end}}
+      </div>
+      {{end}}
     </div>
   </div>
+  {{end}}
 
+  {{if .Bottleneck}}
   <div class="ipanel">
-    <div class="ip-head">Ready to dispatch <span class="ip-sub">ranked by influence</span></div>
-    {{if .Ready}}{{template "leaderboard" .Ready}}{{else}}<p class="ip-empty">No ready beads — the queue is clear.</p>{{end}}
+    <div class="ip-head">Bottlenecks <span class="ip-sub">bridges — unblock to reconnect</span></div>
+    <ul class="bott">
+      {{range .Bottleneck}}
+      <li class="bott-item" role="button" tabindex="0" hx-get="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']">{{if .Blocked}}<span class="lb-flag">blocked</span>{{end}}<span class="bott-title">{{cleanName .Title}}</span><span class="lb-id mono">{{shortID .ID}}</span></li>
+      {{end}}
+    </ul>
   </div>
-
-  <div class="ipanel">
-    <div class="ip-head">Move these, the most shifts <span class="ip-sub">PageRank</span></div>
-    {{template "leaderboard" .Influence}}
-  </div>
-
-  <div class="ipanel">
-    <div class="ip-head">Unblock these to free the most work <span class="ip-sub">betweenness</span></div>
-    {{template "leaderboard" .Bottleneck}}
-  </div>
+  {{end}}
 
   <div class="ipanel">
     <div class="ip-head">Critical path <span class="ip-sub">longest chain</span></div>
     {{if .CritPath}}
     <ol class="critpath">
-      {{range .CritPath}}<li><span class="pchip {{pclass .Priority}}" title="Priority {{.Priority}}" aria-label="Priority {{.Priority}}">{{.Priority}}</span> {{.Title}} <span class="cp-id mono">{{shortID .ID}}</span></li>{{end}}
+      {{range .CritPath}}<li role="button" tabindex="0" hx-get="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']"><span class="pchip {{pclass .Priority}}" title="Priority {{.Priority}}" aria-label="Priority {{.Priority}}">{{.Priority}}</span> {{.Title}} <span class="cp-id mono">{{shortID .ID}}</span></li>{{end}}
     </ol>
     {{else}}<p class="ip-empty">No dependency chain in scope.</p>{{end}}
   </div>
@@ -186,11 +217,16 @@
      strand.Epic. */}}
 {{define "epicGroupHead"}}
 <div class="epic-group">
+  {{/* A one-bead epic whose bead IS the epic (off-trunk standalone work) would
+       print its title twice — as the header and as the row. Drop the header in
+       that case and show the single openable row. */}}
+  {{if not (and (eq (len .Beads) 1) (eq (index .Beads 0).ID .ID))}}
   <div class="eg-head" role="button" tabindex="0"
        hx-get="/list?epic={{.ID}}" hx-target="#listPane"
        hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']">
     <span class="eg-name">{{cleanName .Name}}</span><span class="eo tnum">{{.Open}}</span>
   </div>
+  {{end}}
   {{template "epicRows" .}}
 </div>
 {{end}}
@@ -249,7 +285,7 @@
   <h3>Blocked by</h3>
   {{range .Blockers}}
   <div class="dr-dep">
-    <span class="dd-id mono">{{shortID .}}</span>
+    <span class="dd-id mono" role="button" tabindex="0" hx-get="/bead/{{.}}" hx-target="#drawer" hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']" title="open this blocker">{{shortID .}}</span>
     <form hx-post="/bead/{{$.ID}}/dep/remove" hx-target="#drawer">
       <input type="hidden" name="depends_on" value="{{.}}">
       <button class="dd-rm icon-btn" type="submit" aria-label="remove dependency">×</button>

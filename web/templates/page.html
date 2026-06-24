@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}</script>
 <title>strand</title>
 <link rel="preconnect" href="https://fonts.bunny.net">
 <link href="https://fonts.bunny.net/css?family=geist:400,500,600,700|geist-mono:400,500" rel="stylesheet">
@@ -74,6 +75,7 @@
     </section>
 
     <aside class="minimap" aria-label="Strand minimap">
+      <div class="mm-title" id="mmTitle" aria-live="polite"></div>
       <div class="tmwrap">{{template "treemap" .Strand}}</div>
       <div class="mm-readout idle" id="mmReadout"></div>
       <button class="mm-clear" id="mmClear" type="button" hidden hx-get="/list" hx-target="#listPane" title="Clear filter">clear filter</button>

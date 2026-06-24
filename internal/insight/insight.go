@@ -46,10 +46,12 @@ type Counts struct {
 // cross-flag).
 type RankedBead struct {
 	strand.Bead
-	Score   float64
-	Width   int
-	Blocked bool
-	Stale   bool
+	Score      float64
+	Width      int
+	Blocked    bool
+	Stale      bool
+	Frees      int           // in-scope beads this one transitively unblocks
+	Downstream []strand.Bead // those beads, carried so the row can link to each
 }
 
 // LabelCount is one row of the label-health distribution.
@@ -83,6 +85,7 @@ func Compute(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge, now time
 	// One blocker scan per request: triage, the ready queue, and both leaderboards
 	// all read the same open-blocker tallies, so compute once and share the map.
 	openBlockers := blockerCounts(deps, idx)
+	frees, down := downstreamReach(compEdges, beads)
 	out := Model{
 		Counts:   triage(beads, openBlockers, idx, now),
 		CritPath: beadPath(m.CriticalPath, beadByID(beads)),
@@ -92,12 +95,12 @@ func Compute(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge, now time
 	// The dispatch queue: ready beads ranked by influence, so the count→actionable
 	// gap closes (triage says "2 ready"; this says WHICH, most-impactful first). Ranks
 	// even without edges — every ready bead is dispatchable, ordered by PageRank base.
-	out.Ready = readyQueue(beads, openBlockers, idx, m.PageRank, now)
+	out.Ready = readyQueue(beads, openBlockers, idx, m.PageRank, frees, down, now)
 	// The leaderboards rank by graph position; with no dependencies every bead ties
 	// at PageRank's base rank, so a ranking would be noise. Show them only with edges.
 	// crossFlag marks the rows that ALSO sit in the blocked/stale sets — the act-now signal.
 	if len(compEdges) > 0 {
-		out.Influence = crossFlag(leaderboard(beads, m.PageRank), openBlockers, idx, now)
+		out.Influence = withReach(crossFlag(leaderboard(beads, m.PageRank), openBlockers, idx, now), frees, down)
 		out.Bottleneck = crossFlag(leaderboard(beads, m.Betweenness), openBlockers, idx, now)
 	}
 	return out
@@ -257,7 +260,7 @@ func rankBoard(board []RankedBead) []RankedBead {
 // It closes the count→actionable gap — triage says how many are ready, this says which.
 // Rows carry the stale cross-flag (a ready bead can still have gone cold); ready beads
 // are by definition not blocked, so Blocked stays false here.
-func readyQueue(beads []strand.Bead, openBlockers map[string]int, idx map[string]bd.Issue, score map[string]float64, now time.Time) []RankedBead {
+func readyQueue(beads []strand.Bead, openBlockers map[string]int, idx map[string]bd.Issue, pr map[string]float64, frees map[string]int, down map[string][]strand.Bead, now time.Time) []RankedBead {
 	ready := make([]RankedBead, 0, len(beads))
 	for i := range beads {
 		b := &beads[i]
@@ -265,12 +268,84 @@ func readyQueue(beads []strand.Bead, openBlockers map[string]int, idx map[string
 			continue
 		}
 		ready = append(ready, RankedBead{
-			Bead:  *b,
-			Score: score[b.ID],
-			Stale: isStale(b.Status, idx[b.ID].UpdatedAt, now),
+			Bead:       *b,
+			Score:      pr[b.ID],
+			Frees:      frees[b.ID],
+			Downstream: down[b.ID],
+			Stale:      isStale(b.Status, idx[b.ID].UpdatedAt, now),
 		})
 	}
-	return rankBoard(ready)
+	// Rank by what each bead frees (the dispatch payoff), PageRank then id breaking
+	// ties, and size the bar against the bead that frees the most. With no edges every
+	// bead frees zero, so the queue stays ordered by influence and shows no bars.
+	slices.SortFunc(ready, func(a, b RankedBead) int {
+		if a.Frees != b.Frees {
+			return cmp.Compare(b.Frees, a.Frees)
+		}
+		if a.Score != b.Score {
+			return cmp.Compare(b.Score, a.Score)
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	if len(ready) > leaderboardSize {
+		ready = ready[:leaderboardSize]
+	}
+	if len(ready) > 0 && ready[0].Frees > 0 {
+		top := ready[0].Frees
+		for i := range ready {
+			ready[i].Width = ready[i].Frees * 100 / top
+		}
+	}
+	return ready
+}
+
+// downstreamReach computes, for each bead, the in-scope beads it transitively unblocks
+// — its "frees" set — over the closed blocks-graph. Edge{Dependent, Dependency} means
+// Dependency blocks Dependent, so reachability follows Dependency→Dependent.
+func downstreamReach(edges []graph.Edge, beads []strand.Bead) (map[string]int, map[string][]strand.Bead) {
+	adj := map[string][]string{}
+	for _, e := range edges {
+		adj[e.Dependency] = append(adj[e.Dependency], e.Dependent)
+	}
+	by := beadByID(beads)
+	frees := make(map[string]int, len(beads))
+	down := make(map[string][]strand.Bead, len(beads))
+	for i := range beads {
+		seen := map[string]bool{}
+		stack := append([]string(nil), adj[beads[i].ID]...)
+		for len(stack) > 0 {
+			n := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			stack = append(stack, adj[n]...)
+		}
+		if len(seen) == 0 {
+			continue
+		}
+		ds := make([]strand.Bead, 0, len(seen))
+		for id := range seen {
+			if b, ok := by[id]; ok {
+				ds = append(ds, b)
+			}
+		}
+		slices.SortFunc(ds, func(a, b strand.Bead) int { return cmp.Compare(a.ID, b.ID) })
+		frees[beads[i].ID] = len(ds)
+		down[beads[i].ID] = ds
+	}
+	return frees, down
+}
+
+// withReach attaches each row's frees count and downstream beads, so a leaderboard
+// row can show "frees N" and link straight to the beads it would unblock.
+func withReach(board []RankedBead, frees map[string]int, down map[string][]strand.Bead) []RankedBead {
+	for i := range board {
+		board[i].Frees = frees[board[i].ID]
+		board[i].Downstream = down[board[i].ID]
+	}
+	return board
 }
 
 // crossFlag marks each ranked row that ALSO sits in the blocked or stale set — the
