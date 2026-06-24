@@ -66,7 +66,13 @@
     <button class="viewtab" type="button" data-view="insights" aria-pressed="false"
             hx-get="/insights" hx-target="#listPane">Insights</button>
     <span class="viewbar-spacer"></span>
-    <span class="viewbar-hint" id="scopeHint">Everything</span>
+    <span class="viewbar-hint" id="scopeHint"></span>
+    <div class="scopebar" role="group" aria-label="Filter the strand">
+      <button class="scopetab active" type="button" data-scope="all" aria-pressed="true"
+              hx-get="/list" hx-target="#listPane">everything</button>
+      <button class="scopetab" type="button" data-scope="bugs" aria-pressed="false"
+              hx-get="/list" hx-target="#listPane">bugs</button>
+    </div>
   </nav>
 
   <div class="workbench">

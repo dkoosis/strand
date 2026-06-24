@@ -140,7 +140,7 @@ header {
 }
 .ns-label::before { content: "★ "; color: var(--p1); }
 .northstar {
-  font-size: var(--fs-4); font-weight: 600; line-height: 1.25; letter-spacing: -.012em;
+  font-size: var(--fs-3); font-weight: 600; line-height: 1.25; letter-spacing: -.012em;
   max-width: 78ch; color: var(--ink); white-space: pre-line;
 }
 .ns-meta { margin-left: auto; display: flex; gap: var(--s-7); color: var(--ink-3); font-size: var(--fs-8); white-space: nowrap; }
@@ -169,8 +169,20 @@ header {
 .viewbar-spacer { flex: 1; }
 .viewbar-hint {
   align-self: center; font-size: var(--fs-8); color: var(--ink-3);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32ch;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 24ch;
+  margin-right: var(--s-4);
 }
+/* scope chips — a SECOND control axis (what you see), grouped on the right over the
+   minimap. Same tab family as the view switcher, but the active state is a filled
+   pill, not the tab underline, so a chosen filter never reads as a chosen view. */
+.scopebar { display: flex; align-items: stretch; gap: var(--s-2); align-self: stretch; }
+.scopetab {
+  align-self: center; font: inherit; font-size: var(--fs-8); font-weight: 600; letter-spacing: -.01em;
+  padding: var(--s-2) var(--s-4); border: 1px solid transparent; border-radius: 999px;
+  background: none; color: var(--ink-3); cursor: pointer;
+}
+.scopetab:hover { color: var(--ink); background: var(--bg-2); }
+.scopetab.active { color: var(--ink); background: var(--sel); border-color: var(--line); }
 
 /* centerpiece (full width) | minimap rail (slim, ambient) */
 .workbench { flex: 1; display: grid; grid-template-columns: 1fr minmax(220px, 280px); min-height: 0; }
@@ -206,7 +218,7 @@ header {
 
 /* ============================================================ treemap minimap */
 /* Ambient minimap: fills the rail, scales to its width; act from the glance. */
-.tmwrap { flex: 0 0 auto; padding: var(--s-5); overflow: auto; }
+.tmwrap { flex: 0 1 auto; min-height: 0; padding: var(--s-5); overflow: auto; }
 .treemap { position: relative; width: 100%; height: var(--tm-h, 300px); }
 .mm-filter { cursor: pointer; }
 .mm-filter:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
