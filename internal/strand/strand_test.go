@@ -2,9 +2,12 @@ package strand
 
 import (
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/dkoosis/strand/internal/bd"
+	"github.com/dkoosis/strand/internal/jtbd"
 )
 
 // TestBuildRegionsFromTrunks pins the core synthesis: top-level epics are
@@ -203,6 +206,39 @@ func TestSquarifyEmptyAndZero(t *testing.T) {
 		if r.W != 0 || r.H != 0 {
 			t.Errorf("zero-weight tile %d = %+v, want zero area", i, r)
 		}
+	}
+}
+
+func TestResolveJTBD(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "| id | job |\n|----|-----|\n| j-001 | Triage what to work on next |\n"
+	if err := os.WriteFile(filepath.Join(dir, "docs", "jtbd.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := jtbd.Load(dir)
+
+	// Cited id with a registry row → the job title resolves, id retained.
+	resolved := NewBead(&bd.Issue{ID: "a", Description: "why\nJTBD: j-001\n"})
+	resolved.ResolveJTBD("why\nJTBD: j-001\n", reg)
+	if resolved.JTBDID != "j-001" || resolved.JTBDJob != "Triage what to work on next" {
+		t.Errorf("resolved = (%q, %q), want (j-001, Triage what to work on next)", resolved.JTBDID, resolved.JTBDJob)
+	}
+
+	// Cited id with no row → id retained, job empty (the unresolved state).
+	unres := NewBead(&bd.Issue{ID: "b"})
+	unres.ResolveJTBD("JTBD: j-999", reg)
+	if unres.JTBDID != "j-999" || unres.JTBDJob != "" {
+		t.Errorf("unresolved = (%q, %q), want (j-999, \"\")", unres.JTBDID, unres.JTBDJob)
+	}
+
+	// No citation → both fields empty, bead unchanged.
+	none := NewBead(&bd.Issue{ID: "c"})
+	none.ResolveJTBD("no job here", reg)
+	if none.JTBDID != "" || none.JTBDJob != "" {
+		t.Errorf("no-citation = (%q, %q), want empty", none.JTBDID, none.JTBDJob)
 	}
 }
 

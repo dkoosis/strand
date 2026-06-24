@@ -77,11 +77,19 @@
 {{end}}
 {{end}}
 
+{{/* jtbdTag renders a bead's resolved job-to-be-done inline (str-r1q). Shows the
+     registry job title when the cited id resolved, else the id with a visible
+     "(unresolved)" marker — the bare id is never the human's only signal. Empty
+     when the bead cites no JTBD id, so a non-story bead renders unchanged. Dot is
+     a strand.Bead. */}}
+{{define "jtbdTag"}}{{if .JTBDID}}<span class="jtbd{{if not .JTBDJob}} unresolved{{end}}" title="JTBD {{.JTBDID}}">{{if .JTBDJob}}{{.JTBDJob}}{{else}}{{.JTBDID}} (unresolved){{end}}</span>{{end}}{{end}}
+
 {{define "boardCard"}}
 <div class="bcard" data-id="{{.ID}}" role="button" tabindex="0"
      hx-get="/bead/{{.ID}}" hx-target="#drawer"
      hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']">
   <div class="bc-title">{{.Title}}</div>
+  {{template "jtbdTag" .}}
   <div class="bc-foot">
     <span class="pchip {{pclass .Priority}}" title="Priority {{.Priority}}" aria-label="Priority {{.Priority}}">{{.Priority}}</span>
     <span class="bc-id mono">{{shortID .ID}}</span>
@@ -241,7 +249,7 @@
         hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']">
       <td class="r-id mono">{{shortID .ID}}</td>
       <td class="r-pri"><span class="pchip {{pclass .Priority}}" title="Priority {{.Priority}}" aria-label="Priority {{.Priority}}">{{.Priority}}</span></td>
-      <td class="r-title">{{.Title}}</td>
+      <td class="r-title">{{.Title}}{{template "jtbdTag" .}}</td>
       <td class="r-type">{{.Type}}</td>
       <td class="r-stat"><span class="status"><span class="dot {{.Status}}"></span>{{statusLabel .Status}}</span></td>
     </tr>

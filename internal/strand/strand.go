@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/dkoosis/strand/internal/bd"
+	"github.com/dkoosis/strand/internal/jtbd"
 )
 
 // tilePalette holds the tile hues for the treemap. Reds and ambers are left
@@ -57,6 +58,12 @@ type Bead struct {
 	Assignee string
 	Rank     float64 // manual-rank order (V1 list); meaningful only when HasRank
 	HasRank  bool
+	// JTBDID is the job-to-be-done id a story cites in its description (str-r1q);
+	// empty when the bead cites none. JTBDJob is that id resolved against the
+	// project registry — empty when the id has no row, which the view renders as
+	// an "(unresolved)" marker. The bare id is never the human's only signal.
+	JTBDID  string
+	JTBDJob string
 }
 
 // defaultPriority is the render priority for a bead whose bd.Issue omitted the
@@ -83,6 +90,22 @@ func NewBead(i *bd.Issue) Bead {
 		Assignee: i.Assignee,
 		Rank:     rank,
 		HasRank:  hasRank,
+	}
+}
+
+// ResolveJTBD fills the bead's JTBD fields from its source issue's description
+// and a registry. It is separate from NewBead so the resolution stays the one
+// place JTBD maps onto the view, while callers without a registry handy can
+// skip it. A cited id with no registry row leaves JTBDJob empty (the unresolved
+// state); no citation leaves both fields empty and the bead unchanged.
+func (b *Bead) ResolveJTBD(description string, reg jtbd.Registry) {
+	id, ok := jtbd.Cite(description)
+	if !ok {
+		return
+	}
+	b.JTBDID = id
+	if job, ok := reg.Resolve(id); ok {
+		b.JTBDJob = job
 	}
 }
 
@@ -125,6 +148,10 @@ type Model struct {
 type Synthesis struct {
 	Project   string
 	NorthStar string
+	// JTBD resolves a story's cited job-to-be-done id to its job title (str-r1q).
+	// The zero value resolves nothing — the safe state for a repo with no
+	// docs/jtbd.md.
+	JTBD jtbd.Registry
 }
 
 // openish reports whether a status counts as live work. Closed and deferred
@@ -183,7 +210,7 @@ func Build(issues []bd.Issue, syn Synthesis) Model {
 	// Collect tiles into their regions.
 	byRegion := make(map[string][]Epic)
 	for epicID, ms := range members {
-		e := buildEpic(epicID, ms, byID)
+		e := buildEpic(epicID, ms, byID, syn.JTBD)
 		byRegion[regionOf[epicID]] = append(byRegion[regionOf[epicID]], e)
 	}
 
@@ -338,7 +365,7 @@ func rootOf(id string, byID map[string]bd.Issue) string {
 
 // buildEpic turns a root id and its live members into an Epic. The name comes
 // from the root issue when known; beads sort priority-asc then most-recent.
-func buildEpic(rootID string, members []bd.Issue, byID map[string]bd.Issue) Epic {
+func buildEpic(rootID string, members []bd.Issue, byID map[string]bd.Issue, reg jtbd.Registry) Epic {
 	e := Epic{ID: rootID, Open: len(members), Color: tileColor(rootID)}
 	if root, ok := byID[rootID]; ok {
 		e.Name = root.Title
@@ -348,6 +375,7 @@ func buildEpic(rootID string, members []bd.Issue, byID map[string]bd.Issue) Epic
 	e.Beads = make([]Bead, 0, len(members))
 	for i := range members {
 		b := NewBead(&members[i])
+		b.ResolveJTBD(members[i].Description, reg)
 		if b.Type == "bug" {
 			e.Flag = true
 		}

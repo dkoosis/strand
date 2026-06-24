@@ -353,6 +353,14 @@ tbody tr:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; 
 .bc-asg { font-size: var(--fs-9); color: var(--ink-3); margin-left: auto; }
 .card-ghost { opacity: .4; border-style: dashed; }
 
+/* jtbd: a story's resolved job-to-be-done, shown inline so the id is never the
+   human's only signal (str-r1q). Unresolved (no registry row) reads amber. */
+.jtbd { font-size: var(--fs-9); color: var(--st-open); }
+.bc-title + .jtbd { display: block; margin: calc(-1 * var(--s-2)) 0 var(--s-3); }
+.r-title .jtbd { margin-left: var(--s-3); }
+.jtbd::before { content: "↳ "; color: var(--ink-3); }
+.jtbd.unresolved { color: var(--p1); }
+
 /* ============================================================ bead detail drawer */
 .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.38); opacity: 0; pointer-events: none; transition: opacity .16s; z-index: 8; }
 .scrim.show { opacity: 1; pointer-events: auto; }
