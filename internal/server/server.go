@@ -23,6 +23,7 @@ import (
 
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/insight"
+	"github.com/dkoosis/strand/internal/jtbd"
 	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/internal/strand"
 )
@@ -376,22 +377,38 @@ func listViewFor(f strand.Model, epicID, regionKey, filter string) listView {
 		return listView{Region: bugRegion(f)}
 	}
 	if epicID != "" {
-		for _, r := range f.Regions {
-			for _, e := range r.Epics {
-				if e.ID == epicID {
-					return listView{Region: r, Epic: e, HasEpic: true}
-				}
-			}
+		if v, ok := findEpic(f, epicID); ok {
+			return v
 		}
 	}
 	if regionKey != "" {
-		for _, r := range f.Regions {
-			if r.Key == regionKey {
-				return listView{Region: r}
-			}
+		if v, ok := findRegion(f, regionKey); ok {
+			return v
 		}
 	}
 	return listView{Region: everythingRegion(f)}
+}
+
+// findEpic locates the epic with the given id and returns the view scoped to it.
+func findEpic(f strand.Model, epicID string) (listView, bool) {
+	for _, r := range f.Regions {
+		for _, e := range r.Epics {
+			if e.ID == epicID {
+				return listView{Region: r, Epic: e, HasEpic: true}, true
+			}
+		}
+	}
+	return listView{}, false
+}
+
+// findRegion locates the region with the given key and returns the view scoped to it.
+func findRegion(f strand.Model, regionKey string) (listView, bool) {
+	for _, r := range f.Regions {
+		if r.Key == regionKey {
+			return listView{Region: r}, true
+		}
+	}
+	return listView{}, false
 }
 
 // everythingRegion flattens every trunk into one synthetic scope named
@@ -422,9 +439,9 @@ func bugRegion(f strand.Model) strand.Region {
 	for _, r := range f.Regions {
 		for _, e := range r.Epics {
 			var bugs []strand.Bead
-			for _, b := range e.Beads {
-				if b.Type == "bug" {
-					bugs = append(bugs, b)
+			for bi := range e.Beads {
+				if e.Beads[bi].Type == "bug" {
+					bugs = append(bugs, e.Beads[bi])
 				}
 			}
 			if len(bugs) == 0 {
@@ -590,7 +607,7 @@ func pivotByName(name string) pivotField {
 func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, _, ok := s.source()
+	src, repo, ok := s.source()
 	if !ok {
 		s.renderError(w, errNoRepo)
 		return
@@ -607,7 +624,9 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.render(w, "boardCard", strand.NewBead(issue))
+	b := strand.NewBead(issue)
+	b.ResolveJTBD(issue.Description, jtbd.Load(repo.Path))
+	s.render(w, "boardCard", b)
 }
 
 // handleRank persists a drag-to-reorder of the V1 bead list. SortableJS posts only
@@ -687,8 +706,9 @@ func splitIDs(s string) []string {
 func walkBeads(f strand.Model, fn func(strand.Bead)) {
 	for ri := range f.Regions {
 		for ei := range f.Regions[ri].Epics {
-			for _, b := range f.Regions[ri].Epics[ei].Beads {
-				fn(b)
+			beads := f.Regions[ri].Epics[ei].Beads
+			for bi := range beads {
+				fn(beads[bi])
 			}
 		}
 	}
@@ -1278,6 +1298,7 @@ func (s *Server) synFor(repo registry.Repo) strand.Synthesis {
 	if syn.NorthStar == "" {
 		syn.NorthStar = northStarMini(repo.Path)
 	}
+	syn.JTBD = jtbd.Load(repo.Path)
 	return syn
 }
 
