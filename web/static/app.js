@@ -144,6 +144,13 @@ function syncChrome() {
 // path just before htmx fires. A chip click also commits the new scope to #viewport
 // up front (afterSwap can't recover a filter from the server-rendered pane-head).
 document.body.addEventListener("htmx:configRequest", (e) => {
+  // A refreshList (after a create/edit/delete) reloads #listPane off its static
+  // hx-get="/list" — reload the ACTIVE view at the live scope instead, so an edit
+  // doesn't snap the pane back to an unscoped Table.
+  if (e.detail.elt.id === "listPane") {
+    e.detail.path = viewURL(activeView(), activeEpic(), activeRegion(), activeFilter());
+    return;
+  }
   const tab = e.detail.elt.closest?.(".viewtab");
   if (tab) {
     e.detail.path = viewURL(tab.dataset.view, activeEpic(), activeRegion(), activeFilter());
@@ -156,6 +163,15 @@ document.body.addEventListener("htmx:configRequest", (e) => {
     viewport.dataset.region = "";
     viewport.dataset.filter = filter;
     e.detail.path = viewURL(activeView(), "", "", filter);
+    return;
+  }
+  // A board pivot carries a static /board?pivot= URL that omits the live filter/
+  // region scope — rewrite it onto the active scope so changing Status/Priority
+  // doesn't silently widen the board back to Everything.
+  const pivot = e.detail.elt.closest?.(".bb-pivot");
+  if (pivot) {
+    const base = viewURL("board", activeEpic(), activeRegion(), activeFilter());
+    e.detail.path = `${base}${base.includes("?") ? "&" : "?"}pivot=${encodeURIComponent(pivot.dataset.pivot)}`;
     return;
   }
   // The minimap's foot clear drops every scope and reloads the active view whole.
