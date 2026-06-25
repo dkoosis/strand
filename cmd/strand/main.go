@@ -78,9 +78,10 @@ func main() {
 	ln, err := lc.Listen(ctx, "tcp", *addr)
 	if err != nil {
 		if errors.Is(err, syscall.EADDRINUSE) {
-			log.Fatalf("strand: %s is already in use — another strand is probably running.\n"+
-				"  stop it with:  pkill -f 'strand --addr'\n"+
-				"  or pick a different port:  strand --addr 127.0.0.1:7778", *addr)
+			log.Fatalf("strand: looks like a strand is already running on %s — no need to start another. 🌲\n"+
+				"  to use that one:    open http://%s\n"+
+				"  to restart fresh:   pkill -f 'strand --addr'  &&  strand\n"+
+				"  to run side by side: strand --addr 127.0.0.1:7778", *addr, *addr)
 		}
 		log.Fatalf("strand: listen %s: %v", *addr, err)
 	}
