@@ -7,6 +7,8 @@
 
 # Go
 /bin/
+# built CLI binary at repo root
+/strand
 
 # bv (beads viewer) local config and caches
 .bv/
