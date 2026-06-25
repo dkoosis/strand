@@ -218,7 +218,7 @@ header {
 
 /* ============================================================ treemap minimap */
 /* Ambient minimap: fills the rail, scales to its width; act from the glance. */
-.tmwrap { flex: 0 0 auto; padding: var(--s-5); overflow: auto; }
+.tmwrap { flex: 0 0 auto; padding: var(--s-5); }
 .treemap { position: relative; width: 100%; height: var(--tm-h, 300px); }
 .mm-filter { cursor: pointer; }
 .mm-filter:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
