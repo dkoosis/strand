@@ -24,7 +24,7 @@
   --ink: #e7e9ee; --ink-2: #b3b8c4; --ink-3: #6c7280; --ink-4: #474c57;
   --chip-ink: #0c0d10; --focus: #4c7ef0;
   --card: #14161b; --card-hi: #181b21;
-  --tile-mix: 22%; --hdr-mix: 88%;
+  --hdr-mix: 88%;
 }
 :root[data-theme="light"] {
   --bg: #fbfbfa; --bg-1: #ffffff; --bg-2: #f4f4f2; --sel: #eaf0fd;
@@ -32,7 +32,7 @@
   --ink: #1a1c20; --ink-2: #4a4f59; --ink-3: #898f9b; --ink-4: #c2c6cd;
   --chip-ink: #ffffff; --focus: #2f6bdd;
   --card: #ffffff; --card-hi: #fafaf8;
-  --tile-mix: 14%; --hdr-mix: 82%;
+  --hdr-mix: 82%;
   --p2: #2f6bdd; --st-open: #2f6bdd; --st-closed: #2f9e4d;
 }
 * { box-sizing: border-box; }
@@ -205,8 +205,8 @@ header {
 
 /* hovered module name, pinned above the map (empty at rest) */
 .mm-title {
-  flex: 0 0 auto; min-height: 20px; padding: var(--s-4) var(--s-5) 0;
-  font-size: var(--fs-2); font-weight: 600; color: var(--ink);
+  flex: 0 0 auto; height: 28px; padding: var(--s-4) var(--s-5) 0;
+  font-size: var(--fs-2); line-height: var(--lh-tight); font-weight: 600; color: var(--ink);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
@@ -218,32 +218,36 @@ header {
 
 /* ============================================================ treemap minimap */
 /* Ambient minimap: fills the rail, scales to its width; act from the glance. */
-.tmwrap { flex: 0 1 auto; min-height: 0; padding: var(--s-5); overflow: auto; }
+.tmwrap { flex: 0 0 auto; padding: var(--s-5); overflow: auto; }
 .treemap { position: relative; width: 100%; height: var(--tm-h, 300px); }
 .mm-filter { cursor: pointer; }
 .mm-filter:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 /* the epic currently filtering the centerpiece reads as selected */
 .tile.mm-filter.on { box-shadow: inset 0 0 0 1.5px var(--ink); }
-/* A module is one bordered block. The 2px border is a hairline separator (--line)
-   so modules read apart consistently, regardless of how pale a module's tiles are
-   — no header bar, so a small module keeps its full proportional area. When a
-   module owns the active scope its border turns to the module's legend color
-   (--rc), tying the readout swatch to the map. */
+/* A module is one block of a single color (its tiles inherit the trunk's --rc).
+   At rest the 2px border is transparent — adjacent blocks read apart by their
+   distinct trunk colors and the gap the transparent border leaves. When a module
+   owns the active scope its border turns to the module's legend color (--rc), the
+   same hue as the readout swatch/pill. No header bar, so a small module keeps its
+   full proportional area. */
 .region {
   position: absolute; overflow: hidden; background: transparent;
-  border: 2px solid var(--line); transition: border-color .12s;
+  border: 2px solid transparent; transition: border-color .12s;
 }
 .region.on { border-color: var(--rc); }
 /* rg-head is the region's invisible click + keyboard target; it sits under the
    tiles and catches hovers in the gaps between them. */
 .rg-head { position: absolute; inset: 0; cursor: pointer; background: none; }
 .rg-body { position: absolute; inset: 0; pointer-events: none; }
+/* A tile is one story, painted the epic's full color (--rc inherited from the
+   region). Stories in a block read apart by a 2px border in the rail background
+   color — a clean gap, not a pale tint. */
 .tile {
   position: absolute; overflow: hidden; cursor: pointer; pointer-events: auto;
-  background: color-mix(in srgb, var(--rc) var(--tile-mix), var(--card));
+  background: var(--rc); border: 2px solid var(--bg);
   transition: background .1s;
 }
-.tile:hover { background: color-mix(in srgb, var(--rc) calc(var(--tile-mix) + 16%), var(--card)); }
+.tile:hover { background: color-mix(in srgb, var(--rc) 85%, #000); }
 /* bug dot — small, constant corner; noticed via saturation + consistency, not size */
 .flag { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%;
   background: #ff1f29; box-shadow: 0 0 0 1px #ff1f2966; }
