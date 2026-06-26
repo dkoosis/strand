@@ -606,11 +606,16 @@ func TestAttachFormRendersEpics(t *testing.T) {
 		`hx-post="/attach-epic"`,
 		`name="story" value="demo-e2"`,
 		`value="__new__"`,   // mint-a-new-epic option
-		`value="demo-root"`, // existing epic offered
+		`value="demo-root"`, // the real (parentless) epic root is offered
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("attach form missing %q:\n%s", want, body)
 		}
+	}
+	// demo-e1 is epic-typed but parented (a story), not a real epic root — it must
+	// not be offered, or an orphan would ladder up through a non-root node.
+	if strings.Contains(body, `value="demo-e1"`) {
+		t.Errorf("attach form offered a nested epic-typed bead as a root:\n%s", body)
 	}
 }
 

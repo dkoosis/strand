@@ -1295,7 +1295,10 @@ func candidateEpics(ctx context.Context, src readSource) []parentOpt {
 	opts := make([]parentOpt, 0)
 	for i := range issues {
 		is := &issues[i]
-		if is.IssueType != "epic" || is.Status == bd.StatusClosed || is.Status == bd.StatusDeferred {
+		// Only a parentless epic is a real epic root (matches strand.isEpic). An
+		// epic-typed bead with a parent is a nested node, not a trunk; attaching an
+		// orphan under it would ladder up through a non-root, so leave it out.
+		if is.IssueType != "epic" || is.Parent != "" || is.Status == bd.StatusClosed || is.Status == bd.StatusDeferred {
 			continue
 		}
 		opts = append(opts, parentOpt{ID: is.ID, Title: is.Title})
