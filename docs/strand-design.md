@@ -65,35 +65,35 @@ roll-up over the catalog. This is strand's entire reason to exist, and it is pro
 
 **Division of labor (the load-bearing principle):**
 
-- **Below the epic line** — tasks, subtasks, dependencies, ordering — is **agent
+- **Below the epic line** — tasks, dependencies, ordering — is **agent
   territory.** Agents work beads directly; they own task decomposition and order. strand
   *shows* this layer but the human rarely touches it.
-- **The epic line — user stories — is the human's territory.** dk's actual job is
-  **shaping the big picture**: authoring stories, keeping them recognizable, and checking
-  that the work beneath still ladders up to them.
+- **Above it — epics and the stories beneath them — is the human's territory.** dk's actual
+  job is **shaping the big picture**: authoring epics, breaking them into recognizable
+  stories, and checking that the work beneath still ladders up.
 - **The canonical strand session looks like the design conversation that produced this
   section** — the human shaping the top, the structure forming beneath. strand should make
   *that* easy. That is the product.
 
-**Level model (adds the top dk was missing):**
+**Level model:**
 
 ```
 project north star    one line — what this project is FOR
-  └ stories (epics)    ← the synthesis the human shapes and currently can't see
-      └ tasks          ┐ agent territory: decomposition, deps, order.
-          └ subtasks   ┘ shown in strand, but read-mostly for the human.
+  └ epics              ┐ human territory — the big picture the human shapes:
+      └ stories        ┘ recognizable epics (e.g. trixi's MEMORY) + their stories.
+          └ tasks      ← agent territory: decomposition, deps, order; shown, read-mostly.
 ```
 
-dk goes one level deep in practice today but wants the structure to support three
-(epic → task → subtask). L1 synthesis units = the recognizable **epics** (e.g. trixi's
-MEMORY, WETWARE, RETRIEVAL) — these are what dk reacts to as "stories."
+The structure is three tiers — **epic → story → task**. The L1 units the human reads first
+are the recognizable **epics** (e.g. trixi's MEMORY, WETWARE, RETRIEVAL); their **stories**
+are the level beneath, and **tasks** are the agent-owned bottom.
 
 **The Northstar keystone.** Each project carries a **one-line north star** stating its
 central guiding purpose. It does double duty:
 1. **Masthead of the strand** — the "why" above the stories.
-2. **The yardstick for story-integrity** — "is this epic a real user story?" is unanswerable
+2. **The yardstick for epic-integrity** — "does this epic serve the north star?" is unanswerable
    without a north star to test against. With one, **drift becomes visible**: an epic that
-   doesn't serve the line is a bucket, not a story.
+   doesn't serve the line is a bucket, not real work.
 
 Home: the **global beads rules** (loaded into every `bd` interaction), so agents working at
 the bottom stay anchored to the same purpose the human shapes at the top. This is a
