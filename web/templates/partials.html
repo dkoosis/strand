@@ -24,7 +24,7 @@
 
 {{define "list"}}
 {{if .Epic.Stories}}
-<div class="pane-head" data-view="list" data-story="{{if .HasStory}}{{.Story.ID}}{{end}}">
+<div class="pane-head" data-view="list" data-story="{{if .HasStory}}{{.Story.ID}}{{end}}" data-epic="{{if .HasEpic}}{{.Epic.Key}}{{end}}">
   <div class="lp-scope">
     <span class="lp-dot" style="background:{{.Epic.Color}}"></span>
     <span class="lp-name">{{if .HasStory}}{{cleanName .Story.Name}}{{else}}{{.Epic.Name}}{{end}}</span>
@@ -46,7 +46,7 @@
 
 {{define "board"}}
 {{if .Epic.Stories}}
-<div class="pane-head" data-view="board" data-story="{{if .HasStory}}{{.Story.ID}}{{end}}">
+<div class="pane-head" data-view="board" data-story="{{if .HasStory}}{{.Story.ID}}{{end}}" data-epic="{{if .HasEpic}}{{.Epic.Key}}{{end}}">
   <div class="lp-scope">
     <span class="lp-dot" style="background:{{.Epic.Color}}"></span>
     <span class="lp-name">{{if .HasStory}}{{cleanName .Story.Name}}{{else}}{{.Epic.Name}}{{end}}</span>
@@ -101,7 +101,7 @@
 
 {{define "insights"}}
 {{if .Epic.Stories}}
-<div class="pane-head" data-view="insights" data-story="{{if .HasStory}}{{.Story.ID}}{{end}}">
+<div class="pane-head" data-view="insights" data-story="{{if .HasStory}}{{.Story.ID}}{{end}}" data-epic="{{if .HasEpic}}{{.Epic.Key}}{{end}}">
   <div class="lp-scope">
     <span class="lp-dot" style="background:{{.Epic.Color}}"></span>
     <span class="lp-name">{{if .HasStory}}{{cleanName .Story.Name}}{{else}}{{.Epic.Name}}{{end}}</span>

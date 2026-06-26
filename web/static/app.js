@@ -227,15 +227,20 @@ document.addEventListener("keydown", (e) => {
   if (e.key === " " && e.target.closest?.("[role=button]")) e.preventDefault();
 });
 // After any centerpiece swap, re-read the fragment's own scope (pane-head carries
-// data-view/data-story) into #viewport, so the chrome and the minimap highlight
-// follow the truth the server just rendered — including a tab click that changed
-// the view, or the refreshList re-render.
+// data-view/data-story/data-epic) into #viewport, so the chrome and the minimap
+// highlight follow the truth the server just rendered — including a tab click that
+// changed the view, or the refreshList re-render. The epic scope must be re-read
+// too: drilling into a story of a DIFFERENT epic otherwise leaves a stale epic
+// scope lit alongside the drilled story's epic (two borders at once). The pane-head
+// emits its epic key only for a genuine epic scope (HasEpic) — empty for a story,
+// "everything", or bugs — so this clears the scope when the new fragment isn't one.
 document.body.addEventListener("htmx:afterSwap", (e) => {
   if (e.detail.target.id !== "listPane") return;
   const head = e.detail.target.querySelector(".pane-head[data-view]");
   if (head) {
     viewport.dataset.view = head.dataset.view;
     viewport.dataset.story = head.dataset.story || "";
+    viewport.dataset.epic = head.dataset.epic || "";
   }
   syncChrome();
 });

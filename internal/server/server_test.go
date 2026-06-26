@@ -446,6 +446,36 @@ func TestStoryGroupHeadBranches(t *testing.T) {
 	}
 }
 
+// TestPaneHeadEpicScope pins the pane-head's data-epic as the single source of
+// truth for epic scope through swaps (str-1gs). app.js's afterSwap re-reads it,
+// so it must carry the epic key ONLY for a genuine epic scope: empty for a story
+// drill and empty for "everything" — even though the single-epic "everything"
+// returns the real epic (Key="demo-root"). An ungated emit there would leave a
+// stale border lit when a later story drill swaps in, lighting two epics at once.
+func TestPaneHeadEpicScope(t *testing.T) {
+	srv := newTestServer(t, &stubBD{issues: sampleIssues})
+
+	epic := do(t, srv, "/list?epic=demo-root").Body.String()
+	if !strings.Contains(epic, `data-epic="demo-root"`) {
+		t.Error("epic-scoped pane-head missing data-epic key")
+	}
+
+	// "Everything" must NOT emit the key, or the border stays lit across a swap.
+	whole := do(t, srv, "/list").Body.String()
+	if strings.Contains(whole, `data-epic="demo-root"`) {
+		t.Error(`"everything" pane-head leaked a spurious epic scope`)
+	}
+	if !strings.Contains(whole, `data-epic=""`) {
+		t.Error(`"everything" pane-head missing empty data-epic`)
+	}
+
+	// A story drill carries no epic scope — the border lights via the owned story.
+	story := do(t, srv, "/list?story=demo-e1").Body.String()
+	if strings.Contains(story, `data-epic="demo-root"`) {
+		t.Error("story-scoped pane-head leaked a stale epic scope")
+	}
+}
+
 // TestBoardRendersColumns: the kanban defaults to a status pivot, drawing the
 // canonical columns as drop targets and a draggable card per bead, wired for the
 // move POST and the drawer drill.
