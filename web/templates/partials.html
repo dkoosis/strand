@@ -27,7 +27,7 @@
      drawer, so an epic or story edits through the same gesture the leaf rows
      use; "everything", "bugs", and the off-epic catch-all have no ScopeID and
      stay inert text (str-scn). Dot is a listView (or a view embedding it). */}}
-{{define "scopeName"}}{{if .ScopeID}}<span class="lp-name lp-edit" role="button" tabindex="0" hx-get="/bead/{{.ScopeID}}" hx-target="#drawer" hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']" title="Edit {{if .HasStory}}story{{else}}epic{{end}}">{{if .HasStory}}{{cleanName .Story.Name}}{{else}}{{.Epic.Name}}{{end}}</span>{{else}}<span class="lp-name">{{if .HasStory}}{{cleanName .Story.Name}}{{else}}{{.Epic.Name}}{{end}}</span>{{end}}{{end}}
+{{define "scopeName"}}{{$name := .Epic.Name}}{{if .HasStory}}{{$name = cleanName .Story.Name}}{{end}}{{if .ScopeID}}<span class="lp-name lp-edit" role="button" tabindex="0" hx-get="/bead/{{.ScopeID}}" hx-target="#drawer" hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']" title="Edit {{if .HasStory}}story{{else}}epic{{end}}">{{$name}}</span>{{else}}<span class="lp-name">{{$name}}</span>{{end}}{{end}}
 
 {{define "list"}}
 {{if .Epic.Stories}}
