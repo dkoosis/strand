@@ -4,28 +4,28 @@
 
 # strand
 
-**A human-friendly planning layer over [beads](https://github.com/steveyegge/beads) (`bd`).**
-
-*See the forest, not the catalog of trees.*
+*A little local web UI that makes [beads](https://github.com/steveyegge/beads) (`bd`) easier to look at.*
 
 </div>
 
 ---
 
-`bd` is a great issue tracker — for **agents**. It tracks the work robots do, at the
-grain robots care about. Yegge's own guidance: for *human* planning, reach for Linear or
-Jira. That leaves a solo human staring at a CLI built for machines.
+I track my projects in [beads](https://github.com/steveyegge/beads) because it's built for
+the coding agents I work with. But beads is deliberately agent-first — Yegge's own advice is
+to use it for the work agents do and reach for Linear or Jira when *you* want to plan. I
+didn't want a second tool just to read my own backlog, so I wrote strand: a single binary
+that reads the `.beads` store and serves the handful of views I kept wishing I had.
 
-**strand is the missing middle.** A single local binary that renders your beads data so one
-human can orient, prioritize, see structure, and decide what to do next — without leaving
-the beads store and without standing up a "real" PM tool.
+It doesn't replace beads or copy its data. It just renders it, so I can see the shape of a
+project in one look — where the work piles up, what's stuck, what's drifting from the point.
+`bd` stays the source of truth; strand only ever reads it.
 
-It doesn't duplicate beads. It **synthesizes** it: where the mass sits, what's stuck, what's
-drifting — the few things in motion and their shape, in one look.
+If you use beads too, you might find it handy. It's small, and it runs entirely on your own
+machine.
 
-## The idea
+## How I think about it
 
-strand reads three tiers and splits the work by who owns each:
+strand reads three tiers and splits them by who's really driving each:
 
 ```
 project north star   ── one line: what this project is FOR
@@ -67,8 +67,8 @@ go run ./cmd/strand -addr :8080           # bind elsewhere
 
 ## Insights
 
-strand builds the dependency graph in-process (via [gonum](https://gonum.org)) and surfaces
-the few numbers that drive a decision, not a wall of metrics:
+strand builds the dependency graph in-process (via [gonum](https://gonum.org)) and shows the
+few numbers I actually use to decide what to look at, rather than a wall of metrics:
 
 - **Importance** — PageRank over the dependency graph: foundational beads (many things rest
   on them) rank high.
