@@ -183,9 +183,9 @@ func TestCreateSendsSetFieldsOnly(t *testing.T) {
 	}
 }
 
-// Create emits --parent when Parent is set, so the strand's tree axis is wired
+// Create emits --parent when Parent is set, so the strand's parent axis is wired
 // at birth (str-6k0.6.2 forced-parent contract). An empty Parent omits the flag
-// — that's the deliberate off-trunk path, covered by TestCreateSendsSetFieldsOnly.
+// — that's the deliberate off-epic path, covered by TestCreateSendsSetFieldsOnly.
 func TestCreateSendsParentWhenSet(t *testing.T) {
 	c, log := fakeBD(t, `echo '{"id":"x-9","title":"hi","status":"open"}'`)
 	if _, err := c.Create(context.Background(), &CreateOpts{Title: "hi", Parent: "epic-7"}); err != nil {

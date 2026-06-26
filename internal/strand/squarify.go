@@ -2,8 +2,8 @@ package strand
 
 import "sort"
 
-// Rect is a treemap cell in normalized 0–100 percentage space. The server lays
-// the treemap out in this unit space and the template emits the coordinates as
+// Rect is a map cell in normalized 0–100 percentage space. The server lays
+// the map out in this unit space and the template emits the coordinates as
 // CSS percentages, so the browser scales the map to any container with no
 // client-side layout pass (spec D8: server renders, minimal JS).
 type Rect struct {
@@ -22,13 +22,13 @@ type box struct {
 	x, y, w, h float64
 }
 
-// unit is the side of the normalized square the treemap lays out in; rects come
+// unit is the side of the normalized square the map lays out in; rects come
 // back as 0–100 percentages so CSS scales them to any container.
 const unit = 100.0
 
 // squarify lays out weighted items into the normalized unit square using the
 // squarified treemap algorithm (Bruls, Huizing, van Wijk), favoring near-square
-// tiles so area reads as magnitude at a glance. It returns one Rect per input
+// cells so area reads as magnitude at a glance. It returns one Rect per input
 // value, in input order. Zero or negative weights collapse to zero-area cells.
 func squarify(values []float64) []Rect {
 	out := make([]Rect, len(values))
@@ -71,7 +71,7 @@ func newCells(values []float64) ([]cell, float64) {
 }
 
 // orient returns whether the next row lays out horizontally and the length of
-// the side it spans — always the shorter side, which keeps tiles square.
+// the side it spans — always the shorter side, which keeps cells square.
 func orient(r box) (bool, float64) {
 	if r.w < r.h {
 		return true, r.w

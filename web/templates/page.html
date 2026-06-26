@@ -51,13 +51,13 @@
     <div class="northstar">{{.Strand.NorthStar}}</div>
   </div>
   <div class="ns-meta">
-    <span><b class="tnum">{{len .Strand.Regions}}</b> region{{if ne (len .Strand.Regions) 1}}s{{end}}</span>
+    <span><b class="tnum">{{len .Strand.Epics}}</b> epic{{if ne (len .Strand.Epics) 1}}s{{end}}</span>
     <span><b class="tnum">{{.Strand.Open}}</b> open · <b class="tnum">{{.Strand.InProgress}}</b> in progress</span>
   </div>
 </div>
 {{end}}
 
-<div class="viewport" id="viewport" data-view="list" data-epic="">
+<div class="viewport" id="viewport" data-view="list" data-story="">
   <nav class="viewbar" aria-label="View switcher">
     <button class="viewtab active" type="button" data-view="list" aria-pressed="true"
             hx-get="/list" hx-target="#listPane">Table</button>
@@ -82,7 +82,7 @@
 
     <aside class="minimap" aria-label="Strand minimap">
       <div class="mm-title" id="mmTitle" aria-live="polite"></div>
-      <div class="tmwrap">{{template "treemap" .Strand}}</div>
+      <div class="tmwrap">{{template "map" .Strand}}</div>
       <div class="mm-readout idle" id="mmReadout"></div>
       <button class="mm-clear" id="mmClear" type="button" hidden hx-get="/list" hx-target="#listPane" title="Clear filter">clear filter</button>
     </aside>
@@ -91,7 +91,7 @@
 
 <footer>
   <span><b>Switch the view</b> up top — Table · Board · Insights</span>
-  <span><b>Click the minimap</b> → filter the view to that region or epic</span>
+  <span><b>Click the minimap</b> → filter the view to that epic or story</span>
   <span style="margin-left:auto">view-centric · minimap is ambient context · §1/§2</span>
   <button class="quit-btn" type="button" hx-post="/shutdown" hx-swap="outerHTML">Quit strand</button>
 </footer>

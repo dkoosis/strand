@@ -271,7 +271,7 @@ func (s *stubBD) Close(_ context.Context, id, _ string) (*bd.Issue, error) {
 }
 
 // demoRepo is the active repo every test server scopes to; its name labels the
-// strand region the way the active repo's name does in production.
+// strand the way the active repo's name does in production.
 var demoRepo = registry.Repo{Name: "demo", Path: "/demo"}
 
 // readOnlyStub implements ONLY the readSource methods (List/Deps/Comments) — no
@@ -354,8 +354,8 @@ func oneBead(iss *bd.Issue) *stubBD {
 }
 
 var sampleIssues = []bd.Issue{
-	{ID: "demo-root", Title: "DEMO trunk", IssueType: "epic", Status: "open"}, // region; epics below are tiles
-	{ID: "demo-e1", Parent: "demo-root", Title: "Strand epic", IssueType: "epic", Status: "open", Priority: new(1)},
+	{ID: "demo-root", Title: "DEMO", IssueType: "epic", Status: "open"}, // top-level epic; children below are stories
+	{ID: "demo-e1", Parent: "demo-root", Title: "Strand story", IssueType: "epic", Status: "open", Priority: new(1)},
 	{ID: "demo-e1.a", Parent: "demo-e1", Title: "Wire the thing", IssueType: "bug", Status: "open", Priority: new(0)},
 	{ID: "demo-e1.b", Parent: "demo-e1", Title: "Test the thing", Status: "in_progress", Priority: new(2)},
 	{ID: "demo-e2", Parent: "demo-root", Title: "Lone task", IssueType: "task", Status: "open", Priority: new(3)},
@@ -363,7 +363,7 @@ var sampleIssues = []bd.Issue{
 
 // TestStrandPageRenders pins the view-centric landing: the page renders the north
 // star, the loud primary view-switcher (Table/Board/Insights tabs), the minimap
-// treemap with a tile per epic carrying its filter identity (data-epic, routed to
+// map with a story per epic carrying its filter identity (data-story, routed to
 // the active view by app.js), and the centerpiece list.
 func TestStrandPageRenders(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: sampleIssues})
@@ -379,10 +379,10 @@ func TestStrandPageRenders(t *testing.T) {
 		`class="viewtab active" type="button" data-view="list"`, // Table is the default loud tab
 		`data-view="board"`,    // Board tab present
 		`data-view="insights"`, // Insights tab present
-		`class="minimap"`,      // treemap demoted to ambient minimap rail
-		`class="treemap"`,
-		`data-epic="demo-e1"`, // tile carries its filter identity (app.js routes the click)
-		`data-epic="demo-e2"`,
+		`class="minimap"`,      // map demoted to ambient minimap rail
+		`class="map"`,
+		`data-story="demo-e1"`, // story carries its filter identity (app.js routes the click)
+		`data-story="demo-e2"`,
 		`class="flag"`, // demo-e1 holds a bug bead
 	} {
 		if !strings.Contains(body, want) {
@@ -391,58 +391,58 @@ func TestStrandPageRenders(t *testing.T) {
 	}
 }
 
-// TestListFragmentNarrowsToEpic: the epic param scopes the bead-list pane to one
-// tile's beads and excludes others.
-func TestListFragmentNarrowsToEpic(t *testing.T) {
+// TestListFragmentNarrowsToStory: the story param scopes the bead-list pane to one
+// story's beads and excludes others.
+func TestListFragmentNarrowsToStory(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: sampleIssues})
-	rec := do(t, srv, "/list?epic=demo-e1")
+	rec := do(t, srv, "/list?story=demo-e1")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /list = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "Wire the thing") || !strings.Contains(body, "Test the thing") {
-		t.Errorf("epic list missing its beads:\n%s", body)
+		t.Errorf("story list missing its beads:\n%s", body)
 	}
 	if strings.Contains(body, "Lone task") {
-		t.Error("epic list leaked a bead from another epic")
+		t.Error("story list leaked a bead from another story")
 	}
 	if !strings.Contains(body, `hx-get="/bead/demo-e1.a"`) {
 		t.Error("bead row missing drawer wiring")
 	}
 }
 
-// TestEpicGroupHeadBranches pins both epic-group renders after the epicArgs
-// bool-trap split: the region view (every epic) draws a group header per epic,
-// while the epic-scoped view drops the header (the pane already names the epic).
-func TestEpicGroupHeadBranches(t *testing.T) {
+// TestStoryGroupHeadBranches pins both story-group renders after the bool-trap
+// split: the whole-epic view (every story) draws a group header per story, while
+// the story-scoped view drops the header (the pane already names the story).
+func TestStoryGroupHeadBranches(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: sampleIssues})
 
-	// Region view: no epic param ranges over Region.Epics with a head per group.
-	recRegion := do(t, srv, "/list")
-	if recRegion.Code != http.StatusOK {
-		t.Fatalf("GET /list = %d, want 200", recRegion.Code)
+	// Whole-epic view: no story param ranges over Epic.Stories with a head per group.
+	recWhole := do(t, srv, "/list")
+	if recWhole.Code != http.StatusOK {
+		t.Fatalf("GET /list = %d, want 200", recWhole.Code)
 	}
-	region := recRegion.Body.String()
-	if !strings.Contains(region, `class="eg-head"`) {
-		t.Error("region list missing per-epic group header")
+	whole := recWhole.Body.String()
+	if !strings.Contains(whole, `class="story-head"`) {
+		t.Error("whole-epic list missing per-story group header")
 	}
-	if !strings.Contains(region, `hx-get="/list?epic=demo-e1"`) {
+	if !strings.Contains(whole, `hx-get="/list?story=demo-e1"`) {
 		t.Error("group header missing drill-in wiring")
 	}
 
-	// Epic-scoped view: the header is redundant (the pane head already names it).
-	recEpic := do(t, srv, "/list?epic=demo-e1")
-	if recEpic.Code != http.StatusOK {
-		t.Fatalf("GET /list?epic=demo-e1 = %d, want 200", recEpic.Code)
+	// Story-scoped view: the header is redundant (the pane head already names it).
+	recStory := do(t, srv, "/list?story=demo-e1")
+	if recStory.Code != http.StatusOK {
+		t.Fatalf("GET /list?story=demo-e1 = %d, want 200", recStory.Code)
 	}
-	epic := recEpic.Body.String()
-	if strings.Contains(epic, `class="eg-head"`) {
-		t.Error("epic-scoped list drew a redundant group header")
+	story := recStory.Body.String()
+	if strings.Contains(story, `class="story-head"`) {
+		t.Error("story-scoped list drew a redundant group header")
 	}
 	// The body (bead rows) must still render in both branches.
-	if !strings.Contains(epic, `class="bead-rows" data-epic="demo-e1"`) {
-		t.Error("epic-scoped list missing its bead rows")
+	if !strings.Contains(story, `class="bead-rows" data-story="demo-e1"`) {
+		t.Error("story-scoped list missing its bead rows")
 	}
 }
 
@@ -490,23 +490,23 @@ func TestBoardPivotPriority(t *testing.T) {
 	}
 }
 
-// TestBoardScopedToEpic: the epic param narrows the board to one epic's beads,
+// TestBoardScopedToStory: the story param narrows the board to one story's beads,
 // like the table view does.
-func TestBoardScopedToEpic(t *testing.T) {
+func TestBoardScopedToStory(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: sampleIssues})
-	rec := do(t, srv, "/board?epic=demo-e1")
+	rec := do(t, srv, "/board?story=demo-e1")
 
 	body := rec.Body.String()
 	if !strings.Contains(body, "Wire the thing") || !strings.Contains(body, "Test the thing") {
-		t.Errorf("epic board missing its beads:\n%s", body)
+		t.Errorf("story board missing its beads:\n%s", body)
 	}
 	if strings.Contains(body, "Lone task") {
-		t.Error("epic board leaked a bead from another epic")
+		t.Error("story board leaked a bead from another story")
 	}
 	// The board head carries the scope marker app.js reads to keep the top tab strip
-	// on Board at this epic, so a minimap click filters the active (board) view.
-	if !strings.Contains(body, `data-view="board"`) || !strings.Contains(body, `data-epic="demo-e1"`) {
-		t.Error("board fragment missing data-view/data-epic scope marker")
+	// on Board at this story, so a minimap click filters the active (board) view.
+	if !strings.Contains(body, `data-view="board"`) || !strings.Contains(body, `data-story="demo-e1"`) {
+		t.Error("board fragment missing data-view/data-story scope marker")
 	}
 }
 
@@ -549,13 +549,13 @@ func TestBoardMoveErrorReverts(t *testing.T) {
 	}
 }
 
-// rankedEpic is a fully-ranked epic group (root included — it's a member of its
+// rankedStory is a fully-ranked story group (root included — it's a member of its
 // own list), the post-seed state where midpoint inserts apply. Ranks are 1..4 in
 // id order so the rank order and the obvious reading order line up.
-func rankedEpic() []bd.Issue {
+func rankedStory() []bd.Issue {
 	return []bd.Issue{
-		{ID: "r-root", Title: "RANK trunk", IssueType: "epic", Status: "open"}, // region; r-1 is the tile
-		{ID: "r-1", Parent: "r-root", Title: "Ranked epic", IssueType: "epic", Status: "open", Priority: new(1), Metadata: map[string]any{"rank": 1.0}},
+		{ID: "r-root", Title: "RANK", IssueType: "epic", Status: "open"}, // top-level epic; r-1 is the story
+		{ID: "r-1", Parent: "r-root", Title: "Ranked story", IssueType: "epic", Status: "open", Priority: new(1), Metadata: map[string]any{"rank": 1.0}},
 		{ID: "r-1.a", Parent: "r-1", Title: "A", Status: "open", Priority: new(0), Metadata: map[string]any{"rank": 2.0}},
 		{ID: "r-1.b", Parent: "r-1", Title: "B", Status: "open", Priority: new(2), Metadata: map[string]any{"rank": 3.0}},
 		{ID: "r-1.c", Parent: "r-1", Title: "C", Status: "open", Priority: new(2), Metadata: map[string]any{"rank": 4.0}},
@@ -573,7 +573,7 @@ func rankOf(writes []rankWrite, id string) float64 {
 	return math.NaN()
 }
 
-// TestRankSeedsUntouchedGroup: the first drag on an epic with no manual rank yet
+// TestRankSeedsUntouchedGroup: the first drag on a story with no manual rank yet
 // seeds dense ranks 1..N over the post-drop order, turning the whole group ranked
 // in one pass (the sortBeads invariant). Success is 204 — the client keeps its
 // optimistic DOM.
@@ -628,7 +628,7 @@ func TestRankSeedSkipsAbsentID(t *testing.T) {
 // TestRankMidpointInsert: a single move inside an already-ranked group writes one
 // bead to the midpoint of its new neighbors — not a full reseed.
 func TestRankMidpointInsert(t *testing.T) {
-	stub := &stubBD{issues: rankedEpic()}
+	stub := &stubBD{issues: rankedStory()}
 	srv := newTestServer(t, stub)
 	// Move r-1.c between r-1 (rank 1) and r-1.a (rank 2): midpoint 1.5.
 	rec := send(t, srv, http.MethodPost, "/bead/r-1.c/rank",
@@ -649,7 +649,7 @@ func TestRankMidpointInsert(t *testing.T) {
 // the edge it now leads or trails, with no priority floor to collide with.
 func TestRankHeadAndTailEdges(t *testing.T) {
 	t.Run("head", func(t *testing.T) {
-		stub := &stubBD{issues: rankedEpic()}
+		stub := &stubBD{issues: rankedStory()}
 		srv := newTestServer(t, stub)
 		// r-1.c to the front: just below r-1 (rank 1) → 0.
 		rec := send(t, srv, http.MethodPost, "/bead/r-1.c/rank",
@@ -662,7 +662,7 @@ func TestRankHeadAndTailEdges(t *testing.T) {
 		}
 	})
 	t.Run("tail", func(t *testing.T) {
-		stub := &stubBD{issues: rankedEpic()}
+		stub := &stubBD{issues: rankedStory()}
 		srv := newTestServer(t, stub)
 		// r-1 to the back: just above r-1.c (rank 4) → 5.
 		rec := send(t, srv, http.MethodPost, "/bead/r-1/rank",
@@ -680,7 +680,7 @@ func TestRankHeadAndTailEdges(t *testing.T) {
 // no midpoint exists, so the handler reseeds the whole group dense instead of
 // writing a colliding rank.
 func TestRankRenormalizesOnExhaustion(t *testing.T) {
-	tight := rankedEpic()
+	tight := rankedStory()
 	tight[2].Metadata["rank"] = math.Nextafter(1, 2) // r-1.a one ulp above r-1 (index 2: after r-root, r-1)
 	stub := &stubBD{issues: tight}
 	srv := newTestServer(t, stub)
@@ -704,7 +704,7 @@ func TestRankRenormalizesOnExhaustion(t *testing.T) {
 // TestRankErrorReverts: a bd write failure returns non-2xx with the error
 // fragment, the client's signal to revert the optimistic drag.
 func TestRankErrorReverts(t *testing.T) {
-	stub := &stubBD{issues: rankedEpic()}
+	stub := &stubBD{issues: rankedStory()}
 	stub.writeErr = fmt.Errorf("bd update r-1.c: %w", bd.ErrBD)
 	srv := newTestServer(t, stub)
 	rec := send(t, srv, http.MethodPost, "/bead/r-1.c/rank",
@@ -721,7 +721,7 @@ func TestRankErrorReverts(t *testing.T) {
 // TestRankSingleIDNoOp: an order of one id has nothing to reorder, so the handler
 // short-circuits to 204 without touching bd.
 func TestRankSingleIDNoOp(t *testing.T) {
-	stub := &stubBD{issues: rankedEpic()}
+	stub := &stubBD{issues: rankedStory()}
 	srv := newTestServer(t, stub)
 	rec := send(t, srv, http.MethodPost, "/bead/r-1.a/rank", "order=r-1.a")
 
@@ -965,7 +965,7 @@ func TestAddEmptyCommentIsHonest(t *testing.T) {
 }
 
 // TestCreateFormRenders: the new-bead form opens with the type options, the
-// forced-parent picker (off-trunk + new-inline choices), and the candidate
+// forced-parent picker (no-epic + new-inline choices), and the candidate
 // parents loaded from the source.
 func TestCreateFormRenders(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: sampleIssues})
@@ -978,7 +978,7 @@ func TestCreateFormRenders(t *testing.T) {
 	if !strings.Contains(body, `hx-post="/new"`) {
 		t.Errorf("create form missing its post target:\n%s", body)
 	}
-	for _, want := range []string{`name="parent"`, `value="__off_trunk__"`, `value="__new__"`} {
+	for _, want := range []string{`name="parent"`, `value="__off_epic__"`, `value="__new__"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("create form missing forced-parent picker part %q:\n%s", want, body)
 		}
@@ -1011,7 +1011,7 @@ func TestCreateReflects(t *testing.T) {
 
 // TestCreateForcesParent: a create with no parent choice is rejected — the form
 // re-renders with the forced-parent error and no bead is created. The strand's
-// tree axis can't be skipped by omission (str-6k0.6.2).
+// parent axis can't be skipped by omission (str-6k0.6.2).
 func TestCreateForcesParent(t *testing.T) {
 	stub := &stubBD{show: map[string]*bd.Issue{}}
 	srv := newTestServer(t, stub)
@@ -1029,18 +1029,18 @@ func TestCreateForcesParent(t *testing.T) {
 	}
 }
 
-// TestCreateOffTrunk: the off-trunk choice is a deliberate root — the bead is
+// TestCreateNoEpic: the no-epic choice is a deliberate root — the bead is
 // created with no parent id and no error.
-func TestCreateOffTrunk(t *testing.T) {
+func TestCreateNoEpic(t *testing.T) {
 	stub := &stubBD{show: map[string]*bd.Issue{}}
 	srv := newTestServer(t, stub)
-	rec := send(t, srv, http.MethodPost, "/new", "title=Root&type=task&priority=2&parent=__off_trunk__")
+	rec := send(t, srv, http.MethodPost, "/new", "title=Root&type=task&priority=2&parent=__off_epic__")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /new = %d, want 200", rec.Code)
 	}
 	if len(stub.createOpts) != 1 || stub.createOpts[0].Parent != "" {
-		t.Errorf("off-trunk create should carry no parent, got %+v", stub.createOpts)
+		t.Errorf("no-epic create should carry no parent, got %+v", stub.createOpts)
 	}
 }
 
@@ -1087,7 +1087,7 @@ func TestCreateNewParentNeedsTitle(t *testing.T) {
 // re-renders the form with bd's error, not a half-made bead.
 func TestCreateEmptyTitleIsHonest(t *testing.T) {
 	srv := newTestServer(t, &stubBD{})
-	rec := send(t, srv, http.MethodPost, "/new", "title=&type=task&priority=2&parent=__off_trunk__")
+	rec := send(t, srv, http.MethodPost, "/new", "title=&type=task&priority=2&parent=__off_epic__")
 
 	body := rec.Body.String()
 	if !strings.Contains(body, `hx-post="/new"`) {
@@ -1314,12 +1314,12 @@ var (
 	insStale = insightsNow.Add(-30 * 24 * time.Hour)
 )
 
-// insightsIssues is the fixture for the dashboard: epic demo-i with a 3-bead
+// insightsIssues is the fixture for the dashboard: story demo-i with a 3-bead
 // dependency chain (i.3→i.2→i.1, so i.1 is foundational), one in-progress bead, and
 // one stale untagged bead. bd list omits closed, so no closed beads appear.
 var insightsIssues = []bd.Issue{
-	{ID: "demo-root", Title: "DEMO trunk", IssueType: "epic", Status: "open"}, // region; demo-i is the tile
-	{ID: "demo-i", Parent: "demo-root", Title: "Insights epic", IssueType: "epic", Status: "open", Priority: new(1), UpdatedAt: insFresh},
+	{ID: "demo-root", Title: "DEMO", IssueType: "epic", Status: "open"}, // top-level epic; demo-i is the story
+	{ID: "demo-i", Parent: "demo-root", Title: "Insights story", IssueType: "epic", Status: "open", Priority: new(1), UpdatedAt: insFresh},
 	{ID: "demo-i.1", Parent: "demo-i", Title: "Foundation", Status: "open", Priority: new(1), Labels: []string{"core"}, UpdatedAt: insFresh},
 	{ID: "demo-i.2", Parent: "demo-i", Title: "Mid", Status: "open", Priority: new(2), Labels: []string{"core", "ui"}, UpdatedAt: insFresh},
 	{ID: "demo-i.3", Parent: "demo-i", Title: "Leaf", Status: "open", Priority: new(2), Labels: []string{"ui"}, UpdatedAt: insFresh},
@@ -1337,12 +1337,12 @@ var insightsDeps = []bd.DepEdge{
 // stay because the handler tests below still drive the /insights render path.
 
 // TestInsightsFragmentRenders: the dashboard returns its panels, the scope marker
-// app.js reads to keep the top tab strip on Insights at this epic, and the computed
+// app.js reads to keep the top tab strip on Insights at this story, and the computed
 // values. The view switcher itself is now top-level page chrome, not per-fragment.
 func TestInsightsFragmentRenders(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: insightsIssues, deps: insightsDeps})
 	srv.now = func() time.Time { return insightsNow }
-	rec := do(t, srv, "/insights?epic=demo-i")
+	rec := do(t, srv, "/insights?story=demo-i")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /insights = %d, want 200", rec.Code)
@@ -1356,7 +1356,7 @@ func TestInsightsFragmentRenders(t *testing.T) {
 		"frees",                   // do-next consequence framing
 		"lean on this",            // hotspot structural read
 		`data-view="insights"`,    // scope marker: app.js syncs the Insights tab as active
-		`data-epic="demo-i"`,      // ...scoped to this epic, so a tab switch keeps the scope
+		`data-story="demo-i"`,     // ...scoped to this story, so a tab switch keeps the scope
 		`hx-get="/bead/demo-i.1"`, // referenced rows click → drawer
 		`hx-target="#drawer"`,     // ...into the detail panel
 		"Foundation",              // top load-bearing bead title
@@ -1373,17 +1373,17 @@ func TestInsightsFragmentRenders(t *testing.T) {
 	}
 }
 
-// TestInsightsScopedToEpic: the epic param narrows the dashboard to one epic; a bead
-// from another epic must not appear in the critical path or leaderboards.
-func TestInsightsScopedToEpic(t *testing.T) {
+// TestInsightsScopedToStory: the story param narrows the dashboard to one story; a
+// bead from another story must not appear in the critical path or leaderboards.
+func TestInsightsScopedToStory(t *testing.T) {
 	mixed := append(append([]bd.Issue(nil), insightsIssues...),
-		bd.Issue{ID: "demo-z", Parent: "demo-root", Title: "Other epic", IssueType: "epic", Status: "open", Priority: new(2), UpdatedAt: insFresh},
+		bd.Issue{ID: "demo-z", Parent: "demo-root", Title: "Other story", IssueType: "epic", Status: "open", Priority: new(2), UpdatedAt: insFresh},
 		bd.Issue{ID: "demo-z.1", Parent: "demo-z", Title: "Elsewhere", Status: "open", Priority: new(2), UpdatedAt: insFresh})
 	srv := newTestServer(t, &stubBD{issues: mixed, deps: insightsDeps})
 	srv.now = func() time.Time { return insightsNow }
-	body := do(t, srv, "/insights?epic=demo-i").Body.String()
+	body := do(t, srv, "/insights?story=demo-i").Body.String()
 	if strings.Contains(body, "Elsewhere") {
-		t.Error("epic-scoped insights leaked a bead from another epic")
+		t.Error("story-scoped insights leaked a bead from another story")
 	}
 }
 

@@ -1,14 +1,14 @@
 // Package strand builds strand's landing model — the "strand" view (spec §1a):
-// the work in motion as sized story tiles, not a flat catalog. It turns a flat
-// list of bd issues into regions of epics, each epic a treemap tile sized by its
-// open work, so weight and heat read before a word does.
+// the work in motion as sized stories, not a flat catalog. It turns a flat list
+// of bd issues into epics of stories, each story a map cell sized by its open
+// work, so weight and heat read before a word does.
 //
-// Regions are the project's top-level epics — the trunks the human shapes (spec
-// §1a: trixi's MEMORY, WETWARE, RETRIEVAL …). A region's tiles are the epics one
-// level beneath its trunk; deeper tasks and subtasks roll up into the tile they
-// descend from. Live work that doesn't ladder up to any trunk collects in a
-// catch-all region. The trunk hierarchy lives in bd (parent edges), so the
-// synthesis layer spec §1a deferred is now read straight from the data.
+// Epics are the project's top-level work — the keystones the human shapes (spec
+// §1a: trixi's MEMORY, WETWARE, RETRIEVAL …). An epic's stories are the issues
+// one level beneath it; deeper tasks and subtasks roll up into the story they
+// descend from. Live work that doesn't ladder up to any epic collects in a
+// catch-all epic. The epic hierarchy lives in bd (parent edges), so the synthesis
+// layer spec §1a deferred is now read straight from the data.
 package strand
 
 import (
@@ -44,7 +44,7 @@ type Bead struct {
 const defaultPriority = 2
 
 // NewBead projects a bd.Issue onto the render-facing Bead — the one place that
-// maps bd's field names (IssueType) to the view's, so the epic roll-up and the
+// maps bd's field names (IssueType) to the view's, so the story roll-up and the
 // board's single-card refresh can't drift.
 func NewBead(i *bd.Issue) Bead {
 	rank, hasRank := i.Rank()
@@ -80,41 +80,41 @@ func (b *Bead) ResolveJTBD(description string, reg jtbd.Registry) {
 	}
 }
 
-// Epic is a story tile: a root issue plus its open descendants. Open is the tile
-// weight; Flag marks an epic holding a bug-type bead (the "bug dot").
-type Epic struct {
+// Story is one story: a root issue plus its open descendants. Open is its weight;
+// Flag marks a story holding a bug-type bead (the "bug dot").
+type Story struct {
 	ID    string
 	Name  string
 	Open  int
 	Flag  bool
 	Beads []Bead
-	Rect  Rect // geometry within its region's body, in 0–100 percentages
+	Rect  Rect // geometry within its epic's body, in 0–100 percentages
 }
 
-// Region is a trunk: a top-level epic whose tiles are the epics beneath it.
-// Key is the trunk's bd id (or looseKey for off-trunk work); Color is stable per
-// trunk across requests.
-type Region struct {
-	Key   string
-	Name  string
-	Color string
-	Open  int
-	Epics []Epic
-	Rect  Rect // geometry within the treemap, in 0–100 percentages
+// Epic is a top-level epic: a root bd epic whose stories are the issues beneath
+// it. Key is the epic's bd id (or looseKey for off-epic work); Color is stable
+// per epic across requests.
+type Epic struct {
+	Key     string
+	Name    string
+	Color   string
+	Open    int
+	Stories []Story
+	Rect    Rect // geometry within the map, in 0–100 percentages
 }
 
 // Model is the whole landing model the page template renders.
 type Model struct {
 	NorthStar  string
-	Regions    []Region
+	Epics      []Epic
 	Open       int
 	InProgress int
 }
 
 // Synthesis is the human-shaped layer bd does not yet provide (spec §1a): the
-// north-star keystone and the module grouping. Today it carries the project
-// label and north-star line; when module derivation lands it grows the
-// region-mapping without changing Build's callers.
+// north-star keystone and the epic grouping. Today it carries the project label
+// and north-star line; when grouping derivation lands it grows the epic-mapping
+// without changing Build's callers.
 type Synthesis struct {
 	Project   string
 	NorthStar string
@@ -130,20 +130,20 @@ func openish(status bd.Status) bool {
 	return status != bd.StatusClosed && status != bd.StatusDeferred
 }
 
-// regionPalette colors the trunks. Colors are assigned by sorted region key, so
-// a trunk keeps its color across requests no matter its current weight.
-var regionPalette = []string{"#4c7ef0", "#e0663d", "#3fa66a", "#a463d6", "#d6a13f", "#2fa6a0"}
+// epicPalette colors the epics. Colors are assigned by sorted epic key, so an
+// epic keeps its color across requests no matter its current weight.
+var epicPalette = []string{"#4c7ef0", "#e0663d", "#3fa66a", "#a463d6", "#d6a13f", "#2fa6a0"}
 
 const (
-	// looseKey is the catch-all region for live work that doesn't ladder up to a
-	// trunk (standalone tasks, orphaned features).
+	// looseKey is the catch-all epic for live work that doesn't ladder up to a
+	// top-level epic (standalone tasks, orphaned features).
 	looseKey   = "__loose__"
 	looseColor = "#7a8290"
 )
 
-// isTrunk reports whether an issue is a region trunk: a top-level epic. A trunk
-// defines a region; it is never itself a tile or a bead.
-func isTrunk(is *bd.Issue) bool {
+// isEpic reports whether an issue is a top-level epic: a root bd epic. It defines
+// an epic group; it is never itself a story or a bead.
+func isEpic(is *bd.Issue) bool {
 	return is.Parent == "" && is.IssueType == "epic"
 }
 
@@ -154,22 +154,22 @@ func Build(issues []bd.Issue, syn Synthesis) Model {
 		byID[issues[i].ID] = issues[i]
 	}
 
-	// Group every live non-trunk issue under its tile (the epic one level below
-	// its trunk), and record which region the tile belongs to. Count in-progress
-	// work in the same pass.
+	// Group every live non-epic issue under its story (the issue one level below
+	// its top-level epic), and record which epic the story belongs to. Count
+	// in-progress work in the same pass.
 	members := make(map[string][]bd.Issue)
-	regionOf := make(map[string]string)
+	epicOf := make(map[string]string)
 	inProgress := 0
 	for i := range issues {
-		if !openish(issues[i].Status) || isTrunk(&issues[i]) {
+		if !openish(issues[i].Status) || isEpic(&issues[i]) {
 			continue
 		}
 		if issues[i].Status == bd.StatusInProgress {
 			inProgress++
 		}
-		region, epic := placeIssue(issues[i].ID, byID)
-		members[epic] = append(members[epic], issues[i])
-		regionOf[epic] = region
+		epic, story := placeIssue(issues[i].ID, byID)
+		members[story] = append(members[story], issues[i])
+		epicOf[story] = epic
 	}
 
 	f := Model{NorthStar: syn.NorthStar, InProgress: inProgress}
@@ -177,53 +177,54 @@ func Build(issues []bd.Issue, syn Synthesis) Model {
 		return f
 	}
 
-	// Collect tiles into their regions.
-	byRegion := make(map[string][]Epic)
-	for epicID, ms := range members {
-		e := buildEpic(epicID, ms, byID, syn.JTBD)
-		byRegion[regionOf[epicID]] = append(byRegion[regionOf[epicID]], e)
+	// Collect stories into their epics.
+	byEpic := make(map[string][]Story)
+	for storyID, ms := range members {
+		st := buildStory(storyID, ms, byID, syn.JTBD)
+		byEpic[epicOf[storyID]] = append(byEpic[epicOf[storyID]], st)
 	}
 
-	regions := make([]Region, 0, len(byRegion))
-	for key, epics := range byRegion {
-		sortEpics(epics)
-		layoutEpics(epics)
-		r := Region{Key: key, Name: regionName(key, byID), Epics: epics}
-		for i := range epics {
-			r.Open += epics[i].Open
+	epics := make([]Epic, 0, len(byEpic))
+	for key, stories := range byEpic {
+		sortStories(stories)
+		layoutStories(stories)
+		e := Epic{Key: key, Name: epicName(key, byID), Stories: stories}
+		for i := range stories {
+			e.Open += stories[i].Open
 		}
-		regions = append(regions, r)
-		f.Open += r.Open
+		epics = append(epics, e)
+		f.Open += e.Open
 	}
-	colorRegions(regions)
-	// A project with no trunk structure is one big loose region — name it for
-	// the project rather than "off-trunk".
-	if len(regions) == 1 && regions[0].Key == looseKey {
-		regions[0].Name = syn.Project
+	colorEpics(epics)
+	// A project with no epic structure is one big loose epic — name it for the
+	// project rather than "Off-epic".
+	if len(epics) == 1 && epics[0].Key == looseKey {
+		epics[0].Name = syn.Project
 	}
-	sortRegions(regions)
-	layoutRegions(regions)
-	f.Regions = regions
+	sortEpics(epics)
+	layoutEpics(epics)
+	f.Epics = epics
 	return f
 }
 
-// placeIssue returns the (region, tile) an issue belongs to: its trunk and the
-// epic one level beneath that trunk. Work that descends from no trunk lands in
-// the catch-all region, keyed by its own top-level ancestor's child.
-func placeIssue(id string, byID map[string]bd.Issue) (region, epic string) {
+// placeIssue returns the (epic, story) an issue belongs to: its top-level epic
+// and the issue one level beneath that epic. Work that descends from no epic
+// lands in the catch-all epic, keyed by its own top-level ancestor's child.
+func placeIssue(id string, byID map[string]bd.Issue) (epic, story string) {
 	root := rootOf(id, byID)
 	if root == id {
-		return looseKey, id // standalone top-level non-epic: its own tile, off-trunk
+		return looseKey, id // standalone top-level non-epic: its own story, off-epic
 	}
-	if r, ok := byID[root]; ok && isTrunk(&r) {
+	if r, ok := byID[root]; ok && isEpic(&r) {
 		return root, childOfRoot(id, root, byID)
 	}
 	return looseKey, childOfRoot(id, root, byID)
 }
 
 // childOfRoot returns the ancestor of id whose parent is root — the depth-1 node
-// directly under the trunk, which is the tile id rolls up into. It falls back to
-// the last node reached if the chain doesn't reach root (missing link or cycle).
+// directly under the top-level epic, which is the story id rolls up into. It
+// falls back to the last node reached if the chain doesn't reach root (missing
+// link or cycle).
 func childOfRoot(id, root string, byID map[string]bd.Issue) string {
 	if id == root {
 		return id
@@ -240,30 +241,28 @@ func childOfRoot(id, root string, byID map[string]bd.Issue) string {
 	}
 }
 
-// regionName cleans a trunk title down to its label ("MEMORY trunk — …" →
-// "MEMORY"); the catch-all region is named by the caller.
-func regionName(key string, byID map[string]bd.Issue) string {
+// epicName cleans a top-level epic's title down to its label ("MEMORY — …" →
+// "MEMORY"); the catch-all epic is named by the caller.
+func epicName(key string, byID map[string]bd.Issue) string {
 	if key == looseKey {
-		return "off-trunk"
+		return "Off-epic"
 	}
 	if is, ok := byID[key]; ok {
 		title := is.Title
 		if i := strings.Index(title, " — "); i >= 0 {
 			title = title[:i]
 		}
-		title = strings.TrimSpace(title)
-		title = strings.TrimSuffix(title, " trunk")
 		return strings.TrimSpace(title)
 	}
 	return key
 }
 
-// colorRegions assigns each region a stable color by sorted key, so trunk colors
-// hold steady across requests regardless of weight order.
-func colorRegions(regions []Region) {
-	keys := make([]string, len(regions))
-	for i := range regions {
-		keys[i] = regions[i].Key
+// colorEpics assigns each epic a stable color by sorted key, so epic colors hold
+// steady across requests regardless of weight order.
+func colorEpics(epics []Epic) {
+	keys := make([]string, len(epics))
+	for i := range epics {
+		keys[i] = epics[i].Key
 	}
 	sort.Strings(keys)
 	color := make(map[string]string, len(keys))
@@ -273,44 +272,44 @@ func colorRegions(regions []Region) {
 			color[k] = looseColor
 			continue
 		}
-		color[k] = regionPalette[ci%len(regionPalette)]
+		color[k] = epicPalette[ci%len(epicPalette)]
 		ci++
 	}
-	for i := range regions {
-		regions[i].Color = color[regions[i].Key]
+	for i := range epics {
+		epics[i].Color = color[epics[i].Key]
 	}
 }
 
-// sortEpics / sortRegions order tiles largest-first, ties broken by id/key for a
-// deterministic layout across requests.
+// sortStories / sortEpics order children largest-first, ties broken by id/key for
+// a deterministic layout across requests.
+func sortStories(stories []Story) {
+	sort.SliceStable(stories, func(a, b int) bool {
+		if stories[a].Open != stories[b].Open {
+			return stories[a].Open > stories[b].Open
+		}
+		return stories[a].ID < stories[b].ID
+	})
+}
+
 func sortEpics(epics []Epic) {
 	sort.SliceStable(epics, func(a, b int) bool {
 		if epics[a].Open != epics[b].Open {
 			return epics[a].Open > epics[b].Open
 		}
-		return epics[a].ID < epics[b].ID
+		return epics[a].Key < epics[b].Key
 	})
 }
 
-func sortRegions(regions []Region) {
-	sort.SliceStable(regions, func(a, b int) bool {
-		if regions[a].Open != regions[b].Open {
-			return regions[a].Open > regions[b].Open
-		}
-		return regions[a].Key < regions[b].Key
-	})
-}
-
-// layoutRegions squarifies the regions into the treemap's 0–100 space by their
-// open weight.
-func layoutRegions(regions []Region) {
-	weights := make([]float64, len(regions))
-	for i := range regions {
-		weights[i] = float64(regions[i].Open)
+// layoutEpics squarifies the epics into the map's 0–100 space by their open
+// weight.
+func layoutEpics(epics []Epic) {
+	weights := make([]float64, len(epics))
+	for i := range epics {
+		weights[i] = float64(epics[i].Open)
 	}
 	rects := squarify(weights)
-	for i := range regions {
-		regions[i].Rect = rects[i]
+	for i := range epics {
+		epics[i].Rect = rects[i]
 	}
 }
 
@@ -333,29 +332,29 @@ func rootOf(id string, byID map[string]bd.Issue) string {
 	}
 }
 
-// buildEpic turns a root id and its live members into an Epic. The name comes
+// buildStory turns a root id and its live members into a Story. The name comes
 // from the root issue when known; beads sort priority-asc then most-recent.
-func buildEpic(rootID string, members []bd.Issue, byID map[string]bd.Issue, reg jtbd.Registry) Epic {
-	e := Epic{ID: rootID, Open: len(members)}
+func buildStory(rootID string, members []bd.Issue, byID map[string]bd.Issue, reg jtbd.Registry) Story {
+	st := Story{ID: rootID, Open: len(members)}
 	if root, ok := byID[rootID]; ok {
-		e.Name = root.Title
+		st.Name = root.Title
 	} else {
-		e.Name = rootID
+		st.Name = rootID
 	}
-	e.Beads = make([]Bead, 0, len(members))
+	st.Beads = make([]Bead, 0, len(members))
 	for i := range members {
 		b := NewBead(&members[i])
 		b.ResolveJTBD(members[i].Description, reg)
 		if b.Type == "bug" {
-			e.Flag = true
+			st.Flag = true
 		}
-		e.Beads = append(e.Beads, b)
+		st.Beads = append(st.Beads, b)
 	}
-	sortBeads(e.Beads)
-	return e
+	sortBeads(st.Beads)
+	return st
 }
 
-// sortBeads orders an epic's beads. An untouched epic (no bead manually ranked)
+// sortBeads orders a story's beads. An untouched story (no bead manually ranked)
 // keeps the default priority-asc, id tiebreak — unchanged behavior. The first
 // manual reorder seeds a rank onto every bead in the group (server handleRank),
 // so a ranked group is wholly rank-ordered; mixing the two states never happens,
@@ -370,7 +369,7 @@ func sortBeads(beads []Bead) {
 	}
 	sort.SliceStable(beads, func(a, b int) bool {
 		if ranked {
-			// A bead created into an already-ranked epic has no rank yet
+			// A bead created into an already-ranked story has no rank yet
 			// (HasRank false, Rank 0); since head-insert drags can mint
 			// negative ranks, a zero default could land it mid-list. Sort
 			// unranked beads after ranked ones so they collect at the bottom.
@@ -389,15 +388,15 @@ func sortBeads(beads []Bead) {
 	})
 }
 
-// layoutEpics fills each epic's Rect by squarifying their open weights into the
-// region body's 0–100 space.
-func layoutEpics(epics []Epic) {
-	weights := make([]float64, len(epics))
-	for i, e := range epics {
-		weights[i] = float64(e.Open)
+// layoutStories fills each story's Rect by squarifying their open weights into
+// the epic body's 0–100 space.
+func layoutStories(stories []Story) {
+	weights := make([]float64, len(stories))
+	for i, st := range stories {
+		weights[i] = float64(st.Open)
 	}
 	rects := squarify(weights)
-	for i := range epics {
-		epics[i].Rect = rects[i]
+	for i := range stories {
+		stories[i].Rect = rects[i]
 	}
 }

@@ -121,9 +121,9 @@ type CreateOpts struct {
 	Type        string // task | bug | feature | epic
 	Priority    *int   // 0–4; nil leaves bd's default
 	Assignee    string
-	// Parent is the parent issue id for the strand's tree axis. Empty means the
-	// bead is created off-trunk (no --parent); the create handler enforces that
-	// an empty Parent is a deliberate off-trunk choice, never an accidental
+	// Parent is the parent issue id for the strand's parent axis. Empty means the
+	// bead is created with no epic (no --parent); the create handler enforces that
+	// an empty Parent is a deliberate off-epic choice, never an accidental
 	// parentless bead.
 	Parent string
 }
