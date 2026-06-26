@@ -65,7 +65,7 @@ roll-up over the catalog. This is strand's entire reason to exist, and it is pro
 
 **Division of labor (the load-bearing principle):**
 
-- **Below the epic line** — tasks, dependencies, ordering — is **agent
+- **Below the story line** — tasks, dependencies, ordering — is **agent
   territory.** Agents work beads directly; they own task decomposition and order. strand
   *shows* this layer but the human rarely touches it.
 - **Above it — epics and the stories beneath them — is the human's territory.** dk's actual
@@ -90,7 +90,7 @@ are the level beneath, and **tasks** are the agent-owned bottom.
 
 **The Northstar keystone.** Each project carries a **one-line north star** stating its
 central guiding purpose. It does double duty:
-1. **Masthead of the strand** — the "why" above the stories.
+1. **Masthead of the strand** — the "why" above the epics.
 2. **The yardstick for epic-integrity** — "does this epic serve the north star?" is unanswerable
    without a north star to test against. With one, **drift becomes visible**: an epic that
    doesn't serve the line is a bucket, not real work.
