@@ -274,6 +274,7 @@ type listView struct {
 	Epic     strand.Epic
 	Story    strand.Story
 	HasStory bool // false = show the whole epic
+	HasEpic  bool // true only for a genuine single-epic scope (not "everything"/bugs/story)
 }
 
 // pageData is the full landing render: the strand, the list pane, and the repo
@@ -405,7 +406,7 @@ func findStory(f strand.Model, storyID string) (listView, bool) {
 func findEpic(f strand.Model, epicKey string) (listView, bool) {
 	for _, e := range f.Epics {
 		if e.Key == epicKey {
-			return listView{Epic: e}, true
+			return listView{Epic: e, HasEpic: true}, true
 		}
 	}
 	return listView{}, false
