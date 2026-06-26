@@ -70,6 +70,36 @@ func TestBuildEpicsFromTopLevel(t *testing.T) {
 	}
 }
 
+// TestEpicBeadID pins the editable-scope id: a real epic exposes its bd id so the
+// pane-head title can open its drawer, while the off-epic catch-all has no bead
+// behind it and reports "" — its title stays inert (str-scn).
+func TestEpicBeadID(t *testing.T) {
+	issues := []bd.Issue{
+		{ID: "t-sub", Title: "SUBSTRATE — code health", IssueType: "epic", Status: "open"},
+		{ID: "e-1", Parent: "t-sub", Status: "open", Priority: new(2)},
+		{ID: "loose-1", Title: "Standalone", IssueType: "task", Status: "open", Priority: new(2)},
+	}
+	f := Build(issues, Synthesis{Project: "demo"})
+	seenReal, seenLoose := false, false
+	for _, e := range f.Epics {
+		switch e.Key {
+		case "t-sub":
+			seenReal = true
+			if e.BeadID() != "t-sub" {
+				t.Errorf("real epic BeadID = %q, want t-sub", e.BeadID())
+			}
+		case looseKey:
+			seenLoose = true
+			if e.BeadID() != "" {
+				t.Errorf("catch-all BeadID = %q, want empty", e.BeadID())
+			}
+		}
+	}
+	if !seenReal || !seenLoose {
+		t.Fatalf("expected both a real epic and the catch-all; got %d epics", len(f.Epics))
+	}
+}
+
 // TestBuildNoEpicNamesForProject: a workspace whose live work hangs off no
 // top-level epic is one catch-all epic, named for the project rather than "Off-epic".
 func TestBuildNoEpicNamesForProject(t *testing.T) {

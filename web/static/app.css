@@ -279,6 +279,8 @@ header {
 .lp-scope { display: flex; align-items: center; gap: var(--s-3); min-width: 0; }
 .lp-dot { width: 9px; height: 9px; border-radius: 3px; flex: 0 0 auto; background: var(--p2); }
 .lp-name { font-weight: 600; font-size: var(--fs-2); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lp-name.lp-edit { cursor: pointer; }
+.lp-name.lp-edit:hover, .lp-name.lp-edit:focus-visible { text-decoration: underline; outline: none; }
 .lp-stat { margin-left: auto; display: flex; gap: var(--s-6); color: var(--ink-3); font-size: var(--fs-8); white-space: nowrap; }
 .lp-stat b { color: var(--ink); font-weight: 600; }
 .list-body { flex: 1; overflow: auto; min-height: 0; }

@@ -103,6 +103,16 @@ type Epic struct {
 	Rect    Rect // geometry within the map, in 0–100 percentages
 }
 
+// BeadID returns the bd id of the epic's underlying bead, or "" when the epic
+// has none — the off-epic catch-all (looseKey) and the synthetic "everything"/
+// "bugs" scopes are groupings, not beads, so they can't open a drawer (str-scn).
+func (e *Epic) BeadID() string {
+	if e.Key == looseKey {
+		return ""
+	}
+	return e.Key
+}
+
 // Model is the whole landing model the page template renders.
 type Model struct {
 	NorthStar  string

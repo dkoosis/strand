@@ -476,6 +476,55 @@ func TestPaneHeadEpicScope(t *testing.T) {
 	}
 }
 
+// TestScopeTitleOpensDrawer pins the str-scn affordance: the pane-head title
+// opens the scoped bead in the drawer for a story and a real epic, so epics and
+// stories edit through the same gesture leaf rows use. "everything" names no
+// single bead, so its title stays inert (no edit affordance).
+func TestScopeTitleOpensDrawer(t *testing.T) {
+	srv := newTestServer(t, &stubBD{issues: sampleIssues})
+
+	story := do(t, srv, "/list?story=demo-e1").Body.String()
+	if !strings.Contains(story, `class="lp-name lp-edit"`) ||
+		!strings.Contains(story, `hx-get="/bead/demo-e1"`) ||
+		!strings.Contains(story, `title="Edit story"`) {
+		t.Errorf("story pane-head title missing drawer affordance:\n%s", story)
+	}
+
+	epic := do(t, srv, "/list?epic=demo-root").Body.String()
+	if !strings.Contains(epic, `class="lp-name lp-edit"`) ||
+		!strings.Contains(epic, `hx-get="/bead/demo-root"`) ||
+		!strings.Contains(epic, `title="Edit epic"`) {
+		t.Errorf("epic pane-head title missing drawer affordance:\n%s", epic)
+	}
+
+	// "everything" has no single bead behind it — the title must not be clickable.
+	whole := do(t, srv, "/list").Body.String()
+	if strings.Contains(whole, "lp-edit") {
+		t.Errorf(`"everything" pane-head title leaked an edit affordance:\n%s`, whole)
+	}
+
+	// Board and Insights embed the same scope, so the affordance must ride along.
+	board := do(t, srv, "/board?epic=demo-root").Body.String()
+	if !strings.Contains(board, `class="lp-name lp-edit"`) || !strings.Contains(board, `hx-get="/bead/demo-root"`) {
+		t.Errorf("board pane-head title missing drawer affordance:\n%s", board)
+	}
+	ins := do(t, srv, "/insights?story=demo-e1").Body.String()
+	if !strings.Contains(ins, `class="lp-name lp-edit"`) || !strings.Contains(ins, `hx-get="/bead/demo-e1"`) {
+		t.Errorf("insights pane-head title missing drawer affordance:\n%s", ins)
+	}
+}
+
+// TestScopeTitleInertForOffEpic: the off-epic catch-all groups standalone work
+// but is not a bead, so its pane-head title carries no edit affordance (str-scn).
+func TestScopeTitleInertForOffEpic(t *testing.T) {
+	loose := []bd.Issue{{ID: "solo", Title: "Standalone", IssueType: "task", Status: "open", Priority: new(2)}}
+	srv := newTestServer(t, &stubBD{issues: loose})
+	body := do(t, srv, "/list?epic=__loose__").Body.String()
+	if strings.Contains(body, "lp-edit") {
+		t.Errorf("off-epic pane-head title leaked an edit affordance:\n%s", body)
+	}
+}
+
 // TestBoardRendersColumns: the kanban defaults to a status pivot, drawing the
 // canonical columns as drop targets and a draggable card per bead, wired for the
 // move POST and the drawer drill.
