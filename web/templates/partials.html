@@ -22,12 +22,19 @@
 </div>
 {{end}}
 
+{{/* scopeName renders the pane-head scope title. When the scope is a real bead
+     (ScopeID set — a story or a real epic) the title opens that bead in the
+     drawer, so an epic or story edits through the same gesture the leaf rows
+     use; "everything", "bugs", and the off-epic catch-all have no ScopeID and
+     stay inert text (str-scn). Dot is a listView (or a view embedding it). */}}
+{{define "scopeName"}}{{if .ScopeID}}<span class="lp-name lp-edit" role="button" tabindex="0" hx-get="/bead/{{.ScopeID}}" hx-target="#drawer" hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']" title="Edit {{if .HasStory}}story{{else}}epic{{end}}">{{if .HasStory}}{{cleanName .Story.Name}}{{else}}{{.Epic.Name}}{{end}}</span>{{else}}<span class="lp-name">{{if .HasStory}}{{cleanName .Story.Name}}{{else}}{{.Epic.Name}}{{end}}</span>{{end}}{{end}}
+
 {{define "list"}}
 {{if .Epic.Stories}}
 <div class="pane-head" data-view="list" data-story="{{if .HasStory}}{{.Story.ID}}{{end}}" data-epic="{{if .HasEpic}}{{.Epic.Key}}{{end}}">
   <div class="lp-scope">
     <span class="lp-dot" style="background:{{.Epic.Color}}"></span>
-    <span class="lp-name">{{if .HasStory}}{{cleanName .Story.Name}}{{else}}{{.Epic.Name}}{{end}}</span>
+    {{template "scopeName" .}}
   </div>
   <div class="lp-stat">
     {{if .HasStory}}<span><b>{{.Story.Open}}</b> open bead{{if ne .Story.Open 1}}s{{end}}</span>
@@ -49,7 +56,7 @@
 <div class="pane-head" data-view="board" data-story="{{if .HasStory}}{{.Story.ID}}{{end}}" data-epic="{{if .HasEpic}}{{.Epic.Key}}{{end}}">
   <div class="lp-scope">
     <span class="lp-dot" style="background:{{.Epic.Color}}"></span>
-    <span class="lp-name">{{if .HasStory}}{{cleanName .Story.Name}}{{else}}{{.Epic.Name}}{{end}}</span>
+    {{template "scopeName" .}}
   </div>
 </div>
 <div class="board-bar">
@@ -104,7 +111,7 @@
 <div class="pane-head" data-view="insights" data-story="{{if .HasStory}}{{.Story.ID}}{{end}}" data-epic="{{if .HasEpic}}{{.Epic.Key}}{{end}}">
   <div class="lp-scope">
     <span class="lp-dot" style="background:{{.Epic.Color}}"></span>
-    <span class="lp-name">{{if .HasStory}}{{cleanName .Story.Name}}{{else}}{{.Epic.Name}}{{end}}</span>
+    {{template "scopeName" .}}
   </div>
 </div>
 {{with .Insights}}

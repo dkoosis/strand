@@ -275,6 +275,12 @@ type listView struct {
 	Story    strand.Story
 	HasStory bool // false = show the whole epic
 	HasEpic  bool // true only for a genuine single-epic scope (not "everything"/bugs/story)
+	// ScopeID is the bd id of the bead this scope names — a story (Story.ID) or a
+	// real epic (Epic.Key). Empty when the scope has no editable bead behind it
+	// ("everything", "bugs", the off-epic catch-all). The pane-head title's
+	// open-drawer affordance keys off this, so an epic or story edits through the
+	// same gesture the leaf rows already use (str-scn).
+	ScopeID string
 }
 
 // pageData is the full landing render: the strand, the list pane, and the repo
@@ -395,7 +401,7 @@ func findStory(f strand.Model, storyID string) (listView, bool) {
 	for _, e := range f.Epics {
 		for _, st := range e.Stories {
 			if st.ID == storyID {
-				return listView{Epic: e, Story: st, HasStory: true}, true
+				return listView{Epic: e, Story: st, HasStory: true, ScopeID: st.ID}, true
 			}
 		}
 	}
@@ -406,7 +412,9 @@ func findStory(f strand.Model, storyID string) (listView, bool) {
 func findEpic(f strand.Model, epicKey string) (listView, bool) {
 	for _, e := range f.Epics {
 		if e.Key == epicKey {
-			return listView{Epic: e, HasEpic: true}, true
+			// The off-epic catch-all has no bead behind it, so its title stays
+			// inert; a real epic carries its bd id as the editable scope (str-scn).
+			return listView{Epic: e, HasEpic: true, ScopeID: e.BeadID()}, true
 		}
 	}
 	return listView{}, false
