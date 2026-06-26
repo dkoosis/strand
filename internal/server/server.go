@@ -37,9 +37,9 @@ var (
 	errCrossSite = errors.New("cross-site request blocked")
 	// errNoParent rejects a create with no deliberate parent choice — the
 	// forced-parent contract (str-6k0.6.2): pick an existing parent, choose
-	// off-trunk, or mint one inline, but never create a bead parentless by
+	// no epic, or mint one inline, but never create a bead parentless by
 	// omission.
-	errNoParent = errors.New("pick a parent, choose off-trunk, or create a new parent")
+	errNoParent = errors.New("pick a parent, choose no epic, or create a new parent")
 	// errNoParentTitle rejects the inline new-parent path with an empty title.
 	errNoParentTitle = errors.New("new parent needs a title")
 )
@@ -269,11 +269,11 @@ func (s *Server) handleShutdown(w http.ResponseWriter, _ *http.Request) {
 	s.shutdown()
 }
 
-// listView is the bead-list pane: a region, optionally narrowed to one epic.
+// listView is the bead-list pane: an epic, optionally narrowed to one story.
 type listView struct {
-	Region  strand.Region
-	Epic    strand.Epic
-	HasEpic bool // false = show the whole region
+	Epic     strand.Epic
+	Story    strand.Story
+	HasStory bool // false = show the whole epic
 }
 
 // pageData is the full landing render: the strand, the list pane, and the repo
@@ -357,100 +357,100 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, err)
 		return
 	}
-	// epic=<id> narrows the pane to a single tile; absent means the whole region.
+	// story=<id> narrows the pane to a single story; absent means the whole epic.
 	q := r.URL.Query()
-	s.render(w, "list", listViewFor(f, q.Get("epic"), q.Get("region"), q.Get("filter")))
+	s.render(w, "list", listViewFor(f, q.Get("story"), q.Get("epic"), q.Get("filter")))
 }
 
 // listViewFor builds the bead-list pane from the strand. Scope precedence:
-// filter=="bugs" gathers every bug across all regions; else epicID narrows to one
-// tile; else regionKey narrows to one trunk; else the default is the whole strand
-// (every region flattened — "everything"). Epic and region are both searched
-// across all regions. An empty strand yields an empty view. The full-page render
-// and the htmx swaps all go through here, so the panes, board, and insights can't
+// filter=="bugs" gathers every bug across all epics; else storyID narrows to one
+// story; else epicKey narrows to one epic; else the default is the whole strand
+// (every epic flattened — "everything"). Story and epic are both searched across
+// all epics. An empty strand yields an empty view. The full-page render and the
+// htmx swaps all go through here, so the panes, board, and insights can't
 // diverge.
-func listViewFor(f strand.Model, epicID, regionKey, filter string) listView {
-	if len(f.Regions) == 0 {
+func listViewFor(f strand.Model, storyID, epicKey, filter string) listView {
+	if len(f.Epics) == 0 {
 		return listView{}
 	}
 	if filter == "bugs" {
-		return listView{Region: bugRegion(f)}
+		return listView{Epic: bugEpic(f)}
 	}
-	if epicID != "" {
-		if v, ok := findEpic(f, epicID); ok {
+	if storyID != "" {
+		if v, ok := findStory(f, storyID); ok {
 			return v
 		}
 	}
-	if regionKey != "" {
-		if v, ok := findRegion(f, regionKey); ok {
+	if epicKey != "" {
+		if v, ok := findEpic(f, epicKey); ok {
 			return v
 		}
 	}
-	return listView{Region: everythingRegion(f)}
+	return listView{Epic: everythingEpic(f)}
 }
 
-// findEpic locates the epic with the given id and returns the view scoped to it.
-func findEpic(f strand.Model, epicID string) (listView, bool) {
-	for _, r := range f.Regions {
-		for _, e := range r.Epics {
-			if e.ID == epicID {
-				return listView{Region: r, Epic: e, HasEpic: true}, true
+// findStory locates the story with the given id and returns the view scoped to it.
+func findStory(f strand.Model, storyID string) (listView, bool) {
+	for _, e := range f.Epics {
+		for _, st := range e.Stories {
+			if st.ID == storyID {
+				return listView{Epic: e, Story: st, HasStory: true}, true
 			}
 		}
 	}
 	return listView{}, false
 }
 
-// findRegion locates the region with the given key and returns the view scoped to it.
-func findRegion(f strand.Model, regionKey string) (listView, bool) {
-	for _, r := range f.Regions {
-		if r.Key == regionKey {
-			return listView{Region: r}, true
+// findEpic locates the epic with the given key and returns the view scoped to it.
+func findEpic(f strand.Model, epicKey string) (listView, bool) {
+	for _, e := range f.Epics {
+		if e.Key == epicKey {
+			return listView{Epic: e}, true
 		}
 	}
 	return listView{}, false
 }
 
-// everythingRegion flattens every trunk into one synthetic scope named
+// everythingEpic flattens every top-level epic into one synthetic scope named
 // "Everything", so the unscoped list/board/insights show all live work, not just
-// the largest region. A single-region strand is returned as-is (it keeps its own
-// name — a no-trunk project reads as the project, not "Everything").
-func everythingRegion(f strand.Model) strand.Region {
-	if len(f.Regions) == 1 {
-		return f.Regions[0]
+// the largest epic. A single-epic strand is returned as-is (it keeps its own
+// name — a no-epic project reads as the project, not "Everything").
+func everythingEpic(f strand.Model) strand.Epic {
+	if len(f.Epics) == 1 {
+		return f.Epics[0]
 	}
 	total := 0
-	for _, r := range f.Regions {
-		total += len(r.Epics)
+	for _, e := range f.Epics {
+		total += len(e.Stories)
 	}
-	out := strand.Region{Name: "Everything", Color: f.Regions[0].Color, Epics: make([]strand.Epic, 0, total)}
-	for _, r := range f.Regions {
-		out.Epics = append(out.Epics, r.Epics...)
-		out.Open += r.Open
+	out := strand.Epic{Name: "Everything", Color: f.Epics[0].Color, Stories: make([]strand.Story, 0, total)}
+	for _, e := range f.Epics {
+		out.Stories = append(out.Stories, e.Stories...)
+		out.Open += e.Open
 	}
 	return out
 }
 
-// bugRegion gathers every bug-type bead across all regions into one synthetic
-// scope named "Bugs", keeping each bug under its own epic (epics with no bug drop
-// out). It is the list-side companion to the treemap's bug dot.
-func bugRegion(f strand.Model) strand.Region {
-	out := strand.Region{Name: "Bugs", Color: f.Regions[0].Color}
-	for _, r := range f.Regions {
-		for _, e := range r.Epics {
+// bugEpic gathers every bug-type bead across all epics into one synthetic scope
+// named "Bugs", keeping each bug under its own story (stories with no bug drop
+// out). It is the list-side companion to the map's bug dot.
+func bugEpic(f strand.Model) strand.Epic {
+	out := strand.Epic{Name: "Bugs", Color: f.Epics[0].Color}
+	for _, e := range f.Epics {
+		for _, st := range e.Stories {
 			var bugs []strand.Bead
-			for bi := range e.Beads {
-				if e.Beads[bi].Type == "bug" {
-					bugs = append(bugs, e.Beads[bi])
+			for bi := range st.Beads {
+				if st.Beads[bi].Type == "bug" {
+					bugs = append(bugs, st.Beads[bi])
 				}
 			}
 			if len(bugs) == 0 {
 				continue
 			}
-			scoped := e
+			scoped := st
 			scoped.Beads = bugs
 			scoped.Open = len(bugs)
-			out.Epics = append(out.Epics, scoped)
+			out.Stories = append(out.Stories, scoped)
 			out.Open += len(bugs)
 		}
 	}
@@ -491,9 +491,9 @@ func pivotNames() []string {
 	return names
 }
 
-// boardView is the kanban render: the same scope the table shows (a region or one
-// epic, embedded so the head reuses the list's scope markup), pivoted into columns
-// by Pivot. Pivots drives the pivot bar.
+// boardView is the kanban render: the same scope the table shows (an epic or one
+// story, embedded so the head reuses the list's scope markup), pivoted into
+// columns by Pivot. Pivots drives the pivot bar.
 type boardView struct {
 	listView
 	Pivot   string
@@ -523,12 +523,12 @@ func (s *Server) handleBoard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	view := listViewFor(f, q.Get("epic"), q.Get("region"), q.Get("filter"))
+	view := listViewFor(f, q.Get("story"), q.Get("epic"), q.Get("filter"))
 	s.render(w, "board", buildBoard(&view, q.Get("pivot")))
 }
 
-// buildBoard pivots the scope's beads into columns. Both the whole-region and
-// single-epic scopes flow through here, so the board can't diverge from the table.
+// buildBoard pivots the scope's beads into columns. Both the whole-epic and
+// single-story scopes flow through here, so the board can't diverge from the table.
 func buildBoard(v *listView, pivot string) boardView {
 	pivot = pivotOrDefault(pivot)
 	return boardView{
@@ -539,18 +539,18 @@ func buildBoard(v *listView, pivot string) boardView {
 	}
 }
 
-// scopeBeads flattens the view's beads: one epic's, or every epic's in the region.
+// scopeBeads flattens the view's beads: one story's, or every story's in the epic.
 func scopeBeads(v *listView) []strand.Bead {
-	if v.HasEpic {
-		return v.Epic.Beads
+	if v.HasStory {
+		return v.Story.Beads
 	}
 	total := 0
-	for i := range v.Region.Epics {
-		total += len(v.Region.Epics[i].Beads)
+	for i := range v.Epic.Stories {
+		total += len(v.Epic.Stories[i].Beads)
 	}
 	all := make([]strand.Bead, 0, total)
-	for i := range v.Region.Epics {
-		all = append(all, v.Region.Epics[i].Beads...)
+	for i := range v.Epic.Stories {
+		all = append(all, v.Epic.Stories[i].Beads...)
 	}
 	return all
 }
@@ -630,7 +630,7 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRank persists a drag-to-reorder of the V1 bead list. SortableJS posts only
-// the post-drop order (comma-separated ids of the affected epic group); the server
+// the post-drop order (comma-separated ids of the affected story group); the server
 // is authoritative — it re-reads ranks from bd, computes the minimal write, and
 // stores it back as bd metadata (D5). The client keeps its optimistic DOM, so on
 // success the response is 204 (no swap, no Sortable re-init churn); a write error
@@ -701,12 +701,12 @@ func splitIDs(s string) []string {
 	return out
 }
 
-// walkBeads visits every bead in the strand. It flattens the region/epic/bead
+// walkBeads visits every bead in the strand. It flattens the epic/story/bead
 // nesting so callers read as one loop, not three.
 func walkBeads(f strand.Model, fn func(strand.Bead)) {
-	for ri := range f.Regions {
-		for ei := range f.Regions[ri].Epics {
-			beads := f.Regions[ri].Epics[ei].Beads
+	for ei := range f.Epics {
+		for si := range f.Epics[ei].Stories {
+			beads := f.Epics[ei].Stories[si].Beads
 			for bi := range beads {
 				fn(beads[bi])
 			}
@@ -825,8 +825,8 @@ type insightsView struct {
 	Insights insight.Model
 }
 
-// handleInsights renders the V4 dashboard for the active scope (a region or one
-// epic), mirroring handleBoard. No repo or an empty scope renders the same empty
+// handleInsights renders the V4 dashboard for the active scope (an epic or one
+// story), mirroring handleBoard. No repo or an empty scope renders the same empty
 // pane the other views use. It lists once and reuses the issues for both the strand
 // (scope) and the metric/triage computation.
 func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
@@ -844,7 +844,7 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 	}
 	f := strand.Build(issues, s.synFor(repo))
 	q := r.URL.Query()
-	view := listViewFor(f, q.Get("epic"), q.Get("region"), q.Get("filter"))
+	view := listViewFor(f, q.Get("story"), q.Get("epic"), q.Get("filter"))
 	model, err := s.insightsModel(ctx, src, &view, issues)
 	if err != nil {
 		s.renderError(w, err)
@@ -1090,13 +1090,13 @@ func labelFromForm(r *http.Request) string {
 }
 
 // Parent-picker sentinels. The create form forces a deliberate parent choice:
-// the bead lands under an existing parent, off-trunk by explicit opt-out, or
+// the bead lands under an existing parent, off-epic by explicit opt-out, or
 // under a parent minted inline. An empty value is no choice and is rejected, so
-// no bead is ever created parentless by accident (the strand's tree axis holds
+// no bead is ever created parentless by accident (the strand's parent axis holds
 // for near-zero cost).
 const (
-	parentOffTrunk = "__off_trunk__" // deliberate "no parent" choice
-	parentNew      = "__new__"       // mint a new parent inline from parentNewTitle
+	parentOffEpic = "__off_epic__" // deliberate "no parent" choice
+	parentNew     = "__new__"      // mint a new parent inline from parentNewTitle
 )
 
 // parentOpt is one selectable parent in the create form's picker: the bead id to
@@ -1110,7 +1110,7 @@ type parentOpt struct {
 // handleNewForm renders the empty create form into the drawer. New beads default
 // to a task at P2 so the common case is a title plus a parent choice away from
 // created. It loads the candidate parents (every open bead) so the picker can
-// offer them; a List failure still renders the form (off-trunk / new-inline both
+// offer them; a List failure still renders the form (off-epic / new-inline both
 // work without a candidate list).
 func (s *Server) handleNewForm(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
@@ -1124,7 +1124,7 @@ func (s *Server) handleNewForm(w http.ResponseWriter, r *http.Request) {
 
 // candidateParents lists the beads a new bead may hang under: every issue the
 // source returns, newest-relevant first as bd orders them, labelled for the
-// picker. A List error yields no candidates (the off-trunk / new-inline paths
+// picker. A List error yields no candidates (the off-epic / new-inline paths
 // still let the user proceed) rather than blocking the form.
 func candidateParents(ctx context.Context, src readSource) []parentOpt {
 	issues, err := src.List(ctx, allIssues...)
@@ -1146,7 +1146,7 @@ type createForm struct {
 	Type           string
 	Priority       string
 	Description    string
-	Parent         string      // the picked value: a bead id, parentOffTrunk, or parentNew
+	Parent         string      // the picked value: a bead id, parentOffEpic, or parentNew
 	ParentNewTitle string      // title for the inline new-parent path (Parent == parentNew)
 	Parents        []parentOpt // candidate existing parents for the picker
 	Err            string
@@ -1199,7 +1199,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 // resolveParent turns the picker choice into the --parent id the create should
 // carry, enforcing the forced-parent contract. The empty choice is rejected
-// (no accidental parentless bead); off-trunk resolves to "" (a deliberate root);
+// (no accidental parentless bead); off-epic resolves to "" (a deliberate root);
 // the inline path mints a new epic and returns its id; anything else is taken as
 // an existing parent id. Minting the parent first means a failure there surfaces
 // before the child is created, so a half-made pair can't result.
@@ -1207,7 +1207,7 @@ func (s *Server) resolveParent(ctx context.Context, src IssueSource, form *creat
 	switch form.Parent {
 	case "":
 		return "", errNoParent
-	case parentOffTrunk:
+	case parentOffEpic:
 		return "", nil
 	case parentNew:
 		if form.ParentNewTitle == "" {
@@ -1271,8 +1271,8 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // buildStrand pulls the active repo's live issue list once and folds it into the
-// landing model, labeling the region with the active repo's name (the synthesis
-// project follows the active repo, so a switch re-labels every view).
+// landing model, labeling the catch-all epic with the active repo's name (the
+// synthesis project follows the active repo, so a switch re-labels every view).
 func (s *Server) buildStrand(ctx context.Context, src readSource, repo registry.Repo) (strand.Model, error) {
 	issues, err := src.List(ctx, allIssues...)
 	if err != nil {
@@ -1282,8 +1282,9 @@ func (s *Server) buildStrand(ctx context.Context, src readSource, repo registry.
 }
 
 // allIssues lifts bd list's default 50-row cap. The strand folds each issue into
-// its trunk by walking the parent chain, so a truncated list breaks the laddering
-// — a tile lands off-trunk the moment one ancestor row is missing. Fetch them all.
+// its top-level epic by walking the parent chain, so a truncated list breaks the
+// laddering — a story lands off-epic the moment one ancestor row is missing.
+// Fetch them all.
 var allIssues = []string{"--limit", "0"}
 
 // synFor labels the synthesis with the active repo's name; the project follows the

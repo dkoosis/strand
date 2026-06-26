@@ -21,12 +21,12 @@ var (
 	insStale = insightsNow.Add(-30 * 24 * time.Hour)
 )
 
-// insightsIssues is the fixture for the dashboard: epic demo-i with a 3-bead
+// insightsIssues is the fixture for the dashboard: story demo-i with a 3-bead
 // dependency chain (i.3→i.2→i.1, so i.1 is foundational), one in-progress bead, and
 // one stale untagged bead. bd list omits closed, so no closed beads appear.
 var insightsIssues = []bd.Issue{
-	{ID: "demo-root", Title: "DEMO trunk", IssueType: "epic", Status: "open"}, // region; demo-i is the tile
-	{ID: "demo-i", Parent: "demo-root", Title: "Insights epic", IssueType: "epic", Status: "open", Priority: new(1), UpdatedAt: insFresh},
+	{ID: "demo-root", Title: "DEMO", IssueType: "epic", Status: "open"}, // top-level epic; demo-i is the story
+	{ID: "demo-i", Parent: "demo-root", Title: "Insights story", IssueType: "epic", Status: "open", Priority: new(1), UpdatedAt: insFresh},
 	{ID: "demo-i.1", Parent: "demo-i", Title: "Foundation", Status: "open", Priority: new(1), Labels: []string{"core"}, UpdatedAt: insFresh},
 	{ID: "demo-i.2", Parent: "demo-i", Title: "Mid", Status: "open", Priority: new(2), Labels: []string{"core", "ui"}, UpdatedAt: insFresh},
 	{ID: "demo-i.3", Parent: "demo-i", Title: "Leaf", Status: "open", Priority: new(2), Labels: []string{"ui"}, UpdatedAt: insFresh},
@@ -39,24 +39,25 @@ var insightsDeps = []bd.DepEdge{
 	{IssueID: "demo-i.3", DependsOnID: "demo-i.2", Type: "blocks"},
 }
 
-// insScope returns the demo-i epic's actionable beads and the full-repo issue index,
-// the two inputs the pure insight helpers take. It mirrors how the server narrows a
-// scope before Compute: build the strand, pick the epic, drop the epic container.
+// insScope returns the demo-i story's actionable beads and the full-repo issue
+// index, the two inputs the pure insight helpers take. It mirrors how the server
+// narrows a scope before Compute: build the strand, pick the story, drop the epic
+// container.
 func insScope(t *testing.T) ([]strand.Bead, map[string]bd.Issue) {
 	t.Helper()
 	f := strand.Build(insightsIssues, strand.Synthesis{Project: "demo"})
-	if len(f.Regions) == 0 {
-		t.Fatal("fixture strand has no regions")
+	if len(f.Epics) == 0 {
+		t.Fatal("fixture strand has no epics")
 	}
 	var beads []strand.Bead
-	for _, e := range f.Regions[0].Epics {
+	for _, e := range f.Epics[0].Stories {
 		if e.ID == "demo-i" {
 			beads = Actionable(e.Beads)
 			break
 		}
 	}
 	if beads == nil {
-		t.Fatal("fixture epic demo-i not found in strand")
+		t.Fatal("fixture story demo-i not found in strand")
 	}
 	return beads, indexIssues(insightsIssues)
 }

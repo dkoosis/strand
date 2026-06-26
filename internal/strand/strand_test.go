@@ -10,19 +10,19 @@ import (
 	"github.com/dkoosis/strand/internal/jtbd"
 )
 
-// TestBuildRegionsFromTrunks pins the core synthesis: top-level epics are
-// regions, the epics beneath them are tiles, deeper work rolls into its tile,
-// closed/deferred drop out, and work off any trunk lands in the catch-all.
-func TestBuildRegionsFromTrunks(t *testing.T) {
+// TestBuildEpicsFromTopLevel pins the core synthesis: top-level bd epics are the
+// strand's epics, the issues beneath them are stories, deeper work rolls into its
+// story, closed/deferred drop out, and work off any epic lands in the catch-all.
+func TestBuildEpicsFromTopLevel(t *testing.T) {
 	issues := []bd.Issue{
-		{ID: "t-sub", Title: "SUBSTRATE trunk — code health", IssueType: "epic", Status: "open"}, // region
-		{ID: "e-1", Title: "Epic one", IssueType: "epic", Parent: "t-sub", Status: "open"},       // tile
+		{ID: "t-sub", Title: "SUBSTRATE — code health", IssueType: "epic", Status: "open"}, // epic
+		{ID: "e-1", Title: "Epic one", IssueType: "epic", Parent: "t-sub", Status: "open"}, // story
 		{ID: "e-1.a", Parent: "e-1", Status: "open", Priority: new(2)},
 		{ID: "e-1.b", Parent: "e-1", IssueType: "bug", Status: "in_progress", Priority: new(0)},
 		{ID: "e-1.c", Parent: "e-1", Status: "closed", Priority: new(2)},                                              // excluded
-		{ID: "e-2", Title: "Lone feature epic", IssueType: "epic", Parent: "t-sub", Status: "open", Priority: new(3)}, // tile, 1 open
+		{ID: "e-2", Title: "Lone feature epic", IssueType: "epic", Parent: "t-sub", Status: "open", Priority: new(3)}, // story, 1 open
 		{ID: "loose-1", Title: "Standalone", IssueType: "task", Status: "open", Priority: new(2)},                     // catch-all
-		{ID: "t-done", Title: "Done trunk", IssueType: "epic", Status: "closed"},                                      // no live work
+		{ID: "t-done", Title: "Done epic", IssueType: "epic", Status: "closed"},                                       // no live work
 	}
 	f := Build(issues, Synthesis{Project: "demo", NorthStar: "north"})
 
@@ -30,37 +30,37 @@ func TestBuildRegionsFromTrunks(t *testing.T) {
 		t.Errorf("NorthStar = %q, want %q", f.NorthStar, "north")
 	}
 	// SUBSTRATE (4 open) and the catch-all (1 open); t-done has no live work.
-	if len(f.Regions) != 2 {
-		t.Fatalf("Regions = %d, want 2", len(f.Regions))
+	if len(f.Epics) != 2 {
+		t.Fatalf("Epics = %d, want 2", len(f.Epics))
 	}
-	// Largest region first.
-	sub := f.Regions[0]
+	// Largest epic first.
+	sub := f.Epics[0]
 	if sub.Name != "SUBSTRATE" || sub.Open != 4 {
-		t.Errorf("region[0] = %q/%d, want SUBSTRATE/4", sub.Name, sub.Open)
+		t.Errorf("epic[0] = %q/%d, want SUBSTRATE/4", sub.Name, sub.Open)
 	}
-	if got := len(sub.Epics); got != 2 {
-		t.Fatalf("SUBSTRATE tiles = %d, want 2", got)
+	if got := len(sub.Stories); got != 2 {
+		t.Fatalf("SUBSTRATE stories = %d, want 2", got)
 	}
-	// Largest tile first: e-1 (e-1 + a + b = 3 open), e-2 (1 open).
-	e := sub.Epics
-	if e[0].ID != "e-1" || e[0].Open != 3 {
-		t.Errorf("tile[0] = %s/%d, want e-1/3", e[0].ID, e[0].Open)
+	// Largest story first: e-1 (e-1 + a + b = 3 open), e-2 (1 open).
+	st := sub.Stories
+	if st[0].ID != "e-1" || st[0].Open != 3 {
+		t.Errorf("story[0] = %s/%d, want e-1/3", st[0].ID, st[0].Open)
 	}
-	if e[1].ID != "e-2" || e[1].Open != 1 {
-		t.Errorf("tile[1] = %s/%d, want e-2/1", e[1].ID, e[1].Open)
+	if st[1].ID != "e-2" || st[1].Open != 1 {
+		t.Errorf("story[1] = %s/%d, want e-2/1", st[1].ID, st[1].Open)
 	}
-	if !e[0].Flag {
-		t.Error("tile e-1 holds a bug bead, want Flag=true")
+	if !st[0].Flag {
+		t.Error("story e-1 holds a bug bead, want Flag=true")
 	}
-	if e[1].Flag {
-		t.Error("tile e-2 has no bug, want Flag=false")
+	if st[1].Flag {
+		t.Error("story e-2 has no bug, want Flag=false")
 	}
-	loose := f.Regions[1]
-	if loose.Name != "off-trunk" || loose.Open != 1 {
-		t.Errorf("region[1] = %q/%d, want off-trunk/1", loose.Name, loose.Open)
+	loose := f.Epics[1]
+	if loose.Name != "Off-epic" || loose.Open != 1 {
+		t.Errorf("epic[1] = %q/%d, want Off-epic/1", loose.Name, loose.Open)
 	}
-	if loose.Epics[0].ID != "loose-1" {
-		t.Errorf("catch-all tile = %s, want loose-1", loose.Epics[0].ID)
+	if loose.Stories[0].ID != "loose-1" {
+		t.Errorf("catch-all story = %s, want loose-1", loose.Stories[0].ID)
 	}
 	if f.Open != 5 {
 		t.Errorf("Open = %d, want 5", f.Open)
@@ -70,32 +70,32 @@ func TestBuildRegionsFromTrunks(t *testing.T) {
 	}
 }
 
-// TestBuildNoTrunkNamesRegionForProject: a workspace whose live work hangs off
-// no trunk is one catch-all region, named for the project rather than "off-trunk".
-func TestBuildNoTrunkNamesRegionForProject(t *testing.T) {
+// TestBuildNoEpicNamesForProject: a workspace whose live work hangs off no
+// top-level epic is one catch-all epic, named for the project rather than "Off-epic".
+func TestBuildNoEpicNamesForProject(t *testing.T) {
 	issues := []bd.Issue{
 		{ID: "a", Title: "Task a", IssueType: "task", Status: "open"},
 		{ID: "b", Title: "Task b", IssueType: "task", Status: "open"},
 	}
 	f := Build(issues, Synthesis{Project: "demo"})
-	if len(f.Regions) != 1 {
-		t.Fatalf("Regions = %d, want 1", len(f.Regions))
+	if len(f.Epics) != 1 {
+		t.Fatalf("Epics = %d, want 1", len(f.Epics))
 	}
-	if f.Regions[0].Name != "demo" {
-		t.Errorf("region Name = %q, want demo", f.Regions[0].Name)
+	if f.Epics[0].Name != "demo" {
+		t.Errorf("epic Name = %q, want demo", f.Epics[0].Name)
 	}
 }
 
-// TestBuildBeadsSortPriorityThenID pins the in-tile bead order the list renders.
+// TestBuildBeadsSortPriorityThenID pins the in-story bead order the list renders.
 func TestBuildBeadsSortPriorityThenID(t *testing.T) {
 	issues := []bd.Issue{
-		{ID: "t", IssueType: "epic", Status: "open"}, // trunk → region; p-1 is the tile
+		{ID: "t", IssueType: "epic", Status: "open"}, // top-level epic; p-1 is the story
 		{ID: "p-1", Title: "E", IssueType: "epic", Parent: "t", Status: "open", Priority: new(2)},
 		{ID: "p-1.hi", Parent: "p-1", Status: "open", Priority: new(0)},
 		{ID: "p-1.lo", Parent: "p-1", Status: "open", Priority: new(3)},
 	}
 	f := Build(issues, Synthesis{Project: "demo"})
-	beads := f.Regions[0].Epics[0].Beads
+	beads := f.Epics[0].Stories[0].Beads
 	want := []string{"p-1.hi", "p-1", "p-1.lo"} // P0, P2, P3
 	for i, id := range want {
 		if beads[i].ID != id {
@@ -104,20 +104,20 @@ func TestBuildBeadsSortPriorityThenID(t *testing.T) {
 	}
 }
 
-// A manually-ranked epic orders by rank (ascending), overriding priority. The
+// A manually-ranked story orders by rank (ascending), overriding priority. The
 // rank lives in bd metadata; a P3 ranked ahead of a P0 leads the list.
-func TestBuildRankedEpicSortsByRank(t *testing.T) {
-	// The seed invariant ranks every member, including the epic root (a member of
+func TestBuildRankedStorySortsByRank(t *testing.T) {
+	// The seed invariant ranks every member, including the story root (a member of
 	// its own list, P2 here), so the group is wholly rank-ordered.
 	issues := []bd.Issue{
-		{ID: "t", IssueType: "epic", Status: "open"}, // trunk → region; p-1 is the tile
+		{ID: "t", IssueType: "epic", Status: "open"}, // top-level epic; p-1 is the story
 		{ID: "p-1", Title: "E", IssueType: "epic", Parent: "t", Status: "open", Priority: new(2), Metadata: map[string]any{"rank": 4.0}},
 		{ID: "p-1.a", Parent: "p-1", Status: "open", Priority: new(0), Metadata: map[string]any{"rank": 3.0}},
 		{ID: "p-1.b", Parent: "p-1", Status: "open", Priority: new(3), Metadata: map[string]any{"rank": 1.0}},
 		{ID: "p-1.c", Parent: "p-1", Status: "open", Priority: new(1), Metadata: map[string]any{"rank": 2.0}},
 	}
 	f := Build(issues, Synthesis{Project: "demo"})
-	beads := f.Regions[0].Epics[0].Beads
+	beads := f.Epics[0].Stories[0].Beads
 	want := []string{"p-1.b", "p-1.c", "p-1.a", "p-1"} // rank 1,2,3,4 — not priority order
 	for i, id := range want {
 		if beads[i].ID != id {
@@ -129,30 +129,30 @@ func TestBuildRankedEpicSortsByRank(t *testing.T) {
 // Equal ranks tiebreak by id, deterministically.
 func TestBuildRankTiebreaksByID(t *testing.T) {
 	issues := []bd.Issue{
-		{ID: "t", IssueType: "epic", Status: "open"}, // trunk → region; p-1 is the tile
+		{ID: "t", IssueType: "epic", Status: "open"}, // top-level epic; p-1 is the story
 		{ID: "p-1", Title: "E", IssueType: "epic", Parent: "t", Status: "open", Priority: new(2), Metadata: map[string]any{"rank": 9.0}},
 		{ID: "p-1.y", Parent: "p-1", Status: "open", Priority: new(0), Metadata: map[string]any{"rank": 5.0}},
 		{ID: "p-1.x", Parent: "p-1", Status: "open", Priority: new(0), Metadata: map[string]any{"rank": 5.0}},
 	}
 	f := Build(issues, Synthesis{Project: "demo"})
-	beads := f.Regions[0].Epics[0].Beads
+	beads := f.Epics[0].Stories[0].Beads
 	if beads[0].ID != "p-1.x" || beads[1].ID != "p-1.y" {
 		t.Errorf("equal ranks should tiebreak by id: got %s, %s", beads[0].ID, beads[1].ID)
 	}
 }
 
-// A bead created into an already-ranked epic carries no rank. Even when
+// A bead created into an already-ranked story carries no rank. Even when
 // head-insert drags have minted negative ranks, the unranked newcomer sorts to
 // the bottom — never mid-list on its zero default.
 func TestBuildUnrankedBeadSortsLastInRankedGroup(t *testing.T) {
 	issues := []bd.Issue{
-		{ID: "t", IssueType: "epic", Status: "open"}, // trunk → region; p-1 is the tile
+		{ID: "t", IssueType: "epic", Status: "open"}, // top-level epic; p-1 is the story
 		{ID: "p-1", Title: "E", IssueType: "epic", Parent: "t", Status: "open", Priority: new(2), Metadata: map[string]any{"rank": 1.0}},
 		{ID: "p-1.head", Parent: "p-1", Status: "open", Priority: new(0), Metadata: map[string]any{"rank": -2.0}},
 		{ID: "p-1.new", Parent: "p-1", Status: "open", Priority: new(0)}, // no rank yet
 	}
 	f := Build(issues, Synthesis{Project: "demo"})
-	beads := f.Regions[0].Epics[0].Beads
+	beads := f.Epics[0].Stories[0].Beads
 	want := []string{"p-1.head", "p-1", "p-1.new"} // ranked (-2, 1) then unranked
 	for i, id := range want {
 		if beads[i].ID != id {
@@ -161,17 +161,17 @@ func TestBuildUnrankedBeadSortsLastInRankedGroup(t *testing.T) {
 	}
 }
 
-// TestBuildEmptyHasNoRegions: a workspace with no live work yields an empty
-// strand, not a region with zero tiles.
-func TestBuildEmptyHasNoRegions(t *testing.T) {
+// TestBuildEmptyHasNoEpics: a workspace with no live work yields an empty strand,
+// not an epic with zero stories.
+func TestBuildEmptyHasNoEpics(t *testing.T) {
 	f := Build([]bd.Issue{{ID: "x", Status: "closed"}}, Synthesis{Project: "demo"})
-	if len(f.Regions) != 0 {
-		t.Errorf("Regions = %d, want 0", len(f.Regions))
+	if len(f.Epics) != 0 {
+		t.Errorf("Epics = %d, want 0", len(f.Epics))
 	}
 }
 
-// TestSquarifyAreaProportional: each tile's area tracks its weight's share, the
-// rects tile the full 100×100 space, and output stays in input order.
+// TestSquarifyAreaProportional: each cell's area tracks its weight's share, the
+// rects cover the full 100×100 space, and output stays in input order.
 func TestSquarifyAreaProportional(t *testing.T) {
 	values := []float64{50, 30, 20}
 	rects := squarify(values)
@@ -184,11 +184,11 @@ func TestSquarifyAreaProportional(t *testing.T) {
 		total += area
 		wantFrac := values[i]                // values already sum to 100
 		if math.Abs(area-wantFrac*100) > 5 { // area is in pct²; weight share ×100
-			t.Errorf("tile %d area = %.1f, want ~%.1f", i, area, wantFrac*100)
+			t.Errorf("cell %d area = %.1f, want ~%.1f", i, area, wantFrac*100)
 		}
 	}
 	if math.Abs(total-10000) > 1 {
-		t.Errorf("tiles cover %.1f%% , want 100%% of 100×100", total/100)
+		t.Errorf("cells cover %.1f%% , want 100%% of 100×100", total/100)
 	}
 }
 
@@ -204,7 +204,7 @@ func TestSquarifyEmptyAndZero(t *testing.T) {
 	}
 	for i, r := range rects {
 		if r.W != 0 || r.H != 0 {
-			t.Errorf("zero-weight tile %d = %+v, want zero area", i, r)
+			t.Errorf("zero-weight cell %d = %+v, want zero area", i, r)
 		}
 	}
 }

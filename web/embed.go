@@ -38,7 +38,7 @@ var funcs = template.FuncMap{
 	"pclass":      func(p int) string { return "p" + strconv.Itoa(clampPri(p)) },
 	"shortID":     shortID,
 	"cleanName":   cleanName,
-	"regionLabel": regionLabel,
+	"epicLabel":   epicLabel,
 	"priorities":  priorities,
 	"beadTypes":   func() []string { return beadTypes },
 	"metaVal":     metaVal,
@@ -120,13 +120,13 @@ func priorities() []int {
 	return ps
 }
 
-// regionLabel is the repo-button caption: the first region's name, or a dash
-// when the forest is empty.
-func regionLabel(regions []strand.Region) string {
-	if len(regions) == 0 {
+// epicLabel is the repo-button caption: the first epic's name, or a dash when
+// the strand is empty.
+func epicLabel(epics []strand.Epic) string {
+	if len(epics) == 0 {
 		return "—"
 	}
-	return regions[0].Name
+	return epics[0].Name
 }
 
 // shortID drops the project prefix ("strand-5ri.2" → "5ri.2") so the id recedes

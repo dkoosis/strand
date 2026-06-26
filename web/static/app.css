@@ -1,10 +1,10 @@
 /* ============================================================
    strand · view-centric layout — bead views + ambient color minimap
    The active view (Table/Board/Insights) is the centerpiece. The
-   minimap is a slim ambient rail: regions of color, each split into
-   epic tiles sized by open work; no text on the map — the readout
+   minimap is a slim ambient rail: epics of color, each split into
+   stories sized by open work; no text on the map — the readout
    under it names what you hover. Color = signal; structure on gray.
-   Tiles are positioned in 0–100% coordinates the server computes,
+   Stories are positioned in 0–100% coordinates the server computes,
    so the browser scales the map with no client-side layout pass.
    ============================================================ */
 :root {
@@ -147,7 +147,7 @@ header {
 .ns-meta b { color: var(--ink); font-weight: 600; }
 
 /* ============================================================ view-centric layout
-   The active VIEW is the centerpiece (full-width center); the treemap is demoted to
+   The active VIEW is the centerpiece (full-width center); the map is demoted to
    a slim ambient minimap rail on the right. A LOUD primary tab strip up top is the
    main control — it's how you move through the work, so it's the loudest chrome on
    the page (spec §1/§2). */
@@ -203,7 +203,7 @@ header {
 }
 .mm-clear:hover { background: var(--sel); color: var(--ink); }
 
-/* hovered module name, pinned above the map (empty at rest) */
+/* hovered epic name, pinned above the map (empty at rest) */
 .mm-title {
   flex: 0 0 auto; height: 28px; padding: var(--s-4) var(--s-5) 0;
   font-size: var(--fs-2); line-height: var(--lh-tight); font-weight: 600; color: var(--ink);
@@ -216,45 +216,45 @@ header {
   padding: var(--s-5) var(--s-6); border-bottom: 1px solid var(--line); flex: 0 0 auto;
 }
 
-/* ============================================================ treemap minimap */
+/* ============================================================ map minimap */
 /* Ambient minimap: fills the rail, scales to its width; act from the glance. */
 .tmwrap { flex: 0 0 auto; padding: var(--s-5); }
-.treemap { position: relative; width: 100%; height: var(--tm-h, 300px); }
+.map { position: relative; width: 100%; height: var(--tm-h, 300px); }
 .mm-filter { cursor: pointer; }
 .mm-filter:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-/* the epic currently filtering the centerpiece reads as selected */
-.tile.mm-filter.on { box-shadow: inset 0 0 0 1.5px var(--ink); }
-/* A module is one block of a single color (its tiles inherit the trunk's --rc).
+/* the story currently filtering the centerpiece reads as selected */
+.story.mm-filter.on { box-shadow: inset 0 0 0 1.5px var(--ink); }
+/* An epic is one block of a single color (its stories inherit the epic's --rc).
    At rest the 2px border is transparent — adjacent blocks read apart by their
-   distinct trunk colors and the gap the transparent border leaves. When a module
-   owns the active scope its border turns to the module's legend color (--rc), the
-   same hue as the readout swatch/pill. No header bar, so a small module keeps its
+   distinct epic colors and the gap the transparent border leaves. When an epic
+   owns the active scope its border turns to the epic's legend color (--rc), the
+   same hue as the readout swatch/pill. No header bar, so a small epic keeps its
    full proportional area. */
-.region {
+.epic {
   position: absolute; overflow: hidden; background: transparent;
   border: 2px solid transparent; transition: border-color .12s;
 }
-.region.on { border-color: var(--rc); }
-/* rg-head is the region's invisible click + keyboard target; it sits under the
-   tiles and catches hovers in the gaps between them. */
-.rg-head { position: absolute; inset: 0; cursor: pointer; background: none; }
-.rg-body { position: absolute; inset: 0; pointer-events: none; }
-/* A tile is one story, painted the epic's full color (--rc inherited from the
-   region). Stories in a block read apart by a 2px border in the rail background
-   color — a clean gap, not a pale tint. */
-.tile {
+.epic.on { border-color: var(--rc); }
+/* epic-head is the epic's invisible click + keyboard target; it sits under the
+   stories and catches hovers in the gaps between them. */
+.epic-head { position: absolute; inset: 0; cursor: pointer; background: none; }
+.epic-body { position: absolute; inset: 0; pointer-events: none; }
+/* A story cell is painted the epic's full color (--rc inherited from the epic).
+   Stories in a block read apart by a 2px border in the rail background color —
+   a clean gap, not a pale tint. */
+.story {
   position: absolute; overflow: hidden; cursor: pointer; pointer-events: auto;
   background: var(--rc); border: 2px solid var(--bg);
   transition: background .1s;
 }
-.tile:hover { background: color-mix(in srgb, var(--rc) 85%, #000); }
+.story:hover { background: color-mix(in srgb, var(--rc) 85%, #000); }
 /* bug dot — small, constant corner; noticed via saturation + consistency, not size */
 .flag { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%;
   background: #ff1f29; box-shadow: 0 0 0 1px #ff1f2966; }
 
 /* minimap readout — the detail surface attached under the map. At rest it is a
-   color legend (each module: swatch · name · open); on hover it becomes the
-   hovered tile's module — its epics listed, the one under the cursor lit. */
+   color legend (each epic: swatch · name · open); on hover it becomes the
+   hovered story's epic — its stories listed, the one under the cursor lit. */
 .mm-readout {
   flex: 1 1 auto; min-height: 0; overflow: auto;
   padding: var(--s-4) var(--s-5); border-top: 1px solid var(--line);
@@ -282,24 +282,24 @@ header {
 .lp-stat { margin-left: auto; display: flex; gap: var(--s-6); color: var(--ink-3); font-size: var(--fs-8); white-space: nowrap; }
 .lp-stat b { color: var(--ink); font-weight: 600; }
 .list-body { flex: 1; overflow: auto; min-height: 0; }
-.epic-group { border-bottom: 1px solid var(--line); }
-.eg-head {
+.story-group { border-bottom: 1px solid var(--line); }
+.story-head {
   position: sticky; top: 0; z-index: 1; display: flex; align-items: baseline; gap: var(--s-3); min-width: 0;
   padding: var(--s-3) var(--s-6); background: var(--bg-2);
   font-size: var(--fs-8); letter-spacing: .01em; color: var(--ink-2); font-weight: 600;
   border-bottom: 1px solid var(--line); cursor: pointer;
 }
-/* one-line clamp so a long epic title never wraps to two lines (str-6k0.5) */
-.eg-head .eg-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.eg-head .eo { margin-left: auto; color: var(--ink-3); flex: 0 0 auto; }
-.eg-head:hover { color: var(--ink); }
+/* one-line clamp so a long story title never wraps to two lines (str-6k0.5) */
+.story-head .story-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.story-head .eo { margin-left: auto; color: var(--ink-3); flex: 0 0 auto; }
+.story-head:hover { color: var(--ink); }
 table { width: 100%; border-collapse: collapse; }
 tbody td { padding: 0 var(--s-4); height: 33px; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; color: var(--ink-2); }
 tbody tr { cursor: pointer; }
 tbody tr:hover td { background: var(--bg-2); }
 /* keyboard focus is visible on the now-focusable rows (role=button, str-6k0.5) */
 tbody tr:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-.eg-head:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.story-head:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .r-id { color: var(--ink-4); font-size: var(--fs-9); width: 92px; padding-left: var(--s-6) !important; }
 .r-pri { width: 26px; }
 .pchip { display: inline-block; width: 20px; text-align: center; font-size: 10px; font-weight: 600;

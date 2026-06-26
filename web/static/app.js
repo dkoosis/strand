@@ -10,11 +10,11 @@ document.getElementById("theme")?.addEventListener("click", () => {
 });
 
 // ---- minimap readout ----
-// The map itself carries no text — area is open work, color is the module. The
-// readout under it does the naming: at rest a color legend (each module), and on
-// hover the hovered tile's module with its epics listed, the one under the cursor
-// lit. All read from the rendered DOM, no server round-trip. The region is the
-// hover unit, so you never have to land on a sliver of a tile to read its name.
+// The map itself carries no text — area is open work, color is the epic. The
+// readout under it does the naming: at rest a color legend (each epic), and on
+// hover the hovered story's epic with its stories listed, the one under the cursor
+// lit. All read from the rendered DOM, no server round-trip. The epic is the
+// hover unit, so you never have to land on a sliver of a story to read its name.
 const mmReadout = document.getElementById("mmReadout");
 const mmTitle = document.getElementById("mmTitle");
 const mmEsc = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -22,121 +22,121 @@ function mmLegend() {
   if (!mmReadout) return;
   mmReadout.classList.add("idle");
   if (mmTitle) mmTitle.textContent = "";
-  const rows = [...document.querySelectorAll(".treemap .region")].map((r) => {
+  const rows = [...document.querySelectorAll(".map .epic")].map((r) => {
     const rc = r.style.getPropertyValue("--rc").trim();
     return `<div class="mm-row"><span class="mm-sw" style="background:${rc}"></span>` +
       `<span class="mm-rn">${mmEsc(r.dataset.name)}</span>` +
       `<span class="mm-rc tnum">${r.dataset.open || 0}</span></div>`;
   }).join("");
-  mmReadout.innerHTML = `<div class="mm-cap">modules</div>${rows}`;
+  mmReadout.innerHTML = `<div class="mm-cap">epics</div>${rows}`;
 }
-function mmModule(region, hoverEpic) {
-  if (!mmReadout || !region) return;
+function mmEpic(epic, hoverStory) {
+  if (!mmReadout || !epic) return;
   mmReadout.classList.remove("idle");
-  if (mmTitle) mmTitle.textContent = region.dataset.name || "";
-  const rc = region.style.getPropertyValue("--rc").trim();
-  const tiles = [...region.querySelectorAll(".tile")];
+  if (mmTitle) mmTitle.textContent = epic.dataset.name || "";
+  const rc = epic.style.getPropertyValue("--rc").trim();
+  const stories = [...epic.querySelectorAll(".story")];
   let flagged = 0;
-  const eps = tiles.map((t) => {
+  const eps = stories.map((t) => {
     if (t.dataset.flag) flagged++;
-    const on = hoverEpic && t.dataset.epic === hoverEpic ? " on" : "";
+    const on = hoverStory && t.dataset.story === hoverStory ? " on" : "";
     return `<div class="mm-ep${on}"><span class="mm-en">${mmEsc(t.dataset.name)}</span>` +
       (t.dataset.flag ? `<span class="mm-fl"></span>` : ``) +
       `<span class="mm-eo tnum">${t.dataset.open || 0}</span></div>`;
   }).join("");
   mmReadout.innerHTML =
     `<div class="mm-mod"><span class="mm-sw" style="background:${rc}"></span>` +
-    `<span class="mm-mn">${mmEsc(region.dataset.name)}</span></div>` +
-    `<div class="mm-meta">${region.dataset.open || 0} open · ${tiles.length} epics` +
+    `<span class="mm-mn">${mmEsc(epic.dataset.name)}</span></div>` +
+    `<div class="mm-meta">${epic.dataset.open || 0} open · ${stories.length} stories` +
     `${flagged ? ` · ${flagged} flagged` : ``}</div>` +
     `<div class="mm-eps">${eps}</div>`;
 }
-// Delegate so tiles swapped in by htmx keep working.
+// Delegate so stories swapped in by htmx keep working.
 document.addEventListener("mouseover", (e) => {
-  const tile = e.target.closest(".tile");
-  if (tile) { mmModule(tile.closest(".region"), tile.dataset.epic); return; }
-  const head = e.target.closest(".rg-head");
-  if (head) mmModule(head.closest(".region"), "");
+  const story = e.target.closest(".story");
+  if (story) { mmEpic(story.closest(".epic"), story.dataset.story); return; }
+  const head = e.target.closest(".epic-head");
+  if (head) mmEpic(head.closest(".epic"), "");
 });
 document.querySelector(".minimap")?.addEventListener("mouseleave", mmLegend);
 mmLegend();
 
 // ---- view-centric chrome: tab strip + minimap filter ----
 // The active VIEW (Table/Board/Insights) is the centerpiece; the tab strip up top
-// is the primary control, and the treemap is a demoted ambient minimap. Two pieces
-// of state drive it: which view is active and which epic (if any) it's scoped to.
+// is the primary control, and the map is a demoted ambient minimap. Two pieces
+// of state drive it: which view is active and which story (if any) it's scoped to.
 // Both live on #viewport's data-attrs and are re-synced from each swapped fragment's
 // pane-head, so a minimap click filters whatever view is active — not just the list.
 const viewport = document.getElementById("viewport");
 const VIEW_PATHS = { list: "/list", board: "/board", insights: "/insights" };
 
-// activeView/activeEpic read the single source of truth on #viewport.
+// activeView/activeStory read the single source of truth on #viewport.
 function activeView() {
   return viewport?.dataset.view || "list";
 }
+function activeStory() {
+  return viewport?.dataset.story || "";
+}
+// activeEpic reads the epic scope (an epic Key), set by an epic-head click.
 function activeEpic() {
   return viewport?.dataset.epic || "";
 }
-// activeRegion reads the trunk scope (a region Key), set by a region-head click.
-function activeRegion() {
-  return viewport?.dataset.region || "";
-}
 // activeFilter reads the cross-strand scope filter ("" = everything, "bugs"). It
-// is orthogonal to the epic scope and overrides it: a filter is a whole-strand cut.
+// is orthogonal to the story scope and overrides it: a filter is a whole-strand cut.
 function activeFilter() {
   return viewport?.dataset.filter || "";
 }
 // viewURL builds the fragment endpoint for a view at the current scope. Precedence
 // matches the server's listViewFor: a filter (bugs) is a whole-strand cut and wins,
-// then one epic, then one region; with none, the bare view is the whole strand
+// then one story, then one epic; with none, the bare view is the whole strand
 // ("everything"). One place owns the query shape so the tabs, scope chips, and
 // minimap clicks can't drift.
-function viewURL(view, epic, region, filter) {
+function viewURL(view, story, epic, filter) {
   const path = VIEW_PATHS[view] || VIEW_PATHS.list;
   if (filter) return `${path}?filter=${encodeURIComponent(filter)}`;
+  if (story) return `${path}?story=${encodeURIComponent(story)}`;
   if (epic) return `${path}?epic=${encodeURIComponent(epic)}`;
-  if (region) return `${path}?region=${encodeURIComponent(region)}`;
   return path;
 }
-// syncChrome reflects the active view+epic into the chrome: the tab strip's pressed
+// syncChrome reflects the active view+story into the chrome: the tab strip's pressed
 // state, the scope hint, and the minimap's "all" clear affordance.
 function syncChrome() {
   const view = activeView();
-  const epic = activeEpic();
+  const story = activeStory();
   const filter = activeFilter();
   document.querySelectorAll(".viewtab").forEach((tab) => {
     const on = tab.dataset.view === view;
     tab.classList.toggle("active", on);
     tab.setAttribute("aria-pressed", on ? "true" : "false");
   });
-  const region = activeRegion();
+  const epic = activeEpic();
   // Scope chips: "everything" is on when nothing narrows the strand; "bugs" when
-  // its filter is live. An epic or region scope (from the minimap) leaves both off.
+  // its filter is live. A story or epic scope (from the minimap) leaves both off.
   document.querySelectorAll(".scopetab").forEach((tab) => {
     const want = tab.dataset.scope === "bugs" ? "bugs" : "";
-    const on = !epic && !region && filter === want;
+    const on = !story && !epic && filter === want;
     tab.classList.toggle("active", on);
     tab.setAttribute("aria-pressed", on ? "true" : "false");
   });
   const hint = document.getElementById("scopeHint");
   if (hint) {
     let name = "";
-    if (epic) name = document.querySelector(`.tile[data-epic="${CSS.escape(epic)}"]`)?.dataset.name || epic;
-    else if (region) name = document.querySelector(`.region[data-region="${CSS.escape(region)}"]`)?.dataset.name || region;
+    if (story) name = document.querySelector(`.story[data-story="${CSS.escape(story)}"]`)?.dataset.name || story;
+    else if (epic) name = document.querySelector(`.epic[data-epic="${CSS.escape(epic)}"]`)?.dataset.name || epic;
     hint.textContent = name ? `Filtered · ${name}` : "";
   }
   const clear = document.getElementById("mmClear");
-  if (clear) clear.hidden = !epic && !region && !filter;
-  // The active epic's tile lights up; a region scope (or the region owning the
-  // active epic) lights the whole module's border in its legend color (--rc) so
+  if (clear) clear.hidden = !story && !epic && !filter;
+  // The active story's cell lights up; an epic scope (or the epic owning the
+  // active story) lights the whole epic's border in its legend color (--rc) so
   // the swatch and the map agree.
-  document.querySelectorAll(".tile.mm-filter").forEach((t) => {
-    t.classList.toggle("on", !!epic && t.dataset.epic === epic);
+  document.querySelectorAll(".story.mm-filter").forEach((t) => {
+    t.classList.toggle("on", !!story && t.dataset.story === story);
   });
-  document.querySelectorAll(".treemap .region").forEach((rg) => {
-    const ownsEpic = !!epic && rg.querySelector(`.tile[data-epic="${CSS.escape(epic)}"]`);
-    const isScoped = !!region && rg.dataset.region === region;
-    rg.classList.toggle("on", !!ownsEpic || isScoped);
+  document.querySelectorAll(".map .epic").forEach((rg) => {
+    const ownsStory = !!story && rg.querySelector(`.story[data-story="${CSS.escape(story)}"]`);
+    const isScoped = !!epic && rg.dataset.epic === epic;
+    rg.classList.toggle("on", !!ownsStory || isScoped);
   });
 }
 // A tab click loads its view at the CURRENT scope; a scope chip switches the scope
@@ -148,51 +148,51 @@ document.body.addEventListener("htmx:configRequest", (e) => {
   // hx-get="/list" — reload the ACTIVE view at the live scope instead, so an edit
   // doesn't snap the pane back to an unscoped Table.
   if (e.detail.elt.id === "listPane") {
-    e.detail.path = viewURL(activeView(), activeEpic(), activeRegion(), activeFilter());
+    e.detail.path = viewURL(activeView(), activeStory(), activeEpic(), activeFilter());
     return;
   }
   const tab = e.detail.elt.closest?.(".viewtab");
   if (tab) {
-    e.detail.path = viewURL(tab.dataset.view, activeEpic(), activeRegion(), activeFilter());
+    e.detail.path = viewURL(tab.dataset.view, activeStory(), activeEpic(), activeFilter());
     return;
   }
   const chip = e.detail.elt.closest?.(".scopetab");
   if (chip) {
     const filter = chip.dataset.scope === "bugs" ? "bugs" : "";
+    viewport.dataset.story = "";
     viewport.dataset.epic = "";
-    viewport.dataset.region = "";
     viewport.dataset.filter = filter;
     e.detail.path = viewURL(activeView(), "", "", filter);
     return;
   }
   // A board pivot carries a static /board?pivot= URL that omits the live filter/
-  // region scope — rewrite it onto the active scope so changing Status/Priority
+  // epic scope — rewrite it onto the active scope so changing Status/Priority
   // doesn't silently widen the board back to Everything.
   const pivot = e.detail.elt.closest?.(".bb-pivot");
   if (pivot) {
-    const base = viewURL("board", activeEpic(), activeRegion(), activeFilter());
+    const base = viewURL("board", activeStory(), activeEpic(), activeFilter());
     e.detail.path = `${base}${base.includes("?") ? "&" : "?"}pivot=${encodeURIComponent(pivot.dataset.pivot)}`;
     return;
   }
   // The minimap's foot clear drops every scope and reloads the active view whole.
   if (e.detail.elt.id === "mmClear") {
+    viewport.dataset.story = "";
     viewport.dataset.epic = "";
-    viewport.dataset.region = "";
     viewport.dataset.filter = "";
     e.detail.path = viewURL(activeView(), "", "", "");
   }
 });
-// A minimap region/epic click filters the ACTIVE view to that scope (spec §2). An
-// epic tile scopes to its id; a region head clears the scope (the whole region is
-// the strand's first region). Routes through htmx.ajax so the active view's
+// A minimap epic/story click filters the ACTIVE view to that scope (spec §2). A
+// story cell scopes to its id; an epic head clears the story scope (the whole epic
+// is the strand's first epic). Routes through htmx.ajax so the active view's
 // endpoint renders, not a hardcoded /list.
 function minimapFilter(el) {
-  const epic = el.dataset.epic || "";
-  const region = el.dataset.region || ""; // set on a region head, absent on a tile
+  const story = el.dataset.story || "";
+  const epic = el.dataset.epic || ""; // set on an epic head, absent on a story
+  viewport.dataset.story = story;
   viewport.dataset.epic = epic;
-  viewport.dataset.region = region;
   viewport.dataset.filter = ""; // a map scope replaces any whole-strand filter
-  htmx.ajax("GET", viewURL(activeView(), epic, region, ""), { target: "#listPane", swap: "innerHTML" });
+  htmx.ajax("GET", viewURL(activeView(), story, epic, ""), { target: "#listPane", swap: "innerHTML" });
 }
 document.addEventListener("click", (e) => {
   const f = e.target.closest(".mm-filter");
@@ -227,7 +227,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === " " && e.target.closest?.("[role=button]")) e.preventDefault();
 });
 // After any centerpiece swap, re-read the fragment's own scope (pane-head carries
-// data-view/data-epic) into #viewport, so the chrome and the minimap highlight
+// data-view/data-story) into #viewport, so the chrome and the minimap highlight
 // follow the truth the server just rendered — including a tab click that changed
 // the view, or the refreshList re-render.
 document.body.addEventListener("htmx:afterSwap", (e) => {
@@ -235,7 +235,7 @@ document.body.addEventListener("htmx:afterSwap", (e) => {
   const head = e.detail.target.querySelector(".pane-head[data-view]");
   if (head) {
     viewport.dataset.view = head.dataset.view;
-    viewport.dataset.epic = head.dataset.epic || "";
+    viewport.dataset.story = head.dataset.story || "";
   }
   syncChrome();
 });
@@ -289,7 +289,7 @@ function initBoard() {
     });
   });
 }
-// The V1 list is drag-to-reorder within one epic (no cross-epic group, so drops
+// The V1 list is drag-to-reorder within one story (no cross-story group, so drops
 // stay inside their tbody). On drop we POST only the post-drop id order; the server
 // re-reads ranks from bd and writes the minimal change (spec R6 manual rank). A
 // success is 204 — htmx swaps nothing, the optimistic DOM already matches bd. A bd

@@ -1,18 +1,18 @@
-{{/* The minimap is an ambient filter, not a navigator. A region head or epic
-     tile carries its identity in data-attrs; app.js routes the click to whatever
+{{/* The minimap is an ambient filter, not a navigator. An epic head or a story
+     carries its identity in data-attrs; app.js routes the click to whatever
      view is active (Table/Board/Insights) so the click filters the centerpiece,
      not just the list. role/tabindex make each a real, keyboard-reachable control. */}}
-{{define "treemap"}}
-<div class="treemap">
-  {{range .Regions}}
-  <div class="region" data-name="{{.Name}}" data-region="{{.Key}}" data-open="{{.Open}}" style="--rc:{{.Color}};left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%">
-    <div class="rg-head mm-filter" role="button" tabindex="0" data-name="{{.Name}}" data-region="{{.Key}}" aria-label="{{.Name}} — whole region"></div>
-    <div class="rg-body">
-      {{range .Epics}}
-      <div class="tile mm-filter" role="button" tabindex="0"
+{{define "map"}}
+<div class="map">
+  {{range .Epics}}
+  <div class="epic" data-name="{{.Name}}" data-epic="{{.Key}}" data-open="{{.Open}}" style="--rc:{{.Color}};left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%">
+    <div class="epic-head mm-filter" role="button" tabindex="0" data-name="{{.Name}}" data-epic="{{.Key}}" aria-label="{{.Name}} — whole epic"></div>
+    <div class="epic-body">
+      {{range .Stories}}
+      <div class="story mm-filter" role="button" tabindex="0"
            aria-label="{{cleanName .Name}}"
            style="left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%"
-           data-name="{{cleanName .Name}}" data-epic="{{.ID}}" data-open="{{.Open}}" data-flag="{{if .Flag}}1{{end}}">
+           data-name="{{cleanName .Name}}" data-story="{{.ID}}" data-open="{{.Open}}" data-flag="{{if .Flag}}1{{end}}">
         {{if .Flag}}<span class="flag"></span>{{end}}
       </div>
       {{end}}
@@ -23,20 +23,20 @@
 {{end}}
 
 {{define "list"}}
-{{if .Region.Epics}}
-<div class="pane-head" data-view="list" data-epic="{{if .HasEpic}}{{.Epic.ID}}{{end}}">
+{{if .Epic.Stories}}
+<div class="pane-head" data-view="list" data-story="{{if .HasStory}}{{.Story.ID}}{{end}}">
   <div class="lp-scope">
-    <span class="lp-dot" style="background:{{.Region.Color}}"></span>
-    <span class="lp-name">{{if .HasEpic}}{{cleanName .Epic.Name}}{{else}}{{.Region.Name}}{{end}}</span>
+    <span class="lp-dot" style="background:{{.Epic.Color}}"></span>
+    <span class="lp-name">{{if .HasStory}}{{cleanName .Story.Name}}{{else}}{{.Epic.Name}}{{end}}</span>
   </div>
   <div class="lp-stat">
-    {{if .HasEpic}}<span><b>{{.Epic.Open}}</b> open bead{{if ne .Epic.Open 1}}s{{end}}</span>
-    {{else}}<span><b>{{.Region.Open}}</b> open</span><span><b>{{len .Region.Epics}}</b> epics</span>{{end}}
+    {{if .HasStory}}<span><b>{{.Story.Open}}</b> open bead{{if ne .Story.Open 1}}s{{end}}</span>
+    {{else}}<span><b>{{.Epic.Open}}</b> open</span><span><b>{{len .Epic.Stories}}</b> stories</span>{{end}}
   </div>
 </div>
 <div class="list-body">
-  {{if .HasEpic}}{{template "epicGroup" .Epic}}
-  {{else}}{{range .Region.Epics}}{{template "epicGroupHead" .}}{{end}}{{end}}
+  {{if .HasStory}}{{template "storyGroup" .Story}}
+  {{else}}{{range .Epic.Stories}}{{template "storyGroupHead" .}}{{end}}{{end}}
 </div>
 {{else}}
 <div class="pane-head"><div class="lp-scope"><span class="lp-name">—</span></div></div>
@@ -45,19 +45,19 @@
 {{end}}
 
 {{define "board"}}
-{{if .Region.Epics}}
-<div class="pane-head" data-view="board" data-epic="{{if .HasEpic}}{{.Epic.ID}}{{end}}">
+{{if .Epic.Stories}}
+<div class="pane-head" data-view="board" data-story="{{if .HasStory}}{{.Story.ID}}{{end}}">
   <div class="lp-scope">
-    <span class="lp-dot" style="background:{{.Region.Color}}"></span>
-    <span class="lp-name">{{if .HasEpic}}{{cleanName .Epic.Name}}{{else}}{{.Region.Name}}{{end}}</span>
+    <span class="lp-dot" style="background:{{.Epic.Color}}"></span>
+    <span class="lp-name">{{if .HasStory}}{{cleanName .Story.Name}}{{else}}{{.Epic.Name}}{{end}}</span>
   </div>
 </div>
 <div class="board-bar">
   <span class="bb-label">pivot</span>
-  {{$pv := .Pivot}}{{$ep := ""}}{{if .HasEpic}}{{$ep = .Epic.ID}}{{end}}
+  {{$pv := .Pivot}}{{$st := ""}}{{if .HasStory}}{{$st = .Story.ID}}{{end}}
   {{range .Pivots}}
   <button class="bb-pivot{{if eq . $pv}} active{{end}}" type="button" data-pivot="{{.}}"
-          hx-get="/board?pivot={{.}}{{if $ep}}&epic={{$ep}}{{end}}" hx-target="#listPane">{{.}}</button>
+          hx-get="/board?pivot={{.}}{{if $st}}&story={{$st}}{{end}}" hx-target="#listPane">{{.}}</button>
   {{end}}
 </div>
 <div class="board-err" id="boardErr" role="alert" hidden></div>
@@ -100,11 +100,11 @@
 {{end}}
 
 {{define "insights"}}
-{{if .Region.Epics}}
-<div class="pane-head" data-view="insights" data-epic="{{if .HasEpic}}{{.Epic.ID}}{{end}}">
+{{if .Epic.Stories}}
+<div class="pane-head" data-view="insights" data-story="{{if .HasStory}}{{.Story.ID}}{{end}}">
   <div class="lp-scope">
-    <span class="lp-dot" style="background:{{.Region.Color}}"></span>
-    <span class="lp-name">{{if .HasEpic}}{{cleanName .Epic.Name}}{{else}}{{.Region.Name}}{{end}}</span>
+    <span class="lp-dot" style="background:{{.Epic.Color}}"></span>
+    <span class="lp-name">{{if .HasStory}}{{cleanName .Story.Name}}{{else}}{{.Epic.Name}}{{end}}</span>
   </div>
 </div>
 {{with .Insights}}
@@ -211,38 +211,38 @@
 {{else}}<p class="ip-empty">No ranked beads — no dependencies in scope.</p>{{end}}
 {{end}}
 
-{{/* epicGroup renders one epic's bead table with no group header — the
-     epic-scoped list, where the pane head already names the epic. Dot is a
-     strand.Epic. */}}
-{{define "epicGroup"}}
-<div class="epic-group">
-  {{template "epicRows" .}}
+{{/* storyGroup renders one story's bead table with no group header — the
+     story-scoped list, where the pane head already names the story. Dot is a
+     strand.Story. */}}
+{{define "storyGroup"}}
+<div class="story-group">
+  {{template "storyRows" .}}
 </div>
 {{end}}
 
-{{/* epicGroupHead is the region-view variant: a clickable group header above
-     the bead table, drawn once per epic in the whole-region list. Dot is a
-     strand.Epic. */}}
-{{define "epicGroupHead"}}
-<div class="epic-group">
-  {{/* A one-bead epic whose bead IS the epic (off-trunk standalone work) would
+{{/* storyGroupHead is the whole-epic-view variant: a clickable group header above
+     the bead table, drawn once per story in the whole-epic list. Dot is a
+     strand.Story. */}}
+{{define "storyGroupHead"}}
+<div class="story-group">
+  {{/* A one-bead story whose bead IS the story (off-epic standalone work) would
        print its title twice — as the header and as the row. Drop the header in
        that case and show the single openable row. */}}
   {{if not (and (eq (len .Beads) 1) (eq (index .Beads 0).ID .ID))}}
-  <div class="eg-head" role="button" tabindex="0"
-       hx-get="/list?epic={{.ID}}" hx-target="#listPane"
+  <div class="story-head" role="button" tabindex="0"
+       hx-get="/list?story={{.ID}}" hx-target="#listPane"
        hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']">
-    <span class="eg-name">{{cleanName .Name}}</span><span class="eo tnum">{{.Open}}</span>
+    <span class="story-name">{{cleanName .Name}}</span><span class="eo tnum">{{.Open}}</span>
   </div>
   {{end}}
-  {{template "epicRows" .}}
+  {{template "storyRows" .}}
 </div>
 {{end}}
 
-{{/* epicRows is the shared bead table for both epic-group variants. Dot is a
-     strand.Epic. */}}
-{{define "epicRows"}}
-<table><tbody class="bead-rows" data-epic="{{.ID}}">
+{{/* storyRows is the shared bead table for both story-group variants. Dot is a
+     strand.Story. */}}
+{{define "storyRows"}}
+<table><tbody class="bead-rows" data-story="{{.ID}}">
     {{range .Beads}}
     <tr data-id="{{.ID}}" role="button" tabindex="0"
         hx-get="/bead/{{.ID}}" hx-target="#drawer"
@@ -387,7 +387,7 @@
               onchange="const p = this.closest('form').querySelector('.cf-new-parent'); p.hidden = this.value !== '__new__'; p.querySelector('input').required = this.value === '__new__'">
         {{$pp := .Parent}}
         <option value="" {{if eq $pp ""}}selected{{end}} disabled>Choose a parent…</option>
-        <option value="__off_trunk__" {{if eq $pp "__off_trunk__"}}selected{{end}}>Off-trunk (no parent)</option>
+        <option value="__off_epic__" {{if eq $pp "__off_epic__"}}selected{{end}}>No epic (standalone)</option>
         <option value="__new__" {{if eq $pp "__new__"}}selected{{end}}>＋ Create a new parent…</option>
         {{range .Parents}}<option value="{{.ID}}" {{if eq $pp .ID}}selected{{end}}>{{shortID .ID}} · {{cleanName .Title}}</option>{{end}}
       </select></label></div>
