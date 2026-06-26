@@ -255,7 +255,7 @@ func childOfRoot(id, root string, byID map[string]bd.Issue) string {
 // "MEMORY"); the catch-all epic is named by the caller.
 func epicName(key string, byID map[string]bd.Issue) string {
 	if key == looseKey {
-		return "Off-epic"
+		return "No epic"
 	}
 	if is, ok := byID[key]; ok {
 		title := is.Title

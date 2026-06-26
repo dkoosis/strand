@@ -56,8 +56,8 @@ func TestBuildEpicsFromTopLevel(t *testing.T) {
 		t.Error("story e-2 has no bug, want Flag=false")
 	}
 	loose := f.Epics[1]
-	if loose.Name != "Off-epic" || loose.Open != 1 {
-		t.Errorf("epic[1] = %q/%d, want Off-epic/1", loose.Name, loose.Open)
+	if loose.Name != "No epic" || loose.Open != 1 {
+		t.Errorf("epic[1] = %q/%d, want No epic/1", loose.Name, loose.Open)
 	}
 	if loose.Stories[0].ID != "loose-1" {
 		t.Errorf("catch-all story = %s, want loose-1", loose.Stories[0].ID)

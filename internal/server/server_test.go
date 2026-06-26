@@ -38,9 +38,10 @@ type stubBD struct {
 	lastField string // the field/value of the most recent Update — lets the board
 	lastValue string // move test assert it issued the right bd update.
 
-	rankWrites  []rankWrite  // ordered log of SetRank calls, for the reorder tests.
-	depWrites   []depWrite   // ordered log of DepAdd/DepRemove calls, for the dep tests.
-	labelWrites []labelWrite // ordered log of LabelAdd/LabelRemove calls, for the label tests.
+	rankWrites   []rankWrite   // ordered log of SetRank calls, for the reorder tests.
+	parentWrites []parentWrite // ordered log of SetParent calls, for the attach-epic tests.
+	depWrites    []depWrite    // ordered log of DepAdd/DepRemove calls, for the dep tests.
+	labelWrites  []labelWrite  // ordered log of LabelAdd/LabelRemove calls, for the label tests.
 
 	createOpts []bd.CreateOpts // ordered log of Create calls, for the create-path tests.
 }
@@ -66,6 +67,13 @@ type depWrite struct {
 type rankWrite struct {
 	id   string
 	rank float64
+}
+
+// parentWrite records one SetParent call so a test can assert the attach-epic
+// handler reparented the story onto the right epic id.
+type parentWrite struct {
+	id     string
+	parent string
 }
 
 func (s *stubBD) List(context.Context, ...string) ([]bd.Issue, error) {
@@ -249,6 +257,22 @@ func (s *stubBD) SetRank(_ context.Context, id string, rank float64) (*bd.Issue,
 				s.issues[i].Metadata = map[string]any{}
 			}
 			s.issues[i].Metadata["rank"] = rank
+		}
+	}
+	return nil, nil //nolint:nilnil // bd may answer silently; the handler re-reads, not this value.
+}
+
+// SetParent logs the reparent and reflects the new parent in the issue list so a
+// follow-up buildStrand re-read sees the story laddered up under its epic.
+// writeErr models a bd outage: the list stays put and the handler must surface it.
+func (s *stubBD) SetParent(_ context.Context, id, parent string) (*bd.Issue, error) {
+	if s.writeErr != nil {
+		return nil, s.writeErr
+	}
+	s.parentWrites = append(s.parentWrites, parentWrite{id, parent})
+	for i := range s.issues {
+		if s.issues[i].ID == id {
+			s.issues[i].Parent = parent
 		}
 	}
 	return nil, nil //nolint:nilnil // bd may answer silently; the handler re-reads, not this value.
@@ -522,6 +546,133 @@ func TestScopeTitleInertForOffEpic(t *testing.T) {
 	body := do(t, srv, "/list?epic=__loose__").Body.String()
 	if strings.Contains(body, "lp-edit") {
 		t.Errorf("off-epic pane-head title leaked an edit affordance:\n%s", body)
+	}
+}
+
+// TestStoryHeadShowsEpicCrumb: a story-scoped Table head names its epic as a
+// breadcrumb that navigates up to the whole-epic table, so the epic stays visible
+// and reachable above the story (str-o74).
+func TestStoryHeadShowsEpicCrumb(t *testing.T) {
+	srv := newTestServer(t, &stubBD{issues: sampleIssues})
+	body := do(t, srv, "/list?story=demo-e1").Body.String()
+	if !strings.Contains(body, `class="lp-crumb"`) ||
+		!strings.Contains(body, `hx-get="/list?epic=demo-root"`) ||
+		!strings.Contains(body, ">DEMO</span>") {
+		t.Errorf("story head missing epic breadcrumb:\n%s", body)
+	}
+}
+
+// TestStoryRootRowDeduped: with task children the story root is named by the head,
+// so it must not also render as a row (epic→story→task, not story-beside-its-tasks).
+// A one-bead story keeps its single row, else the table would be empty (str-o74).
+func TestStoryRootRowDeduped(t *testing.T) {
+	srv := newTestServer(t, &stubBD{issues: sampleIssues})
+
+	multi := do(t, srv, "/list?story=demo-e1").Body.String()
+	if strings.Contains(multi, `data-id="demo-e1"`) {
+		t.Errorf("multi-bead story still rendered its own root row:\n%s", multi)
+	}
+	if !strings.Contains(multi, `data-id="demo-e1.a"`) || !strings.Contains(multi, `data-id="demo-e1.b"`) {
+		t.Errorf("multi-bead story dropped its task rows:\n%s", multi)
+	}
+
+	one := do(t, srv, "/list?story=demo-e2").Body.String()
+	if !strings.Contains(one, `data-id="demo-e2"`) {
+		t.Errorf("one-bead story dropped its only row:\n%s", one)
+	}
+}
+
+// TestOffEpicStoryShowsNoEpicCrumb: an orphan story (no epic ancestor) shows the
+// "No epic" crumb wired to open the attach-to-epic drawer (str-o74).
+func TestOffEpicStoryShowsNoEpicCrumb(t *testing.T) {
+	loose := []bd.Issue{{ID: "solo", Title: "Standalone", IssueType: "task", Status: "open", Priority: new(2)}}
+	srv := newTestServer(t, &stubBD{issues: loose})
+	body := do(t, srv, "/list?story=solo").Body.String()
+	if !strings.Contains(body, `class="lp-crumb lp-crumb-empty"`) ||
+		!strings.Contains(body, `hx-get="/attach-epic?story=solo"`) ||
+		!strings.Contains(body, ">No epic</span>") {
+		t.Errorf("off-epic story missing No-epic crumb:\n%s", body)
+	}
+}
+
+// TestAttachFormRendersEpics: the attach drawer offers existing epics and the
+// mint-a-new-epic option, with the story id carried through (str-o74).
+func TestAttachFormRendersEpics(t *testing.T) {
+	srv := newTestServer(t, &stubBD{issues: sampleIssues, show: map[string]*bd.Issue{
+		"demo-e2": {ID: "demo-e2", Title: "Lone task"},
+	}})
+	body := do(t, srv, "/attach-epic?story=demo-e2").Body.String()
+	for _, want := range []string{
+		`hx-post="/attach-epic"`,
+		`name="story" value="demo-e2"`,
+		`value="__new__"`,   // mint-a-new-epic option
+		`value="demo-root"`, // existing epic offered
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("attach form missing %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestAttachEpicExisting: posting an existing epic reparents the story onto it and
+// asks the list to refresh (str-o74).
+func TestAttachEpicExisting(t *testing.T) {
+	stub := &stubBD{
+		issues: []bd.Issue{{ID: "solo", Title: "Standalone", IssueType: "task", Status: "open", Priority: new(2)}},
+		show:   map[string]*bd.Issue{"solo": {ID: "solo", Title: "Standalone"}},
+	}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/attach-epic", "story=solo&epic=demo-root")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /attach-epic = %d, want 200", rec.Code)
+	}
+	if rec.Header().Get("HX-Trigger") != "refreshList" {
+		t.Errorf("attach did not fire refreshList, got %q", rec.Header().Get("HX-Trigger"))
+	}
+	if len(stub.parentWrites) != 1 || stub.parentWrites[0] != (parentWrite{"solo", "demo-root"}) {
+		t.Errorf("reparent write = %+v, want one {solo demo-root}", stub.parentWrites)
+	}
+	if len(stub.createOpts) != 0 {
+		t.Errorf("existing-epic attach minted an epic: %+v", stub.createOpts)
+	}
+}
+
+// TestAttachEpicNew: minting a new epic creates it first, then reparents the story
+// onto the fresh id — so a create failure can't leave a half-moved story (str-o74).
+func TestAttachEpicNew(t *testing.T) {
+	stub := &stubBD{
+		issues: []bd.Issue{{ID: "solo", Title: "Standalone", IssueType: "task", Status: "open", Priority: new(2)}},
+		show:   map[string]*bd.Issue{"solo": {ID: "solo", Title: "Standalone"}},
+	}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/attach-epic", "story=solo&epic=__new__&epic_new=Fresh+Epic")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /attach-epic = %d, want 200", rec.Code)
+	}
+	if len(stub.createOpts) != 1 || stub.createOpts[0].Type != "epic" || stub.createOpts[0].Title != "Fresh Epic" {
+		t.Errorf("new-epic attach minted %+v, want one epic titled Fresh Epic", stub.createOpts)
+	}
+	// The stub mints "demo-new" as the first create of a request; the story must
+	// reparent onto exactly that fresh id.
+	if len(stub.parentWrites) != 1 || stub.parentWrites[0] != (parentWrite{"solo", "demo-new"}) {
+		t.Errorf("reparent write = %+v, want one {solo demo-new}", stub.parentWrites)
+	}
+}
+
+// TestAttachEpicRejectsEmpty: no epic choice is no move — the form re-renders with
+// an error and nothing is written (str-o74).
+func TestAttachEpicRejectsEmpty(t *testing.T) {
+	stub := &stubBD{issues: sampleIssues}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/attach-epic", "story=solo&epic=")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /attach-epic = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `class="dr-err"`) {
+		t.Errorf("empty epic choice did not re-render with an error:\n%s", rec.Body.String())
+	}
+	if len(stub.parentWrites) != 0 {
+		t.Errorf("empty epic choice still wrote a reparent: %+v", stub.parentWrites)
 	}
 }
 
