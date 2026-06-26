@@ -113,6 +113,26 @@ func (c *Client) SetRank(ctx context.Context, id string, rank float64) (*Issue, 
 	return firstIssue(out)
 }
 
+// SetParent reparents an issue onto a new epic (bd update <id> --parent <parent>).
+// It is its own method rather than an updateFlags field because reparenting is a
+// deliberate structural move, not a leaf-field edit, and the generic drawer edit
+// path must not expose it. parent must be non-empty here — strand only ever
+// attaches an orphan story to an epic; clearing a parent is not a strand gesture.
+// Returns the updated issue when bd emits one (nil if it stays silent).
+func (c *Client) SetParent(ctx context.Context, id, parent string) (*Issue, error) {
+	if err := requireID(id, "setparent"); err != nil {
+		return nil, err
+	}
+	if err := requireID(parent, "setparent parent"); err != nil {
+		return nil, err
+	}
+	out, err := c.run(ctx, "update", id, "--parent", parent, "--json")
+	if err != nil {
+		return nil, err
+	}
+	return firstIssue(out)
+}
+
 // CreateOpts carries the fields bd create accepts. Title is required; the rest
 // are sent only when set, so bd applies its own defaults.
 type CreateOpts struct {

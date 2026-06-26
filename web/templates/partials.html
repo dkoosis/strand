@@ -34,6 +34,23 @@
 <div class="pane-head" data-view="list" data-story="{{if .HasStory}}{{.Story.ID}}{{end}}" data-epic="{{if .HasEpic}}{{.Epic.Key}}{{end}}">
   <div class="lp-scope">
     <span class="lp-dot" style="background:{{.Epic.Color}}"></span>
+    {{/* In a story scope the head reads epic › story so the epic stays visible and
+         reachable (str-o74). A real epic crumb navigates up to the whole-epic table;
+         an orphan story shows "No epic", opening the attach-to-epic drawer. */}}
+    {{if .HasStory}}
+      {{if .EpicBeadID}}
+      <span class="lp-crumb" role="button" tabindex="0"
+            hx-get="/list?epic={{.Epic.Key}}" hx-target="#listPane"
+            hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']"
+            title="Up to {{.Epic.Name}}">{{.Epic.Name}}</span>
+      {{else}}
+      <span class="lp-crumb lp-crumb-empty" role="button" tabindex="0"
+            hx-get="/attach-epic?story={{.Story.ID}}" hx-target="#drawer"
+            hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']"
+            title="Attach to an epic">No epic</span>
+      {{end}}
+      <span class="lp-sep" aria-hidden="true">›</span>
+    {{end}}
     {{template "scopeName" .}}
   </div>
   <div class="lp-stat">
@@ -249,8 +266,15 @@
 {{/* storyRows is the shared bead table for both story-group variants. Dot is a
      strand.Story. */}}
 {{define "storyRows"}}
+{{/* The story root bead is a member of its own group. When the story has task
+     children the head already names it, so showing it again as a row would repeat
+     the story and flatten epic→story→task — skip it. A one-bead story (an off-epic
+     standalone whose bead IS the story) keeps its single row, else the table is
+     empty (str-o74). */}}
+{{$sid := .ID}}{{$multi := gt (len .Beads) 1}}
 <table><tbody class="bead-rows" data-story="{{.ID}}">
     {{range .Beads}}
+    {{if and $multi (eq .ID $sid)}}{{else}}
     <tr data-id="{{.ID}}" role="button" tabindex="0"
         hx-get="/bead/{{.ID}}" hx-target="#drawer"
         hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']">
@@ -260,6 +284,7 @@
       <td class="r-type">{{.Type}}</td>
       <td class="r-stat"><span class="status"><span class="dot {{.Status}}"></span>{{statusLabel .Status}}</span></td>
     </tr>
+    {{end}}
     {{end}}
   </tbody></table>
 {{end}}
@@ -406,6 +431,34 @@
       </select></label></div>
     <div class="dr-field"><label>Description <textarea name="description" rows="4" placeholder="Why this bead exists.">{{.Description}}</textarea></label></div>
     <div class="dr-actions"><button type="submit">Create</button></div>
+  </form>
+</div>
+{{end}}
+
+{{/* attachEpic is the "No epic" crumb's drawer: ladder an orphan story up under
+     an epic — pick an existing one or mint a new one inline. Mirrors the create
+     form's forced-parent picker, narrowed to epics (str-o74). Dot is an attachForm. */}}
+{{define "attachEpic"}}
+<div class="dr-head">
+  {{template "drClose"}}
+  <div class="dr-eyebrow">attach to epic</div>
+  <h2 class="dr-title-static">{{if .StoryTitle}}{{cleanName .StoryTitle}}{{else}}Attach story{{end}}</h2>
+</div>
+<div class="dr-body">
+  {{if .Err}}<div class="dr-err" role="alert">{{.Err}}</div>{{end}}
+  <form hx-post="/attach-epic" hx-target="#drawer">
+    <input type="hidden" name="story" value="{{.StoryID}}">
+    <div class="dr-field"><label>Epic
+      <select name="epic" required
+              onchange="const p = this.closest('form').querySelector('.cf-new-epic'); p.hidden = this.value !== '__new__'; p.querySelector('input').required = this.value === '__new__'">
+        {{$pe := .Epic}}
+        <option value="" {{if eq $pe ""}}selected{{end}} disabled>Choose an epic…</option>
+        <option value="__new__" {{if eq $pe "__new__"}}selected{{end}}>＋ Create a new epic…</option>
+        {{range .Epics}}<option value="{{.ID}}" {{if eq $pe .ID}}selected{{end}}>{{shortID .ID}} · {{cleanName .Title}}</option>{{end}}
+      </select></label></div>
+    <div class="dr-field cf-new-epic" {{if ne .Epic "__new__"}}hidden{{end}}>
+      <label>New epic title <input name="epic_new" value="{{.EpicTitle}}" placeholder="Name the epic…" {{if eq .Epic "__new__"}}required{{end}}></label></div>
+    <div class="dr-actions"><button type="submit">Attach</button></div>
   </form>
 </div>
 {{end}}

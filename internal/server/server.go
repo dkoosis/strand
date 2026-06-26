@@ -67,6 +67,7 @@ type IssueSource interface {
 	Claim(ctx context.Context, id string) (*bd.Issue, error)
 	Close(ctx context.Context, id, reason string) (*bd.Issue, error)
 	SetRank(ctx context.Context, id string, rank float64) (*bd.Issue, error)
+	SetParent(ctx context.Context, id, parent string) (*bd.Issue, error)
 	Comment(ctx context.Context, id, text string) error
 	DepAdd(ctx context.Context, id, dependsOn string) error
 	DepRemove(ctx context.Context, id, dependsOn string) error
@@ -182,6 +183,8 @@ func (s *Server) Routes() http.Handler {
 	s.mutate(mux, "DELETE /bead/{id}", s.handleDelete)
 	mux.HandleFunc("GET /new", s.handleNewForm)
 	s.mutate(mux, "POST /new", s.handleCreate)
+	mux.HandleFunc("GET /attach-epic", s.handleAttachForm)
+	s.mutate(mux, "POST /attach-epic", s.handleAttachEpic)
 	s.mutate(mux, "POST /refresh", s.handleRefresh)
 	mux.HandleFunc("GET /repos", s.handleRepos)
 	s.mutate(mux, "POST /repos/rescan", s.handleRescan)
@@ -281,6 +284,12 @@ type listView struct {
 	// open-drawer affordance keys off this, so an epic or story edits through the
 	// same gesture the leaf rows already use (str-scn).
 	ScopeID string
+	// EpicBeadID is the bd id of the story's epic, or "" when the story is off-epic.
+	// The story-scoped head's breadcrumb keys off it: a real id renders a crumb that
+	// navigates up to the epic; "" renders the "No epic" attach affordance (str-o74).
+	// Precomputed here because BeadID is a pointer method the template can't call on
+	// the non-addressable Epic value.
+	EpicBeadID string
 }
 
 // pageData is the full landing render: the strand, the list pane, and the repo
@@ -401,7 +410,7 @@ func findStory(f strand.Model, storyID string) (listView, bool) {
 	for _, e := range f.Epics {
 		for _, st := range e.Stories {
 			if st.ID == storyID {
-				return listView{Epic: e, Story: st, HasStory: true, ScopeID: st.ID}, true
+				return listView{Epic: e, Story: st, HasStory: true, ScopeID: st.ID, EpicBeadID: e.BeadID()}, true
 			}
 		}
 	}
@@ -1235,6 +1244,136 @@ func (s *Server) resolveParent(ctx context.Context, src IssueSource, form *creat
 	}
 }
 
+// attachForm is the "No epic" → attach-to-epic drawer's state: the orphan story
+// being laddered up, the candidate epics to pick from, the sticky choice (an epic
+// id or attachNew with a title), and a bd error to show inline on a failed submit.
+type attachForm struct {
+	StoryID    string
+	StoryTitle string
+	Epics      []parentOpt // candidate existing epics for the picker
+	Epic       string      // picked value: an epic id or attachNew
+	EpicTitle  string      // title for the inline new-epic path (Epic == attachNew)
+	Err        string
+}
+
+// attachNew is the picker sentinel for minting a fresh epic to attach the story
+// to, mirroring parentNew on the create form.
+const attachNew = "__new__"
+
+// errNoAttachStory rejects an attach with no story to reparent.
+var errNoAttachStory = errors.New("no story to attach")
+
+// errNoEpicChoice rejects an attach that names neither an existing epic nor a new
+// epic title — the same no-accidental-move guard resolveParent enforces on create.
+var errNoEpicChoice = errors.New("pick an epic or name a new one")
+
+// handleAttachForm renders the attach-to-epic form into the drawer for an orphan
+// story (the "No epic" crumb's target). It loads the candidate epics so the picker
+// can offer them; a List failure still renders the form (the new-epic path works
+// without a candidate list).
+func (s *Server) handleAttachForm(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := reqContext(r)
+	defer cancel()
+	form := attachForm{StoryID: r.URL.Query().Get("story")}
+	if src, _, ok := s.source(); ok {
+		form.Epics = candidateEpics(ctx, src)
+		if iss, err := src.Show(ctx, form.StoryID); err == nil && iss != nil {
+			form.StoryTitle = iss.Title
+		}
+	}
+	s.render(w, "attachEpic", form)
+}
+
+// candidateEpics lists the open top-level epics a story may attach to, labelled
+// for the picker. A List error yields no candidates (the new-epic path still
+// lets the user proceed) rather than blocking the form.
+func candidateEpics(ctx context.Context, src readSource) []parentOpt {
+	issues, err := src.List(ctx, allIssues...)
+	if err != nil {
+		return nil
+	}
+	opts := make([]parentOpt, 0)
+	for i := range issues {
+		is := &issues[i]
+		// Only a parentless epic is a real epic root (matches strand.isEpic). An
+		// epic-typed bead with a parent is a nested node, not a trunk; attaching an
+		// orphan under it would ladder up through a non-root, so leave it out.
+		if is.IssueType != "epic" || is.Parent != "" || is.Status == bd.StatusClosed || is.Status == bd.StatusDeferred {
+			continue
+		}
+		opts = append(opts, parentOpt{ID: is.ID, Title: is.Title})
+	}
+	return opts
+}
+
+// handleAttachEpic reparents an orphan story onto an epic — existing or minted
+// inline — then refreshes the list and shows the now-laddered story's drawer. It
+// mints the epic before the reparent so a failure there surfaces before the story
+// is moved, and re-renders the form with bd's message on any failure.
+func (s *Server) handleAttachEpic(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := reqContext(r)
+	defer cancel()
+	src, _, ok := s.source()
+	if !ok {
+		s.renderError(w, errNoRepo)
+		return
+	}
+	form := attachForm{
+		StoryID:   strings.TrimSpace(r.FormValue("story")),
+		Epic:      r.FormValue("epic"),
+		EpicTitle: strings.TrimSpace(r.FormValue("epic_new")),
+	}
+	reject := func(err error) {
+		form.Err = err.Error()
+		form.Epics = candidateEpics(ctx, src)
+		s.render(w, "attachEpic", form)
+	}
+	if form.StoryID == "" {
+		reject(errNoAttachStory)
+		return
+	}
+	epicID, err := s.resolveAttachEpic(ctx, src, &form)
+	if err != nil {
+		reject(err)
+		return
+	}
+	if _, err := src.SetParent(ctx, form.StoryID, epicID); err != nil {
+		reject(err)
+		return
+	}
+	w.Header().Set("HX-Trigger", "refreshList")
+	issue, err := src.Show(ctx, form.StoryID)
+	if err != nil {
+		s.renderError(w, err)
+		return
+	}
+	s.renderDrawer(ctx, w, src, issue, nil)
+}
+
+// resolveAttachEpic turns the picker choice into the epic id the reparent targets.
+// The inline path mints a new epic and returns its id; an existing choice is taken
+// as the epic id; an empty choice is rejected (no accidental no-op move).
+func (s *Server) resolveAttachEpic(ctx context.Context, src IssueSource, form *attachForm) (string, error) {
+	switch form.Epic {
+	case attachNew:
+		if form.EpicTitle == "" {
+			return "", errNoEpicChoice
+		}
+		epic, err := src.Create(ctx, &bd.CreateOpts{Title: form.EpicTitle, Type: "epic"})
+		if err != nil {
+			return "", err
+		}
+		if epic == nil {
+			return "", errNoEpicChoice
+		}
+		return epic.ID, nil
+	case "":
+		return "", errNoEpicChoice
+	default:
+		return form.Epic, nil
+	}
+}
+
 // handleDeletePreview runs bd's bare delete — the free confirm step (O5). It
 // shows what would be removed and a button to commit the deletion; nothing is
 // destroyed yet.
@@ -1581,6 +1720,14 @@ func (c *cachingSource) Close(ctx context.Context, id, reason string) (*bd.Issue
 
 func (c *cachingSource) SetRank(ctx context.Context, id string, rank float64) (*bd.Issue, error) {
 	iss, err := c.IssueSource.SetRank(ctx, id, rank)
+	if err == nil {
+		c.cache.invalidate(c.repo)
+	}
+	return iss, err
+}
+
+func (c *cachingSource) SetParent(ctx context.Context, id, parent string) (*bd.Issue, error) {
+	iss, err := c.IssueSource.SetParent(ctx, id, parent)
 	if err == nil {
 		c.cache.invalidate(c.repo)
 	}
