@@ -2,7 +2,7 @@
 
 *One screen. The recenter the dispatch SR reads verbatim. Drift-check, not a spec.*
 
-**strand renders the forest, not the catalog.** It shows synthesis — where the mass,
+**strand renders synthesis, not the catalog.** It shows where the mass,
 the bugs, the stuck work sit — so a human can orient → decide → shape.
 
 ## The line
