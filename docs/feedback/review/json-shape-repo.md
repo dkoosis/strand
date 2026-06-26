@@ -28,14 +28,14 @@ schema drift into a hard parse error for every record in the batch. The
 tolerance the rest of the struct is built for does not extend to the time
 fields.
 
-**Evidence.** `/Users/vcto/Projects/strand/internal/bd/client.go:64-65`:
+**Evidence.** `internal/bd/client.go:64-65`:
 
 ```go
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 ```
 
-and `/Users/vcto/Projects/strand/internal/bd/client.go:87`:
+and `internal/bd/client.go:87`:
 
 ```go
 	CreatedAt time.Time `json:"created_at"`
@@ -66,7 +66,7 @@ decoration on a decode-only struct, not a guard.
 re-encode to silently drop fields a reader might need (cleared-vs-absent). Today
 nothing re-encodes `Issue`, so the risk is latent, not live.
 
-**Evidence.** `/Users/vcto/Projects/strand/internal/bd/client.go:59-63`:
+**Evidence.** `internal/bd/client.go:59-63`:
 
 ```go
 	Parent          string    `json:"parent,omitempty"`
