@@ -135,13 +135,14 @@
 <div class="insights">
   <div class="ipanel wide">
     <div class="ip-head">Shape of the work</div>
-    <div class="shape-line"><b class="tnum">{{.Counts.Total}}</b> open{{if .Counts.Blocked}} · <span class="sh-b">{{.Counts.Blocked}} blocked</span>{{end}}{{if .Counts.Ready}} · <span class="sh-r">{{.Counts.Ready}} ready</span>{{end}}{{if .Counts.Stale}} · <span class="sh-s">{{.Counts.Stale}} stale</span>{{end}}</div>
-    <div class="shapebar" role="img" aria-label="{{.Counts.Blocked}} blocked, {{.Counts.InProgress}} in progress, {{.Counts.Ready}} ready">
+    <div class="shape-line"><b class="tnum">{{.Counts.Total}}</b> open{{if .Counts.Blocked}} · <span class="sh-b">{{.Counts.Blocked}} blocked</span>{{end}}{{if .Counts.Ready}} · <span class="sh-r">{{.Counts.Ready}} ready</span>{{end}}{{if .Counts.WaitingOnYou}} · <span class="sh-w">{{.Counts.WaitingOnYou}} waiting</span>{{end}}{{if .Counts.Stale}} · <span class="sh-s">{{.Counts.Stale}} stale</span>{{end}}</div>
+    <div class="shapebar" role="img" aria-label="{{.Counts.Blocked}} blocked, {{.Counts.InProgress}} in progress, {{.Counts.Ready}} ready, {{.Counts.WaitingOnYou}} waiting on you">
       {{if .Counts.Blocked}}<span class="seg seg-b" style="flex:{{.Counts.Blocked}}">{{.Counts.Blocked}}</span>{{end}}
       {{if .Counts.InProgress}}<span class="seg seg-p" style="flex:{{.Counts.InProgress}}">{{.Counts.InProgress}}</span>{{end}}
       {{if .Counts.Ready}}<span class="seg seg-r" style="flex:{{.Counts.Ready}}">{{.Counts.Ready}}</span>{{end}}
+      {{if .Counts.WaitingOnYou}}<span class="seg seg-w" style="flex:{{.Counts.WaitingOnYou}}">{{.Counts.WaitingOnYou}}</span>{{end}}
     </div>
-    <div class="shape-legend"><span><i class="sw seg-b"></i>blocked</span><span><i class="sw seg-p"></i>in progress</span><span><i class="sw seg-r"></i>ready</span></div>
+    <div class="shape-legend"><span><i class="sw seg-b"></i>blocked</span><span><i class="sw seg-p"></i>in progress</span><span><i class="sw seg-r"></i>ready</span><span><i class="sw seg-w"></i>waiting on you</span></div>
   </div>
 
   <div class="ipanel wide">
@@ -165,6 +166,39 @@
     </ul>
     {{else}}<p class="ip-empty">No ready beads — the queue is clear.</p>{{end}}
   </div>
+
+  {{/* Waiting on you: beads parked on a human, kept out of the ready queue so the
+       "ready" count means genuinely-claimable work. Sub-grouped decision (label
+       "human") vs review (review_needed) — bdx's two dk-facing queues (str-xdy). */}}
+  {{if .WaitingOnYou.Any}}
+  <div class="ipanel wide waiting-panel">
+    <div class="ip-head">Waiting on you <span class="ip-sub">parked on a human — not in the ready queue</span></div>
+    {{if .WaitingOnYou.Decision}}
+    <div class="woy-group">
+      <div class="woy-label woy-decision">Decision <span class="woy-ct tnum">{{len .WaitingOnYou.Decision}}</span></div>
+      <ul class="woy">
+        {{range .WaitingOnYou.Decision}}
+        <li class="woy-item" role="button" tabindex="0" hx-get="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']">
+          <span class="woy-title">{{.Title}}</span><span class="lb-id mono">{{shortID .ID}}</span>
+        </li>
+        {{end}}
+      </ul>
+    </div>
+    {{end}}
+    {{if .WaitingOnYou.Review}}
+    <div class="woy-group">
+      <div class="woy-label woy-review">Review <span class="woy-ct tnum">{{len .WaitingOnYou.Review}}</span></div>
+      <ul class="woy">
+        {{range .WaitingOnYou.Review}}
+        <li class="woy-item" role="button" tabindex="0" hx-get="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']">
+          <span class="woy-title">{{.Title}}</span><span class="lb-id mono">{{shortID .ID}}</span>
+        </li>
+        {{end}}
+      </ul>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
 
   {{if .Influence}}
   <div class="ipanel">

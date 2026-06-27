@@ -313,6 +313,141 @@ func TestComputeNoEdgesSkipsLeaderboards(t *testing.T) {
 	}
 }
 
+// --- str-xdy: "Waiting on you" lane fixtures + tests ---
+
+// gateScope returns three open beads — a plain one, a decision bead (label
+// "human"), and a review bead (metadata.review_needed=="true") — plus the issue
+// index that carries the labels/metadata strand.Bead drops. It is the minimal
+// fixture for the human-gate split: the queue helpers iterate the beads; the gate
+// classification reads idx.
+func gateScope() ([]strand.Bead, map[string]bd.Issue) {
+	issues := []bd.Issue{
+		{ID: "plain", Status: bd.StatusOpen, UpdatedAt: insFresh},
+		{ID: "decision", Status: bd.StatusOpen, Labels: []string{"human"}, UpdatedAt: insFresh},
+		{ID: "review", Status: bd.StatusOpen, Metadata: map[string]any{"review_needed": "true"}, UpdatedAt: insFresh},
+	}
+	beads := []strand.Bead{
+		{ID: "plain", Status: bd.StatusOpen},
+		{ID: "decision", Status: bd.StatusOpen},
+		{ID: "review", Status: bd.StatusOpen},
+	}
+	return beads, indexIssues(issues)
+}
+
+func rankedIDs(rs []RankedBead) []string {
+	out := make([]string, len(rs))
+	for i := range rs {
+		out[i] = rs[i].ID
+	}
+	return out
+}
+
+func beadIDs(bs []strand.Bead) []string {
+	out := make([]string, len(bs))
+	for i := range bs {
+		out[i] = bs[i].ID
+	}
+	return out
+}
+
+// TestHumanGate pins the classifier: a "human" label is a decision, a string
+// "true" (or bool true) review_needed is a review, and a bead carrying both is a
+// decision (the stronger "needs a human call" signal) so the lane never double-counts.
+func TestHumanGate(t *testing.T) {
+	cases := []struct {
+		name                     string
+		iss                      bd.Issue
+		wantDecision, wantReview bool
+	}{
+		{"plain", bd.Issue{ID: "a"}, false, false},
+		{"label human", bd.Issue{Labels: []string{"core", "human"}}, true, false},
+		{"review string true", bd.Issue{Metadata: map[string]any{"review_needed": "true"}}, false, true},
+		{"review bool true", bd.Issue{Metadata: map[string]any{"review_needed": true}}, false, true},
+		{"review false", bd.Issue{Metadata: map[string]any{"review_needed": "false"}}, false, false},
+		{"both decision wins", bd.Issue{Labels: []string{"human"}, Metadata: map[string]any{"review_needed": "true"}}, true, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d, r := humanGate(&c.iss)
+			if d != c.wantDecision || r != c.wantReview {
+				t.Errorf("humanGate = (%v,%v), want (%v,%v)", d, r, c.wantDecision, c.wantReview)
+			}
+		})
+	}
+}
+
+// TestReadyQueueExcludesHumanGated: a human-gated bead (decision or review) is not
+// genuinely claimable, so it must not appear in the dispatch queue; the plain bead does.
+func TestReadyQueueExcludesHumanGated(t *testing.T) {
+	beads, idx := gateScope()
+	q := readyQueue(beads, blockerCounts(nil, idx), idx, map[string]float64{}, nil, nil, insightsNow)
+	if got := rankedIDs(q); !slices.Equal(got, []string{"plain"}) {
+		t.Errorf("ready queue = %v, want [plain] (human-gated excluded)", got)
+	}
+}
+
+// TestWaitingLane: the lane surfaces the excluded beads, sub-grouped decision-vs-review.
+func TestWaitingLane(t *testing.T) {
+	beads, idx := gateScope()
+	w := waitingLane(beads, nil, idx)
+	if got := beadIDs(w.Decision); !slices.Equal(got, []string{"decision"}) {
+		t.Errorf("waiting.Decision = %v, want [decision]", got)
+	}
+	if got := beadIDs(w.Review); !slices.Equal(got, []string{"review"}) {
+		t.Errorf("waiting.Review = %v, want [review]", got)
+	}
+	if !w.Any() {
+		t.Error("waitingLane.Any() = false, want true when beads are parked")
+	}
+}
+
+// TestBlockedHumanGatedStaysBlocked: a bead that is BOTH blocked and human-gated is
+// not yet waiting on the human — the dependency must clear first. Blockers are checked
+// before the human-gate, so it counts as Blocked (not WaitingOnYou) and stays out of
+// the waiting lane, matching readyQueue, which already excludes it as blocked (codex P2).
+func TestBlockedHumanGatedStaysBlocked(t *testing.T) {
+	beads := []strand.Bead{{ID: "bg", Status: bd.StatusOpen}}
+	idx := map[string]bd.Issue{"bg": {ID: "bg", Status: bd.StatusOpen, Labels: []string{"human"}}}
+	openBlockers := map[string]int{"bg": 1}
+
+	if c := triage(beads, openBlockers, idx, insightsNow); c.Blocked != 1 || c.WaitingOnYou != 0 || c.Ready != 0 {
+		t.Errorf("triage = %+v, want Blocked=1 WaitingOnYou=0 Ready=0", c)
+	}
+	if w := waitingLane(beads, openBlockers, idx); w.Any() {
+		t.Errorf("waitingLane surfaced a blocked bead: %+v", w)
+	}
+}
+
+// TestTriageDivertsToWaiting: an open, unblocked human-gated bead leaves the Ready
+// count and lands in WaitingOnYou instead — the ready column means claimable work.
+func TestTriageDivertsToWaiting(t *testing.T) {
+	beads, idx := gateScope()
+	got := triage(beads, blockerCounts(nil, idx), idx, insightsNow)
+	if got.Ready != 1 || got.WaitingOnYou != 2 {
+		t.Errorf("triage Ready=%d WaitingOnYou=%d, want 1/2", got.Ready, got.WaitingOnYou)
+	}
+}
+
+// TestComputeSurfacesWaitingLane drives the public seam: human-gated beads are kept
+// out of the ready queue and surfaced in the waiting lane, with the count to match.
+func TestComputeSurfacesWaitingLane(t *testing.T) {
+	beads, idx := gateScope()
+	issues := make([]bd.Issue, 0, len(idx))
+	for _, v := range idx {
+		issues = append(issues, v)
+	}
+	got := Compute(beads, issues, nil, insightsNow)
+	if ids := rankedIDs(got.Ready); slices.Contains(ids, "decision") || slices.Contains(ids, "review") {
+		t.Errorf("Compute ready leaked a human-gated bead: %v", ids)
+	}
+	if len(got.WaitingOnYou.Decision) != 1 || len(got.WaitingOnYou.Review) != 1 {
+		t.Errorf("Compute waiting lane = %+v, want 1 decision + 1 review", got.WaitingOnYou)
+	}
+	if got.Counts.WaitingOnYou != 2 {
+		t.Errorf("Compute WaitingOnYou count = %d, want 2", got.Counts.WaitingOnYou)
+	}
+}
+
 // TestActionableDropsEpics confirms the scope-narrowing the server does before Compute:
 // epic containers are not actionable work and must not reach the dashboard math.
 func TestActionableDropsEpics(t *testing.T) {
