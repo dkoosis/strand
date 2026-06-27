@@ -159,7 +159,9 @@ func Compute(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge, now time
 	out.Ready = readyQueue(beads, openBlockers, idx, m.PageRank, frees, down, now)
 	// The "Waiting on you" lane: the human-gated beads readyQueue just excluded,
 	// grouped decision-vs-review so the parked work has a distinct home (str-xdy).
-	out.WaitingOnYou = waitingLane(beads, idx)
+	// Shares openBlockers so a blocked+gated bead stays out of the lane — it's blocked,
+	// not yet waiting on the human (codex P2).
+	out.WaitingOnYou = waitingLane(beads, openBlockers, idx)
 	// The leaderboards rank by graph position; with no dependencies every bead ties
 	// at PageRank's base rank, so a ranking would be noise. Show them only with edges.
 	// crossFlag marks the rows that ALSO sit in the blocked/stale sets — the act-now signal.
@@ -242,12 +244,15 @@ func triage(beads []strand.Bead, openBlockers map[string]int, idx map[string]bd.
 			c.Open++
 			iss := idx[b.ID]
 			switch {
+			case openBlockers[b.ID] > 0:
+				// Blocked beats the human-gate: a dependency must clear before the
+				// human can act, so a blocked+gated bead is Blocked, not waiting — the
+				// same precedence readyQueue already applies (blocker check first).
+				c.Blocked++
 			case isHumanGated(&iss):
 				// Parked on a human (decision/review) — not claimable, so it leaves
 				// the Ready count and joins the "Waiting on you" lane (str-xdy).
 				c.WaitingOnYou++
-			case openBlockers[b.ID] > 0:
-				c.Blocked++
 			default:
 				c.Ready++
 			}
@@ -382,10 +387,12 @@ func readyQueue(beads []strand.Bead, openBlockers map[string]int, idx map[string
 // open beads are considered — the same live, not-yet-claimed work the ready view
 // reasons about; closed/deferred work has already left the strand. Order follows the
 // scope's bead order (priority-then-id, as the strand sorts), so the lane reads stably.
-func waitingLane(beads []strand.Bead, idx map[string]bd.Issue) Waiting {
+// A bead with an unmet blocker is left out — it's blocked, not yet waiting on the
+// human (the dependency must clear first), matching readyQueue's precedence (codex P2).
+func waitingLane(beads []strand.Bead, openBlockers map[string]int, idx map[string]bd.Issue) Waiting {
 	var w Waiting
 	for i := range beads {
-		if beads[i].Status != bd.StatusOpen {
+		if beads[i].Status != bd.StatusOpen || openBlockers[beads[i].ID] > 0 {
 			continue
 		}
 		iss := idx[beads[i].ID]

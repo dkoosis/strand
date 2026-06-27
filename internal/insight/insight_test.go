@@ -389,7 +389,7 @@ func TestReadyQueueExcludesHumanGated(t *testing.T) {
 // TestWaitingLane: the lane surfaces the excluded beads, sub-grouped decision-vs-review.
 func TestWaitingLane(t *testing.T) {
 	beads, idx := gateScope()
-	w := waitingLane(beads, idx)
+	w := waitingLane(beads, nil, idx)
 	if got := beadIDs(w.Decision); !slices.Equal(got, []string{"decision"}) {
 		t.Errorf("waiting.Decision = %v, want [decision]", got)
 	}
@@ -398,6 +398,23 @@ func TestWaitingLane(t *testing.T) {
 	}
 	if !w.Any() {
 		t.Error("waitingLane.Any() = false, want true when beads are parked")
+	}
+}
+
+// TestBlockedHumanGatedStaysBlocked: a bead that is BOTH blocked and human-gated is
+// not yet waiting on the human — the dependency must clear first. Blockers are checked
+// before the human-gate, so it counts as Blocked (not WaitingOnYou) and stays out of
+// the waiting lane, matching readyQueue, which already excludes it as blocked (codex P2).
+func TestBlockedHumanGatedStaysBlocked(t *testing.T) {
+	beads := []strand.Bead{{ID: "bg", Status: bd.StatusOpen}}
+	idx := map[string]bd.Issue{"bg": {ID: "bg", Status: bd.StatusOpen, Labels: []string{"human"}}}
+	openBlockers := map[string]int{"bg": 1}
+
+	if c := triage(beads, openBlockers, idx, insightsNow); c.Blocked != 1 || c.WaitingOnYou != 0 || c.Ready != 0 {
+		t.Errorf("triage = %+v, want Blocked=1 WaitingOnYou=0 Ready=0", c)
+	}
+	if w := waitingLane(beads, openBlockers, idx); w.Any() {
+		t.Errorf("waitingLane surfaced a blocked bead: %+v", w)
 	}
 }
 
