@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}</script>
 <title>strand</title>
+<link rel="icon" href="/static/icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="/static/icons/icon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.bunny.net">
 <link href="https://fonts.bunny.net/css?family=geist:400,500,600,700|geist-mono:400,500" rel="stylesheet">
 <link rel="stylesheet" href="/static/app.css">
@@ -14,7 +17,7 @@
 </head>
 <body>
 <header>
-  <span class="brand">strand</span>
+  <span class="brand"><img class="brand-mark" src="/static/icons/logo.png" alt="" width="22" height="22">strand</span>
   <div class="repo-wrap">
     <button class="repo" type="button" hx-get="/repos" hx-target="#repoMenu" hx-swap="innerHTML">
       <span>{{.Repos.ActiveName}}</span><span class="caret">▾</span>
