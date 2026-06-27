@@ -143,8 +143,32 @@ header {
   font-size: var(--fs-3); font-weight: 600; line-height: 1.25; letter-spacing: -.012em;
   max-width: 78ch; color: var(--ink); white-space: pre-line;
 }
-.ns-meta { margin-left: auto; display: flex; gap: var(--s-7); color: var(--ink-3); font-size: var(--fs-8); white-space: nowrap; }
+.ns-meta { margin-left: auto; display: flex; align-items: center; gap: var(--s-6); color: var(--ink-3); font-size: var(--fs-8); white-space: nowrap; }
 .ns-meta b { color: var(--ink); font-weight: 600; }
+
+/* bead-status pulse — the status line's glyph spread, mirrored and clickable.
+   Glyph colors track the board's status palette; counts use the ink ramp so the
+   number leads and the glyph tints it. */
+.pulse { display: flex; align-items: center; gap: var(--s-1); }
+.pcell {
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  padding: var(--s-2) var(--s-3); border: 0; border-radius: 5px;
+  background: none; color: var(--ink-3); font: inherit; font-size: var(--fs-8);
+  line-height: 1; cursor: pointer; transition: background .1s ease;
+}
+.pcell .pg { font-size: var(--fs-2); line-height: 1; }
+.pcell b { color: var(--ink); font-weight: 600; }
+.pcell:hover:not(:disabled) { background: var(--bg-2); }
+.pcell:disabled { cursor: default; opacity: .4; }
+.pcell:disabled b { color: var(--ink-3); font-weight: 500; }
+.pcell.on { background: var(--sel); }
+.pcell:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.pc-wait     .pg { color: var(--st-wait); }
+.pc-open     .pg { color: var(--st-open); }
+.pc-prog     .pg { color: var(--st-prog); }
+.pc-blocked  .pg { color: var(--st-blocked); }
+.pc-closed   .pg { color: var(--st-closed); }
+.pc-deferred .pg { color: var(--st-deferred); }
 
 /* ============================================================ view-centric layout
    The active VIEW is the centerpiece (full-width center); the map is demoted to

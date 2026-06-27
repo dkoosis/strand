@@ -81,11 +81,15 @@ function activeStory() {
 function activeEpic() {
   return viewport?.dataset.epic || "";
 }
-// activeFilter reads the cross-strand scope filter ("" = everything, "bugs"). It
-// is orthogonal to the story scope and overrides it: a filter is a whole-strand cut.
+// activeFilter reads the cross-strand scope filter ("" = everything, "bugs", or a
+// masthead-pulse status cut). It is orthogonal to the story scope and overrides
+// it: a filter is a whole-strand cut.
 function activeFilter() {
   return viewport?.dataset.filter || "";
 }
+// PULSE_FILTERS are the masthead status cuts. They live only in the Table, so a
+// switch to Board/Insights drops them (those views render the whole strand).
+const PULSE_FILTERS = new Set(["waiting", "open", "in_progress", "blocked", "closed", "deferred"]);
 // viewURL builds the fragment endpoint for a view at the current scope. Precedence
 // matches the server's listViewFor: a filter (bugs) is a whole-strand cut and wins,
 // then one story, then one epic; with none, the bare view is the whole strand
@@ -127,6 +131,11 @@ function syncChrome() {
   }
   const clear = document.getElementById("mmClear");
   if (clear) clear.hidden = !story && !epic && !filter;
+  // A pulse cell lights only while its cut is the live Table filter.
+  const pulseOn = view === "list" && PULSE_FILTERS.has(filter);
+  document.querySelectorAll(".pcell").forEach((c) => {
+    c.classList.toggle("on", pulseOn && c.dataset.filter === filter);
+  });
   // The active story's cell lights up; an epic scope (or the epic owning the
   // active story) lights the whole epic's border in its legend color (--rc) so
   // the swatch and the map agree.
@@ -151,9 +160,24 @@ document.body.addEventListener("htmx:configRequest", (e) => {
     e.detail.path = viewURL(activeView(), activeStory(), activeEpic(), activeFilter());
     return;
   }
+  // A masthead pulse cell loads its status cut into the Table: commit the filter
+  // (and force the list view) up front, since afterSwap can't recover it from the
+  // server-rendered pane-head, then rewrite the path onto the cut.
+  const pcell = e.detail.elt.closest?.(".pcell");
+  if (pcell && pcell.dataset.filter) {
+    viewport.dataset.story = "";
+    viewport.dataset.epic = "";
+    viewport.dataset.filter = pcell.dataset.filter;
+    viewport.dataset.view = "list";
+    e.detail.path = viewURL("list", "", "", pcell.dataset.filter);
+    return;
+  }
   const tab = e.detail.elt.closest?.(".viewtab");
   if (tab) {
-    e.detail.path = viewURL(tab.dataset.view, activeStory(), activeEpic(), activeFilter());
+    // A pulse cut is Table-only; switching views drops it back to the whole strand.
+    const filter = PULSE_FILTERS.has(activeFilter()) ? "" : activeFilter();
+    if (!filter) viewport.dataset.filter = "";
+    e.detail.path = viewURL(tab.dataset.view, activeStory(), activeEpic(), filter);
     return;
   }
   const chip = e.detail.elt.closest?.(".scopetab");
@@ -235,6 +259,11 @@ document.addEventListener("keydown", (e) => {
 // emits its epic key only for a genuine epic scope (HasEpic) — empty for a story,
 // "everything", or bugs — so this clears the scope when the new fragment isn't one.
 document.body.addEventListener("htmx:afterSwap", (e) => {
+  // A refreshed pulse bar carries new buttons — re-apply the active-cut highlight.
+  if (e.detail.target.id === "pulseBar") {
+    syncChrome();
+    return;
+  }
   if (e.detail.target.id !== "listPane") return;
   const head = e.detail.target.querySelector(".pane-head[data-view]");
   if (head) {

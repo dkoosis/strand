@@ -60,6 +60,7 @@ const (
 // repo is resolved per request through a SourceFunc the command wires.
 type IssueSource interface {
 	List(ctx context.Context, args ...string) ([]bd.Issue, error)
+	Stats(ctx context.Context) (bd.Stats, error)
 	Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, error)
 	Show(ctx context.Context, id string) (*bd.Issue, error)
 	Comments(ctx context.Context, id string) ([]bd.Comment, error)
@@ -165,6 +166,7 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleHome)
 	mux.HandleFunc("GET /list", s.handleList)
+	mux.HandleFunc("GET /pulse", s.handlePulse)
 	mux.HandleFunc("GET /board", s.handleBoard)
 	mux.HandleFunc("GET /insights", s.handleInsights)
 	mux.HandleFunc("GET /bead/{id}", s.handleBead)
@@ -290,6 +292,12 @@ type listView struct {
 	// Precomputed here because BeadID is a pointer method the template can't call on
 	// the non-addressable Epic value.
 	EpicBeadID string
+	// Flat marks a masthead-pulse status cut: a flat, repo-wide bead list with no
+	// epic/story structure (the beads come straight from a status fetch). The list
+	// template renders FlatTitle as the head and Story.Beads as one table — no
+	// breadcrumb, no per-story groups. Story.Open carries the count.
+	Flat      bool
+	FlatTitle string
 }
 
 // pageData is the full landing render: the strand, the list pane, and the repo
@@ -298,9 +306,50 @@ type listView struct {
 type pageData struct {
 	Strand strand.Model
 	List   listView
+	Pulse  Pulse
 	Repos  repoMenu
 	Empty  bool
 	AsOf   string // "data as of HH:MM" for the refresh readout; empty when no snapshot
+}
+
+// Pulse is the masthead's repo-wide bead-status spread — the bead half of the
+// Claude Code status line, mirrored into the page. Each field is a glyph cell:
+// ◆ Waiting, ○ Open, ◐ InProgress, ● Blocked, ✓ Closed, ❄ Deferred. The status
+// counts come from `bd stats` (the same source the status line uses); Waiting is
+// the human-gated count the strand drops. A nonzero cell is a click-to-list
+// filter (handleList's pulse cuts).
+type Pulse struct {
+	Waiting, Open, InProgress, Blocked, Closed, Deferred int
+}
+
+// computePulse builds the masthead spread for the active repo. The five status
+// counts come from one `bd stats` call (closed/deferred are invisible to `bd
+// list`); Waiting is read off the cached open snapshot so it costs no extra
+// spawn. A failed stats read degrades to zero status counts rather than failing
+// the whole page — the pulse is ambient, not load-bearing.
+func (s *Server) computePulse(ctx context.Context, src IssueSource) Pulse {
+	var p Pulse
+	if st, err := src.Stats(ctx); err == nil {
+		p.Open, p.InProgress, p.Blocked = st.Open, st.InProgress, st.Blocked
+		p.Closed, p.Deferred = st.Closed, st.Deferred
+	}
+	if issues, err := src.List(ctx, allIssues...); err == nil {
+		p.Waiting = insight.WaitingCount(issues)
+		// ○ and ◆ are disjoint lanes: ○ is open work the agent can act on, ◆ is
+		// open work parked on dk. Subtract the open beads ◆ already counts so a
+		// parked bead lands in one lane, not both. Only open-status gated beads come
+		// out of ○ — an in-progress review sits in ◐+◆, never in the open count.
+		parked := 0
+		for i := range issues {
+			if issues[i].Status == bd.StatusOpen && insight.IsHumanGated(&issues[i]) {
+				parked++
+			}
+		}
+		if p.Open -= parked; p.Open < 0 {
+			p.Open = 0
+		}
+	}
+	return p
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -331,9 +380,23 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "page", pageData{
 		Strand: f,
 		List:   listViewFor(f, "", "", ""),
+		Pulse:  s.computePulse(ctx, src),
 		Repos:  s.repoMenu(""),
 		AsOf:   s.asOf(repo),
 	})
+}
+
+// handlePulse re-renders just the masthead spread. The page wires it to the
+// refreshList event so an in-app create/edit/close keeps the counts honest
+// without a full reload; with no active repo it renders nothing.
+func (s *Server) handlePulse(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := reqContext(r)
+	defer cancel()
+	src, _, ok := s.source()
+	if !ok {
+		return
+	}
+	s.render(w, "pulse", s.computePulse(ctx, src))
 }
 
 // handleRefresh drops the active repo's snapshot and tells htmx to reload the
@@ -368,14 +431,100 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "list", listView{})
 		return
 	}
+	// A masthead-pulse cut (filter=open|in_progress|blocked|closed|deferred|waiting)
+	// is a repo-wide status slice, not a strand scope — it can include closed and
+	// deferred beads the strand drops, so it renders from its own fetch, before the
+	// strand is built.
+	q := r.URL.Query()
+	if cut, ok := pulseCutFor(q.Get("filter")); ok {
+		view, err := s.pulseListView(ctx, src, repo, cut)
+		if err != nil {
+			s.renderError(w, err)
+			return
+		}
+		s.render(w, "list", view)
+		return
+	}
 	f, err := s.buildStrand(ctx, src, repo)
 	if err != nil {
 		s.renderError(w, err)
 		return
 	}
 	// story=<id> narrows the pane to a single story; absent means the whole epic.
-	q := r.URL.Query()
 	s.render(w, "list", listViewFor(f, q.Get("story"), q.Get("epic"), q.Get("filter")))
+}
+
+// pulseCut is one masthead-pulse drill-down: the pane title and the predicate
+// selecting its beads. external marks the cuts whose beads live outside the live
+// snapshot (closed/deferred) — they need an uncached `--status` fetch because the
+// cachingSource serves only the open-list snapshot and the strand drops them.
+type pulseCut struct {
+	title    string
+	status   bd.Status // the --status to fetch for an external cut; "" for live cuts
+	external bool
+	match    func(*bd.Issue) bool
+}
+
+// pulseCutFor maps a filter token to its cut, or reports false for any other
+// filter (so "bugs" and the empty/scope filters fall through to listViewFor).
+func pulseCutFor(filter string) (pulseCut, bool) {
+	statusIs := func(st bd.Status) func(*bd.Issue) bool {
+		return func(i *bd.Issue) bool { return i.Status == st }
+	}
+	switch filter {
+	case "waiting":
+		return pulseCut{title: "Waiting on you", match: func(i *bd.Issue) bool {
+			return i.Status != bd.StatusClosed && i.Status != bd.StatusDeferred && insight.IsHumanGated(i)
+		}}, true
+	case "open":
+		// ○ lists open work the agent can act on — open beads parked on dk live in
+		// the ◆ cut, not here (keeps the two lanes disjoint, matching the counts).
+		return pulseCut{title: "Open", match: func(i *bd.Issue) bool {
+			return i.Status == bd.StatusOpen && !insight.IsHumanGated(i)
+		}}, true
+	case "in_progress":
+		return pulseCut{title: "In progress", match: statusIs(bd.StatusInProgress)}, true
+	case "blocked":
+		return pulseCut{title: "Blocked", match: statusIs(bd.StatusBlocked)}, true
+	case "closed":
+		return pulseCut{title: "Closed", status: bd.StatusClosed, external: true, match: statusIs(bd.StatusClosed)}, true
+	case "deferred":
+		return pulseCut{title: "Deferred", status: bd.StatusDeferred, external: true, match: statusIs(bd.StatusDeferred)}, true
+	}
+	return pulseCut{}, false
+}
+
+// pulseListView gathers a status cut's beads into a flat list scope. Live cuts
+// (and waiting) read the cached open snapshot; an external cut fetches its status
+// straight from bd, bypassing the cache (which serves only the open list). The
+// match predicate is applied in both cases, so the cut is correct even when the
+// source returns an unfiltered list.
+func (s *Server) pulseListView(ctx context.Context, src IssueSource, repo registry.Repo, cut pulseCut) (listView, error) {
+	var (
+		issues []bd.Issue
+		err    error
+	)
+	if cut.external {
+		issues, err = s.srcFor(repo).List(ctx, "--status", string(cut.status), "--limit", "0")
+	} else {
+		issues, err = src.List(ctx, allIssues...)
+	}
+	if err != nil {
+		return listView{}, err
+	}
+	var beads []strand.Bead
+	for i := range issues {
+		if cut.match(&issues[i]) {
+			beads = append(beads, strand.NewBead(&issues[i]))
+		}
+	}
+	slices.SortStableFunc(beads, func(a, b strand.Bead) int {
+		if a.Priority != b.Priority {
+			return cmp.Compare(a.Priority, b.Priority)
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	return listView{Flat: true, FlatTitle: cut.title, Story: strand.Story{Beads: beads, Open: len(beads)}}, nil
 }
 
 // listViewFor builds the bead-list pane from the strand. Scope precedence:

@@ -47,18 +47,25 @@
 </div>
 {{else}}
 
-{{if .Strand.NorthStar}}
 <div class="masthead">
+  {{if .Strand.NorthStar}}
   <div class="ns-left">
     <div class="ns-label">North star</div>
     <div class="northstar">{{.Strand.NorthStar}}</div>
   </div>
+  {{end}}
   <div class="ns-meta">
     <span><b class="tnum">{{len .Strand.Epics}}</b> epic{{if ne (len .Strand.Epics) 1}}s{{end}}</span>
-    <span><b class="tnum">{{.Strand.Open}}</b> open · <b class="tnum">{{.Strand.InProgress}}</b> in progress</span>
+    {{/* Bead-status pulse: the status line's spread, mirrored into the page. /pulse
+         re-renders it on refreshList so an in-app edit keeps the counts honest
+         without a full reload (str-ijy). */}}
+    <div class="pulse" id="pulseBar" role="group"
+         aria-label="Bead status — click a count to list those beads"
+         hx-get="/pulse" hx-trigger="refreshList from:body" hx-swap="innerHTML">
+      {{template "pulse" .Pulse}}
+    </div>
   </div>
 </div>
-{{end}}
 
 <div class="viewport" id="viewport" data-view="list" data-story="">
   <nav class="viewbar" aria-label="View switcher">
