@@ -34,7 +34,7 @@ func TestPulseStripRenders(t *testing.T) {
 		`data-filter="blocked"`, `data-filter="closed"`, `data-filter="deferred"`,
 		"◆", "○", "◐", "●", "✓", "❄",
 		`title="Waiting on you — decisions &amp; reviews: 1"`,
-		`title="Open: 3"`,
+		`title="Open: 2"`, // 3 open beads less the 1 parked on dk (◆); ○ is disjoint from ◆
 		`title="In progress: 1"`,
 		`title="Blocked: 1"`,
 		`title="Closed: 1"`,
@@ -70,6 +70,7 @@ func TestPulseCutsListBeads(t *testing.T) {
 		filter, title, want string
 		absent              []string
 	}{
+		{"open", "Open", "Open task", []string{"Needs a call", "Active task", "Done task"}}, // ◆ bead excluded
 		{"blocked", "Blocked", "Stuck task", []string{"Open task", "Done task", "Active task"}},
 		{"in_progress", "In progress", "Active task", []string{"Stuck task", "Done task"}},
 		{"waiting", "Waiting on you", "Needs a call", []string{"Open task", "Active task"}},

@@ -335,6 +335,19 @@ func (s *Server) computePulse(ctx context.Context, src IssueSource) Pulse {
 	}
 	if issues, err := src.List(ctx, allIssues...); err == nil {
 		p.Waiting = insight.WaitingCount(issues)
+		// ○ and ◆ are disjoint lanes: ○ is open work the agent can act on, ◆ is
+		// open work parked on dk. Subtract the open beads ◆ already counts so a
+		// parked bead lands in one lane, not both. Only open-status gated beads come
+		// out of ○ — an in-progress review sits in ◐+◆, never in the open count.
+		parked := 0
+		for i := range issues {
+			if issues[i].Status == bd.StatusOpen && insight.IsHumanGated(&issues[i]) {
+				parked++
+			}
+		}
+		if p.Open -= parked; p.Open < 0 {
+			p.Open = 0
+		}
 	}
 	return p
 }
@@ -464,7 +477,11 @@ func pulseCutFor(filter string) (pulseCut, bool) {
 			return i.Status != bd.StatusClosed && i.Status != bd.StatusDeferred && insight.IsHumanGated(i)
 		}}, true
 	case "open":
-		return pulseCut{title: "Open", match: statusIs(bd.StatusOpen)}, true
+		// ○ lists open work the agent can act on — open beads parked on dk live in
+		// the ◆ cut, not here (keeps the two lanes disjoint, matching the counts).
+		return pulseCut{title: "Open", match: func(i *bd.Issue) bool {
+			return i.Status == bd.StatusOpen && !insight.IsHumanGated(i)
+		}}, true
 	case "in_progress":
 		return pulseCut{title: "In progress", match: statusIs(bd.StatusInProgress)}, true
 	case "blocked":
