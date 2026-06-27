@@ -103,24 +103,26 @@ from the strand view work.)
 
 **Strand view direction (supersedes the flat-table-first V1 landing).** dk reacted to two
 renderings of the same data — *story-map cards* and a *map landscape* — and picked a
-**fusion**: **sized story-cards.** Each story is a card (title + one-line gloss + roll-up
-progress + momentum), but **laid out and scaled by weight** like a map, so size and
-position signal where work and heat are *before* a word is read. The flat tabular list (the
-old V1) becomes the **drill-in** when the human expands a story to check that it ladders up,
-not the default surface.
+**fusion**: **sized cards laid out as a map.** The zoomed-out top surface is **epic-cards**;
+within each epic its **stories are tiles** (title + one-line gloss + roll-up progress +
+momentum), **laid out and scaled by weight** like a map, so size and position signal where
+work and heat are *before* a word is read. The flat tabular list (the old V1) becomes the
+**drill-in** when the human expands an epic to its stories, or a story to check that its
+tasks ladder up — not the default surface.
 
 #### Scenarios — re-derived from the human-at-the-top seat
 *(These replace the IC-at-the-bottom scenarios — "where do I start," "claim a task" — which
 described agent/IC work, not dk's.)*
 
-- **Read the top** — open strand → see *all stories as a legible strand* (sized cards),
-  not N tasks. Zoom-out is the default, not zoom-in.
-- **Story integrity** — does each epic read as a real user story against the north star?
-  Surface the buckets-masquerading-as-stories.
-- **Does it ladder up?** — expand a story → do its tasks trace back to it? Surface drift
-  (work not serving the story) and thin stories (story with no work, or work with no story).
-- **Shape** — rename / split / merge stories, promote a task to its own story, re-parent.
-  The few writes the human actually makes.
+- **Read the top** — open strand → see *all epics as a legible strand* (sized cards, stories
+  tiled within each), not N tasks. Zoom-out is the default, not zoom-in.
+- **Epic integrity** — does each epic serve the north star? Surface the
+  buckets-masquerading-as-epics.
+- **Does it ladder up?** — expand an epic → do its stories trace back to it; expand a story →
+  do its tasks trace back to it? Surface drift (work not serving the story) and thin stories
+  (story with no work, or work with no story).
+- **Shape** — rename / split / merge epics and stories, promote a task to its own story,
+  re-parent. The few writes the human actually makes.
 
 ## 2. Non-goals
 

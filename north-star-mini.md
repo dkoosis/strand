@@ -7,11 +7,11 @@ the bugs, the stuck work sit — so a human can orient → decide → shape.
 
 ## The line
 
-> The human shapes the top. Agents own below the epic line.
+> The human shapes the top. Agents own below the story line.
 
-- **Shape (human):** stories, epics, priority, clarity. The bead drawer is the shaping
+- **Shape (human):** epics, stories, priority, clarity. The bead drawer is the shaping
   surface — Description leads; agent ops (claim/close/delete) stay demoted.
-- **Execute (agents):** tasks and subtasks below the epic line. Their fields
+- **Execute (agents):** tasks below the story line. Their fields
   (rank, requires_test, difficulty, est_cost) are agent/rubric-owned — viewable, not
   stomped from the UI.
 
