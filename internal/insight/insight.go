@@ -113,6 +113,29 @@ func isHumanGated(iss *bd.Issue) bool {
 	return d || r
 }
 
+// IsHumanGated reports whether an issue is parked on a human (a decision or a
+// review). Exported for the masthead pulse's "waiting on you" drill-down, which
+// lists the same beads the per-scope waiting lane surfaces.
+func IsHumanGated(iss *bd.Issue) bool { return isHumanGated(iss) }
+
+// WaitingCount reports how many of the given issues are parked on a human — the
+// masthead pulse's ◆ (and the status line's human segment): a decision (label
+// "human") or a review (review_needed). Closed and deferred issues are excluded;
+// the pulse counts what is in motion.
+func WaitingCount(issues []bd.Issue) int {
+	n := 0
+	for i := range issues {
+		s := issues[i].Status
+		if s == bd.StatusClosed || s == bd.StatusDeferred {
+			continue
+		}
+		if isHumanGated(&issues[i]) {
+			n++
+		}
+	}
+	return n
+}
+
 // reviewNeeded reads metadata.review_needed. bd emits the flag as the string "true";
 // a bool true is tolerated in case a future bd quotes it differently (mirrors the
 // defensive number/string handling in bd.Issue.Rank). Anything else is "not flagged".

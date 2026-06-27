@@ -466,3 +466,22 @@ func TestActionableDropsEpics(t *testing.T) {
 		}
 	}
 }
+
+// TestWaitingCount checks the masthead pulse's ◆ count: open/in-progress beads
+// gated by the "human" label or the review_needed flag, with closed and deferred
+// excluded even when they carry the gate.
+func TestWaitingCount(t *testing.T) {
+	issues := []bd.Issue{
+		{ID: "a", Status: bd.StatusOpen, Labels: []string{"human"}},                               // decision
+		{ID: "b", Status: bd.StatusInProgress, Metadata: map[string]any{"review_needed": "true"}}, // review
+		{ID: "c", Status: bd.StatusOpen},                                                          // claimable
+		{ID: "d", Status: bd.StatusClosed, Labels: []string{"human"}},                             // done — excluded
+		{ID: "e", Status: bd.StatusDeferred, Metadata: map[string]any{"review_needed": "true"}},   // parked — excluded
+	}
+	if got := WaitingCount(issues); got != 2 {
+		t.Errorf("WaitingCount = %d, want 2 (a + b; closed/deferred excluded)", got)
+	}
+	if WaitingCount(nil) != 0 {
+		t.Error("WaitingCount(nil) should be 0")
+	}
+}

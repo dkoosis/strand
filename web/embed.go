@@ -44,6 +44,22 @@ var funcs = template.FuncMap{
 	"metaVal":     metaVal,
 	"rankLabel":   rankLabel,
 	"labelPart":   labelPart,
+	"pulseCell":   pulseCell,
+}
+
+// PulseCell carries one masthead-pulse glyph's render fields. html/template can't
+// pass several positional args to a sub-template, so the pulse template bundles
+// them through this helper (filter token, CSS class, glyph, count, title).
+type PulseCell struct {
+	Filter string
+	Class  string
+	Glyph  string
+	Count  int
+	Title  string
+}
+
+func pulseCell(filter, class, glyph string, count int, title string) PulseCell {
+	return PulseCell{Filter: filter, Class: class, Glyph: glyph, Count: count, Title: title}
 }
 
 // metaVal renders a bd metadata value for display in the read-only system-metadata

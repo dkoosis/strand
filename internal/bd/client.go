@@ -168,6 +168,36 @@ func (c *Client) List(ctx context.Context, args ...string) ([]Issue, error) {
 	return decodeIssues(out)
 }
 
+// Stats mirrors the summary block of `bd stats --json`: the per-status issue
+// counts the masthead pulse renders. Fields bd omits stay zero; extra summary
+// fields bd reports are ignored.
+type Stats struct {
+	Open       int `json:"open_issues"`
+	InProgress int `json:"in_progress_issues"`
+	Blocked    int `json:"blocked_issues"`
+	Closed     int `json:"closed_issues"`
+	Deferred   int `json:"deferred_issues"`
+	Total      int `json:"total_issues"`
+}
+
+// Stats returns the repo's per-status issue counts from `bd stats --json`. It is
+// the one read that sees the closed and deferred totals: `bd list` omits closed
+// and the strand drops both, so the masthead's ✓/❄ cells source their numbers
+// here (the same call the Claude Code status line uses).
+func (c *Client) Stats(ctx context.Context) (Stats, error) {
+	out, err := c.run(ctx, "stats", "--json")
+	if err != nil {
+		return Stats{}, err
+	}
+	var resp struct {
+		Summary Stats `json:"summary"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(out), &resp); err != nil {
+		return Stats{}, fmt.Errorf("parse bd stats: %w", err)
+	}
+	return resp.Summary, nil
+}
+
 // Show returns the full record for one issue ID.
 func (c *Client) Show(ctx context.Context, id string) (*Issue, error) {
 	out, err := c.run(ctx, "show", id, "--json")

@@ -29,8 +29,38 @@
      stay inert text (str-scn). Dot is a listView (or a view embedding it). */}}
 {{define "scopeName"}}{{$name := .Epic.Name}}{{if .HasStory}}{{$name = cleanName .Story.Name}}{{end}}{{if .ScopeID}}<span class="lp-name lp-edit" role="button" tabindex="0" hx-get="/bead/{{.ScopeID}}" hx-target="#drawer" hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']" title="Edit {{if .HasStory}}story{{else}}epic{{end}}">{{$name}}</span>{{else}}<span class="lp-name">{{$name}}</span>{{end}}{{end}}
 
+{{/* pulse renders the masthead bead-status spread — the bead half of the Claude
+     Code status line. Each cell is a glyph + count; a nonzero cell is a button
+     that lists those beads in the Table (handleList's pulse cuts), a zero cell is
+     disabled and dimmed. Dot is a server.Pulse. */}}
+{{define "pulse"}}
+{{template "pcell" (pulseCell "waiting"     "pc-wait"     "◆" .Waiting    "Waiting on you — decisions & reviews")}}
+{{template "pcell" (pulseCell "open"        "pc-open"     "○" .Open       "Open")}}
+{{template "pcell" (pulseCell "in_progress" "pc-prog"     "◐" .InProgress "In progress")}}
+{{template "pcell" (pulseCell "blocked"     "pc-blocked"  "●" .Blocked    "Blocked")}}
+{{template "pcell" (pulseCell "closed"      "pc-closed"   "✓" .Closed     "Closed")}}
+{{template "pcell" (pulseCell "deferred"    "pc-deferred" "❄" .Deferred   "Deferred")}}
+{{end}}
+
+{{define "pcell"}}
+<button class="pcell {{.Class}}" type="button" data-filter="{{.Filter}}"
+        hx-get="/list?filter={{.Filter}}" hx-target="#listPane"
+        title="{{.Title}}: {{.Count}}" aria-label="{{.Title}}: {{.Count}}"{{if not .Count}} disabled{{end}}>
+  <span class="pg" aria-hidden="true">{{.Glyph}}</span><b class="tnum">{{.Count}}</b>
+</button>
+{{end}}
+
 {{define "list"}}
-{{if .Epic.Stories}}
+{{if .Flat}}
+<div class="pane-head" data-view="list" data-story="" data-epic="">
+  <div class="lp-scope"><span class="lp-name">{{.FlatTitle}}</span></div>
+  <div class="lp-stat"><span><b>{{.Story.Open}}</b> bead{{if ne .Story.Open 1}}s{{end}}</span></div>
+</div>
+<div class="list-body">
+  {{if .Story.Beads}}<div class="story-group">{{template "storyRows" .Story}}</div>
+  {{else}}<p class="empty">No beads in this status.</p>{{end}}
+</div>
+{{else if .Epic.Stories}}
 <div class="pane-head" data-view="list" data-story="{{if .HasStory}}{{.Story.ID}}{{end}}" data-epic="{{if .HasEpic}}{{.Epic.Key}}{{end}}">
   <div class="lp-scope">
     <span class="lp-dot" style="background:{{.Epic.Color}}"></span>

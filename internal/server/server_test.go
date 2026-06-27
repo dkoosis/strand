@@ -80,6 +80,31 @@ func (s *stubBD) List(context.Context, ...string) ([]bd.Issue, error) {
 	return s.issues, s.listErr
 }
 
+// Stats derives the per-status spread from the stub's issues, so the masthead
+// pulse renders real counts in tests. listErr doubles as the stats-failure seam.
+func (s *stubBD) Stats(context.Context) (bd.Stats, error) {
+	if s.listErr != nil {
+		return bd.Stats{}, s.listErr
+	}
+	var st bd.Stats
+	for i := range s.issues {
+		st.Total++
+		switch s.issues[i].Status {
+		case bd.StatusOpen:
+			st.Open++
+		case bd.StatusInProgress:
+			st.InProgress++
+		case bd.StatusBlocked:
+			st.Blocked++
+		case bd.StatusClosed:
+			st.Closed++
+		case bd.StatusDeferred:
+			st.Deferred++
+		}
+	}
+	return st, nil
+}
+
 func (s *stubBD) Deps(context.Context, ...string) ([]bd.DepEdge, error) {
 	return s.deps, s.listErr
 }
