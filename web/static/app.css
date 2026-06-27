@@ -15,7 +15,7 @@
   --s-6: 16px; --s-7: 20px; --s-8: 24px; --s-9: 32px; --s-10: 48px;
   --p0: #e5484d; --p1: #d99030; --p2: #4c7ef0; --p3: #7c8290; --p4: #5a606c;
   --st-open: #4c7ef0; --st-prog: #d99030; --st-blocked: #e5484d;
-  --st-closed: #46a758; --st-deferred: #6b7280;
+  --st-closed: #46a758; --st-deferred: #6b7280; --st-wait: #a463d6;
   font-synthesis: none; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
 }
 :root[data-theme="dark"] {
@@ -511,13 +511,14 @@ footer b { color: var(--ink-3); font-weight: 500; }
 /* shape of the work — one proportional status bar */
 .shape-line { font-size: var(--fs-2); color: var(--ink-2); margin-bottom: var(--s-4); }
 .shape-line b { font-size: var(--fs-4); font-weight: 600; color: var(--ink); margin-right: var(--s-1); }
-.shape-line .sh-b { color: var(--st-blocked); } .shape-line .sh-r { color: var(--st-open); } .shape-line .sh-s { color: var(--st-prog); }
+.shape-line .sh-b { color: var(--st-blocked); } .shape-line .sh-r { color: var(--st-open); } .shape-line .sh-s { color: var(--st-prog); } .shape-line .sh-w { color: var(--st-wait); }
 .shapebar { display: flex; gap: 2px; height: 26px; }
 .seg { display: flex; align-items: center; justify-content: center; min-width: 16px;
   font-size: var(--fs-9); font-weight: 600; font-variant-numeric: tabular-nums; }
 .seg-b { background: color-mix(in srgb, var(--st-blocked) 20%, var(--card)); color: var(--st-blocked); }
 .seg-p { background: color-mix(in srgb, var(--st-prog) 22%, var(--card)); color: var(--st-prog); }
 .seg-r { background: color-mix(in srgb, var(--st-open) 20%, var(--card)); color: var(--st-open); }
+.seg-w { background: color-mix(in srgb, var(--st-wait) 22%, var(--card)); color: var(--st-wait); }
 .shape-legend { display: flex; gap: var(--s-6); margin-top: var(--s-3); font-size: var(--fs-9); color: var(--ink-3); }
 .shape-legend span { display: inline-flex; align-items: center; gap: var(--s-2); }
 .sw { width: 9px; height: 9px; display: inline-block; }
@@ -541,6 +542,22 @@ footer b { color: var(--ink-3); font-weight: 500; }
   padding: 1px var(--s-3); cursor: pointer; white-space: nowrap; }
 .dn-ref:hover, .dn-ref:focus-visible { border-color: var(--st-open); color: var(--st-open); outline: none; }
 .dn-ref .mono { color: var(--ink-4); }
+
+/* waiting on you — beads parked on a human, sub-grouped decision vs review (str-xdy) */
+.waiting-panel { border-left: 2px solid color-mix(in srgb, var(--st-wait) 55%, transparent); padding-left: var(--s-5); }
+.woy-group + .woy-group { margin-top: var(--s-5); }
+.woy-label { display: flex; align-items: center; gap: var(--s-3); font-size: var(--fs-9);
+  font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--st-wait); margin-bottom: var(--s-2); }
+.woy-ct { font-size: var(--fs-9); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.woy { list-style: none; margin: 0; padding: 0; }
+.woy-item { display: flex; align-items: baseline; gap: var(--s-4); padding: var(--s-3) 0;
+  border-top: 1px solid var(--line); cursor: pointer; }
+.woy-item:first-child { border-top: 0; }
+.woy-title { flex: 1; min-width: 0; font-size: var(--fs-base); color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.woy-item:hover .woy-title, .woy-item:focus-visible .woy-title { color: var(--st-wait); }
+.woy-item:focus-visible { outline: none; }
+.woy-item .lb-id { flex: 0 0 auto; }
 
 /* hotspots — load-bearing beads, read by what leans on them (no bar) */
 .hots { display: flex; flex-direction: column; }

@@ -25,18 +25,36 @@ import (
 // (a bead can be blocked from outside the scope). The field names are the
 // view-facing contract: the insights template binds .Counts/.Ready/… directly.
 type Model struct {
-	Counts     Counts
-	Ready      []RankedBead // ready beads ranked by influence — the dispatch queue
-	Influence  []RankedBead // top PageRank — foundational beads
-	Bottleneck []RankedBead // top betweenness — chokepoints
-	CritPath   []strand.Bead
-	Labels     []LabelCount // label distribution over open beads, descending
-	Untagged   int          // open beads carrying no label at all
+	Counts       Counts
+	Ready        []RankedBead // ready beads ranked by influence — the dispatch queue
+	WaitingOnYou Waiting      // beads parked on a human, excluded from Ready (str-xdy)
+	Influence    []RankedBead // top PageRank — foundational beads
+	Bottleneck   []RankedBead // top betweenness — chokepoints
+	CritPath     []strand.Bead
+	Labels       []LabelCount // label distribution over open beads, descending
+	Untagged     int          // open beads carrying no label at all
 }
 
-// Counts is the quick-ref panel: the live shape of the scope's queue.
+// Counts is the quick-ref panel: the live shape of the scope's queue. WaitingOnYou
+// counts the open beads diverted out of Ready by the human-gate (str-xdy), so
+// Ready means genuinely-claimable work and Open still totals every open bead.
 type Counts struct {
-	Total, Open, InProgress, Ready, Blocked, Stale int
+	Total, Open, InProgress, Ready, WaitingOnYou, Blocked, Stale int
+}
+
+// Waiting is the "Waiting on you" lane: open beads kept out of the ready queue
+// because they're parked on a human (str-xdy), sub-grouped by why — a DECISION the
+// human must make (the "human" label, bdx's decision queue) vs. a REVIEW of done
+// work (metadata.review_needed=="true"). A bead carrying both is a decision.
+type Waiting struct {
+	Decision []strand.Bead // label "human": a call only the human can make
+	Review   []strand.Bead // review_needed=="true": done work awaiting the human's review
+}
+
+// Any reports whether the lane holds any bead, so the template can skip the panel
+// when nothing is parked on the human.
+func (w Waiting) Any() bool {
+	return len(w.Decision) > 0 || len(w.Review) > 0
 }
 
 // RankedBead is one leaderboard row: a bead, its raw metric score, and a 0–100
@@ -65,6 +83,49 @@ const staleAfter = 14 * 24 * time.Hour
 
 // leaderboardSize caps the Influence and Bottleneck panels.
 const leaderboardSize = 5
+
+// humanLabel is the bd label marking a bead as parked on a human decision — bdx's
+// DECISION queue convention (the human-gate model, cc-plugins bdx/human-gate.md).
+const humanLabel = "human"
+
+// reviewNeededKey is the bd metadata key marking a bead as awaiting human review —
+// bdx's REVIEW queue. bd emits it as the string "true"; bool is tolerated defensively.
+const reviewNeededKey = "review_needed"
+
+// humanGate classifies a bead's human-gate state from its full issue record: a
+// DECISION (carries the "human" label) or a REVIEW (review_needed=="true"). A bead
+// carrying both is a decision — the stronger "needs a human call" signal — so the
+// waiting lane never double-counts it. A bead with neither is neither (claimable).
+func humanGate(iss *bd.Issue) (decision, review bool) {
+	if slices.Contains(iss.Labels, humanLabel) {
+		return true, false
+	}
+	if reviewNeeded(iss.Metadata) {
+		return false, true
+	}
+	return false, false
+}
+
+// isHumanGated reports whether a bead is parked on a human (decision or review) —
+// the test that keeps it out of the ready queue and triage's Ready count.
+func isHumanGated(iss *bd.Issue) bool {
+	d, r := humanGate(iss)
+	return d || r
+}
+
+// reviewNeeded reads metadata.review_needed. bd emits the flag as the string "true";
+// a bool true is tolerated in case a future bd quotes it differently (mirrors the
+// defensive number/string handling in bd.Issue.Rank). Anything else is "not flagged".
+func reviewNeeded(m map[string]any) bool {
+	switch v := m[reviewNeededKey].(type) {
+	case string:
+		return v == "true"
+	case bool:
+		return v
+	default:
+		return false
+	}
+}
 
 // Compute builds the dashboard for a scope. beads is the scope's actionable work
 // (callers drop epic containers first); issues is the full repo list (for the
@@ -96,6 +157,9 @@ func Compute(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge, now time
 	// gap closes (triage says "2 ready"; this says WHICH, most-impactful first). Ranks
 	// even without edges — every ready bead is dispatchable, ordered by PageRank base.
 	out.Ready = readyQueue(beads, openBlockers, idx, m.PageRank, frees, down, now)
+	// The "Waiting on you" lane: the human-gated beads readyQueue just excluded,
+	// grouped decision-vs-review so the parked work has a distinct home (str-xdy).
+	out.WaitingOnYou = waitingLane(beads, idx)
 	// The leaderboards rank by graph position; with no dependencies every bead ties
 	// at PageRank's base rank, so a ranking would be noise. Show them only with edges.
 	// crossFlag marks the rows that ALSO sit in the blocked/stale sets — the act-now signal.
@@ -176,9 +240,15 @@ func triage(beads []strand.Bead, openBlockers map[string]int, idx map[string]bd.
 			c.InProgress++
 		case bd.StatusOpen:
 			c.Open++
-			if openBlockers[b.ID] > 0 {
+			iss := idx[b.ID]
+			switch {
+			case isHumanGated(&iss):
+				// Parked on a human (decision/review) — not claimable, so it leaves
+				// the Ready count and joins the "Waiting on you" lane (str-xdy).
+				c.WaitingOnYou++
+			case openBlockers[b.ID] > 0:
 				c.Blocked++
-			} else {
+			default:
 				c.Ready++
 			}
 		case bd.StatusBlocked:
@@ -267,6 +337,12 @@ func readyQueue(beads []strand.Bead, openBlockers map[string]int, idx map[string
 		if b.Status != bd.StatusOpen || openBlockers[b.ID] > 0 {
 			continue
 		}
+		// A bead parked on a human (decision/review) isn't claimable work — it
+		// belongs to the "Waiting on you" lane, not the dispatch queue (str-xdy).
+		iss := idx[b.ID]
+		if isHumanGated(&iss) {
+			continue
+		}
 		ready = append(ready, RankedBead{
 			Bead:       *b,
 			Score:      pr[b.ID],
@@ -297,6 +373,30 @@ func readyQueue(beads []strand.Bead, openBlockers map[string]int, idx map[string
 		}
 	}
 	return ready
+}
+
+// waitingLane gathers the scope's live beads that are parked on a human and groups
+// them by why (str-xdy): a DECISION (label "human") vs. a REVIEW (review_needed).
+// These are the beads readyQueue/triage divert out of the ready view, so the "ready
+// column" means genuinely-claimable work and parked beads still have a home. Only
+// open beads are considered — the same live, not-yet-claimed work the ready view
+// reasons about; closed/deferred work has already left the strand. Order follows the
+// scope's bead order (priority-then-id, as the strand sorts), so the lane reads stably.
+func waitingLane(beads []strand.Bead, idx map[string]bd.Issue) Waiting {
+	var w Waiting
+	for i := range beads {
+		if beads[i].Status != bd.StatusOpen {
+			continue
+		}
+		iss := idx[beads[i].ID]
+		switch decision, review := humanGate(&iss); {
+		case decision:
+			w.Decision = append(w.Decision, beads[i])
+		case review:
+			w.Review = append(w.Review, beads[i])
+		}
+	}
+	return w
 }
 
 // downstreamReach computes, for each bead, the in-scope beads it transitively unblocks
