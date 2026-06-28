@@ -1230,9 +1230,9 @@ func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request) {
 func (s *Server) tier2Title(ctx context.Context, src IssueSource, repo registry.Repo, issue *bd.Issue, c suggest.Completer) (suggest.Suggestion, error) {
 	sc, err := strandmd.Load(s.homeDir, repo.Path)
 	if err != nil {
-		return suggest.Suggestion{}, err
+		return suggest.Suggestion{}, fmt.Errorf("tier2: load strand: %w", err)
 	}
-	return suggest.Tier2(ctx, c, suggest.Tier2Input{
+	sg, err := suggest.Tier2(ctx, c, &suggest.Tier2Input{
 		Strand:    sc.Text,
 		Actors:    sc.Actors,
 		NorthStar: s.synFor(repo).NorthStar,
@@ -1243,6 +1243,10 @@ func (s *Server) tier2Title(ctx context.Context, src IssueSource, repo registry.
 		Children:  childTitles(ctx, src, issue.ID),
 		Job:       citedJob(repo.Path, issue.Description),
 	})
+	if err != nil {
+		return suggest.Suggestion{}, fmt.Errorf("tier2: %w", err)
+	}
+	return sg, nil
 }
 
 // parentTitle returns the parent bead's title, or "" on no parent or a read miss.

@@ -46,7 +46,7 @@ Rules:
 // sends it through the completer, and parses the reply into a Suggestion with
 // Anchored set. A completer error is returned so the caller falls back to Tier-1;
 // Tier2 never fabricates a suggestion on failure.
-func Tier2(ctx context.Context, c Completer, in Tier2Input) (Suggestion, error) {
+func Tier2(ctx context.Context, c Completer, in *Tier2Input) (Suggestion, error) {
 	system, user := buildTier2Prompt(in)
 	raw, err := c.Complete(ctx, system, user)
 	if err != nil {
@@ -60,7 +60,7 @@ func Tier2(ctx context.Context, c Completer, in Tier2Input) (Suggestion, error) 
 // per-call grounding — north star, an inline job WHEN present, the bead, its
 // parent, and its children. No templating: read-and-concat, the SIMPLICITY the
 // st-suggest.3 design note calls for.
-func buildTier2Prompt(in Tier2Input) (system, user string) {
+func buildTier2Prompt(in *Tier2Input) (system, user string) {
 	var sys strings.Builder
 	if s := strings.TrimSpace(in.Strand); s != "" {
 		sys.WriteString(s)
@@ -117,7 +117,7 @@ func nonEmpty(in []string) []string {
 // anchored Why citing the job (when the page cited one) else the north star, Tier
 // 2, and Anchored. A blank reply yields None so the caller shows "nothing to
 // suggest" rather than an empty proposal.
-func parseTier2(raw string, in Tier2Input) Suggestion {
+func parseTier2(raw string, in *Tier2Input) Suggestion {
 	proposed := cleanTitle(raw)
 	if proposed == "" {
 		return none()
@@ -132,7 +132,7 @@ func parseTier2(raw string, in Tier2Input) Suggestion {
 
 // tier2Why names the anchor the proposal cites: the inline job when the page
 // referenced one, else the north-star line, else a generic intent note.
-func tier2Why(in Tier2Input) string {
+func tier2Why(in *Tier2Input) string {
 	if job := strings.TrimSpace(in.Job); job != "" {
 		return "Anchored to the job: " + job
 	}
@@ -147,7 +147,7 @@ func tier2Why(in Tier2Input) string {
 // The model is asked for a single bare line; this tolerates the common decorations
 // when it doesn't comply.
 func cleanTitle(raw string) string {
-	for _, ln := range strings.Split(raw, "\n") {
+	for ln := range strings.SplitSeq(raw, "\n") {
 		ln = strings.TrimSpace(ln)
 		if ln == "" {
 			continue

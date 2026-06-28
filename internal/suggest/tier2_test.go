@@ -10,6 +10,8 @@ import (
 // stubCompleter is the model seam under test: it records the system+user prompt it
 // is handed and returns a canned reply (or error), so Tier-2 is exercised with no
 // network. It satisfies suggest.Completer.
+var errModelDown = errors.New("model down")
+
 type stubCompleter struct {
 	system string
 	user   string
@@ -25,8 +27,8 @@ func (s *stubCompleter) Complete(_ context.Context, system, user string) (string
 }
 
 // fullInput is a Tier2Input carrying every layer, for the assembly tests.
-func fullInput() Tier2Input {
-	return Tier2Input{
+func fullInput() *Tier2Input {
+	return &Tier2Input{
 		Strand:    "# Bead rubric\nName work as Verb object.\n\n## Actors\n- Maintainer: ships strand.",
 		Actors:    "## Actors\n- Maintainer: ships strand.",
 		NorthStar: "a strand that remembers across sessions",
@@ -169,7 +171,7 @@ func TestTier2_UsesCompleterSeam(t *testing.T) {
 // TestTier2_PropagatesCompleterError: a model failure surfaces as an error so the
 // caller can fall back to Tier-1; it never fabricates a suggestion.
 func TestTier2_PropagatesCompleterError(t *testing.T) {
-	c := &stubCompleter{err: errors.New("model down")}
+	c := &stubCompleter{err: errModelDown}
 	if _, err := Tier2(context.Background(), c, fullInput()); err == nil {
 		t.Error("Tier2 swallowed a completer error; want it propagated for Tier-1 fallback")
 	}

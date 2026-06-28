@@ -31,6 +31,10 @@ var errMarshal = errors.New("json: unsupported type")
 // (createFailAt) — the partial-create failure path the orphan guard handles (str-qig).
 var errStubWrite = errors.New("bd: write failed")
 
+// errModelDown stands in for a Tier-2 model failure on the keyed path — Suggest
+// must degrade to Tier-1 at 200, never surface it (st-suggest.3.3).
+var errModelDown = errors.New("model down")
+
 // stubBD is an in-memory issueSource so the handlers run without the bd CLI
 // (spec Q0: fake the bd boundary, assert on the rendered HTML).
 type stubBD struct {
@@ -1398,7 +1402,7 @@ func TestSuggestTier2DegradesOnModelError(t *testing.T) {
 	srv := newTestServer(t, stub)
 	srv.homeDir = t.TempDir()
 	srv.suggestLLM = func() (suggest.Completer, bool) {
-		return &fakeCompleter{err: errors.New("model down")}, true
+		return &fakeCompleter{err: errModelDown}, true
 	}
 	rec := do(t, srv, "/bead/demo-x/suggest?kind=title")
 	if rec.Code != http.StatusOK {
