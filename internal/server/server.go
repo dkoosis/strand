@@ -1113,9 +1113,9 @@ func (s *Server) handleBead(w http.ResponseWriter, r *http.Request) {
 	s.renderDrawer(ctx, w, src, issue, nil)
 }
 
-// suggestPreview is the Suggest slot's data: the bead id (so Apply/Dismiss act on
-// the right drawer), the current title, and the deterministic proposal. S.None
-// drives the "nothing to suggest" branch; otherwise the template renders
+// suggestPreview is the title Suggest slot's data: the bead id (so Apply/Dismiss
+// act on the right drawer), the current title, and the deterministic proposal.
+// S.None drives the "nothing to suggest" branch; otherwise the template renders
 // current-vs-proposed with Apply/Dismiss controls.
 type suggestPreview struct {
 	ID      string
@@ -1123,12 +1123,21 @@ type suggestPreview struct {
 	S       suggest.Suggestion
 }
 
-// handleSuggest renders a Tier-1 title suggestion for the bead as a current-vs-
-// proposed preview. It is read-only by design (st-suggest.1): it loads the bead,
-// runs the deterministic namer, and renders the preview slot — no bd write.
-// Apply is the user's gesture in the browser, which copies the proposal into the
-// existing title input and fires its change→PATCH edit path; Suggest itself
-// writes nothing. .1 serves title only, whatever ?kind requests.
+// sectionPreview is the body Suggest slot's data: the bead id and the deterministic
+// section-gap suggestion. S.None drives the "nothing to suggest" branch; otherwise
+// the template lists each missing section's draft with an Apply that copies the
+// augmented description into the editor's change→PATCH path.
+type sectionPreview struct {
+	ID string
+	S  suggest.SectionSuggestion
+}
+
+// handleSuggest renders a deterministic suggestion for the bead as a preview slot.
+// Read-only by design: it loads the bead, runs the namer, and renders the preview
+// — no bd write. Apply is the user's gesture in the browser, which copies the
+// proposal into the matching editor input and fires its change→PATCH path; Suggest
+// itself writes nothing. ?kind=body proposes the missing description sections
+// (st-suggest.2); any other kind serves the Tier-1 title namer (st-suggest.1).
 func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
@@ -1144,6 +1153,11 @@ func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request) {
 	}
 	if issue == nil {
 		s.renderError(w, errNoIssue)
+		return
+	}
+	if r.URL.Query().Get("kind") == "body" {
+		sg := suggest.Sections(suggest.SectionInput{Body: issue.Description, Type: issue.IssueType})
+		s.render(w, "sectionPreview", sectionPreview{ID: issue.ID, S: sg})
 		return
 	}
 	parent := ""

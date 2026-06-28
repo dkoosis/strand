@@ -1308,6 +1308,98 @@ func TestSuggestApplyWritesViaExistingEdit(t *testing.T) {
 	}
 }
 
+// TestDrawerHasBodySuggestAffordance: the drawer renders the "Suggest sections"
+// button wired to the body suggest endpoint and the preview slot it targets
+// (st-suggest.2).
+func TestDrawerHasBodySuggestAffordance(t *testing.T) {
+	srv := newTestServer(t, oneBead(&bd.Issue{
+		ID: "demo-x", Title: "Add the lane", Status: "open", IssueType: "story",
+		Description: "## Slice\nBody.",
+	}))
+	body := do(t, srv, "/bead/demo-x").Body.String()
+	for _, want := range []string{
+		`hx-get="/bead/demo-x/suggest?kind=body"`,
+		`id="dr-suggest-body-preview"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("drawer missing body-suggest affordance %q", want)
+		}
+	}
+}
+
+// TestSuggestBodyPreviewRenders: GET suggest?kind=body on a story missing its
+// Acceptance Criteria renders the gap with a draft scaffold and an Apply that
+// targets the body editor and carries the augmented description — and writes
+// nothing (st-suggest.2).
+func TestSuggestBodyPreviewRenders(t *testing.T) {
+	stub := oneBead(&bd.Issue{
+		ID: "demo-x", Title: "Add the lane", Status: "open", IssueType: "story",
+		Description: "## Slice\nBody quality via section gaps.",
+	})
+	srv := newTestServer(t, stub)
+	rec := do(t, srv, "/bead/demo-x/suggest?kind=body")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET suggest?kind=body = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Acceptance Criteria",                                   // the missing section, named
+		`class="dr-suggest-apply"`, `data-target="description"`, // Apply targets the body editor
+		"## Acceptance Criteria", // augmented proposal carries the scaffold
+		`class="dr-suggest-dismiss"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body preview missing %q:\n%s", want, body)
+		}
+	}
+	if stub.updateCalls != 0 {
+		t.Errorf("suggest issued %d writes, want 0 (read-only)", stub.updateCalls)
+	}
+}
+
+// TestSuggestBodyCompleteNothing: a bead that already records its required
+// sections yields the nothing-to-suggest preview with no Apply control — never
+// padding a complete bead (st-suggest.2).
+func TestSuggestBodyCompleteNothing(t *testing.T) {
+	stub := oneBead(&bd.Issue{
+		ID: "demo-x", Title: "Add the lane", Status: "open", IssueType: "story",
+		Description: "## Slice\nBody.\n## Acceptance Criteria\n- It works.",
+	})
+	srv := newTestServer(t, stub)
+	rec := do(t, srv, "/bead/demo-x/suggest?kind=body")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET suggest?kind=body = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "nothing to suggest") {
+		t.Errorf("complete bead did not yield the nothing-to-suggest preview:\n%s", body)
+	}
+	if strings.Contains(body, `class="dr-suggest-apply"`) {
+		t.Error("complete-bead preview offered an Apply control")
+	}
+	if stub.updateCalls != 0 {
+		t.Errorf("suggest issued %d writes, want 0 (read-only)", stub.updateCalls)
+	}
+}
+
+// TestSuggestBodyApplyWritesDescription: the body Apply gesture posts the
+// augmented description through the *existing* PATCH edit path — exactly one
+// Update on the description field. Suggest adds no second write path (st-suggest.2).
+func TestSuggestBodyApplyWritesDescription(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Add the lane", Status: "open", IssueType: "story"})
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPatch, "/bead/demo-x", "field=description&value=%23%23+Acceptance+Criteria%0A-+done")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH apply = %d, want 200", rec.Code)
+	}
+	if stub.updateCalls != 1 {
+		t.Errorf("apply issued %d Update calls, want exactly 1", stub.updateCalls)
+	}
+	if stub.lastField != "description" {
+		t.Errorf("apply wrote field %q, want description", stub.lastField)
+	}
+}
+
 // TestClaimReflects: the claim button assigns the bead and the redrawn drawer
 // shows the new assignee.
 func TestClaimReflects(t *testing.T) {
