@@ -53,8 +53,8 @@ func Compute(nodes []string, edges []Edge) Metrics {
 	}
 	for _, e := range edges {
 		f, t := id.of(e.Dependent), id.of(e.Dependency)
-		ensure(g, f)
-		ensure(g, t)
+		ensureNode(g, f)
+		ensureNode(g, t)
 		if f == t {
 			continue // self-loop carries no dependency depth; drop it
 		}
@@ -89,11 +89,11 @@ func Compute(nodes []string, edges []Edge) Metrics {
 	return m
 }
 
-// ensure adds a node to the graph if an edge referenced an ID not in the node
-// list. Without this, SetEdge on an unknown endpoint would create a bare node
-// with no entry in the ID map's reverse direction — but id.of already registers
-// it, so this only guards the graph side.
-func ensure(g *simple.DirectedGraph, n int64) {
+// ensureNode adds a node to the graph if an edge referenced an ID not in the
+// node list. Without this, SetEdge on an unknown endpoint would create a bare
+// node with no entry in the ID map's reverse direction — but id.of already
+// registers it, so this only guards the graph side.
+func ensureNode(g *simple.DirectedGraph, n int64) {
 	if g.Node(n) == nil {
 		g.AddNode(simple.Node(n))
 	}
