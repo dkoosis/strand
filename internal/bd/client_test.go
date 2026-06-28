@@ -44,6 +44,28 @@ func TestRun_ReturnsContextErr_When_CancelledWaitingOnHeldLock(t *testing.T) {
 	}
 }
 
+// TestRun_ReturnsContextErr_When_AlreadyCancelled pins the fast-fail path: with the
+// lock free, an already-cancelled ctx must still return ctx.Err() and never grab the
+// lock. Without the pre-flight check the select could pick the (ready) acquire case
+// pseudo-randomly and spawn a doomed exec that misclassifies as ErrBD (st-kl8).
+func TestRun_ReturnsContextErr_When_AlreadyCancelled(t *testing.T) {
+	c := &Client{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // done before run; lock is free.
+
+	_, err := c.run(ctx, "list", "--json")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("run returned %v, want context.Canceled", err)
+	}
+	// The lock must be free — run must not have acquired it.
+	select {
+	case execMu <- struct{}{}:
+		<-execMu
+	default:
+		t.Fatal("run acquired the lock despite a cancelled ctx")
+	}
+}
+
 // TestDecodeIssuePriority pins the Priority decode contract now that Issue.Priority
 // is *int. A present field decodes to a non-nil pointer (0 included); an absent
 // field decodes to nil — no longer collapsing to a false P0.

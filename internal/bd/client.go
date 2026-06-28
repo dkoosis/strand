@@ -149,12 +149,24 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	// block indefinitely. A hung bd holder must not starve every concurrent
 	// caller past its own deadline (st-kl8). The send acquires; the deferred
 	// receive releases. Serialization is unchanged — exactly one holder at a time.
+	// Fast-fail an already-done ctx: a free lock could otherwise win the select
+	// pseudo-randomly over ctx.Done(), spawning a doomed exec.
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("bd: acquire write lock: %w", err)
+	}
 	select {
 	case execMu <- struct{}{}:
 	case <-ctx.Done():
 		return nil, fmt.Errorf("bd: acquire write lock: %w", ctx.Err())
 	}
 	defer func() { <-execMu }()
+	// We hold the lock, but ctx may have fired while we waited behind a held
+	// holder — the select can pick the send when both cases are ready. Surface
+	// ctx.Err() rather than run a doomed command that misclassifies as ErrBD,
+	// so the parked-waiter timeout path stays deterministic (st-kl8).
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("bd: acquire write lock: %w", err)
+	}
 	//nolint:gosec // G204: bd is an operator-configured binary and args run via exec (no shell), so values like a status filter can't inject commands.
 	cmd := exec.CommandContext(ctx, c.bin(), args...)
 	cmd.Dir = c.Dir
