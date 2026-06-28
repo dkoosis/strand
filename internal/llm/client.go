@@ -79,8 +79,8 @@ func (c *Client) Complete(ctx context.Context, systemOrPrompt, userInput string)
 	}
 
 	var b strings.Builder
-	for _, block := range resp.Content {
-		if t, ok := block.AsAny().(anthropic.TextBlock); ok {
+	for i := range resp.Content {
+		if t, ok := resp.Content[i].AsAny().(anthropic.TextBlock); ok {
 			b.WriteString(t.Text)
 		}
 	}

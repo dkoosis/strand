@@ -12,10 +12,15 @@ package strandmd
 import (
 	_ "embed"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+// errHomeDirRequired is returned by Load when homeDir is empty, so a default is
+// never written to a path resolved against the current directory.
+var errHomeDirRequired = errors.New("strandmd: homeDir required")
 
 // defaultTemplate is the shipped default written to an absent global STRAND.md.
 // It carries the bead-quality rubric (seeded from bdx:bead-fmt) and a default
@@ -56,7 +61,7 @@ func Default() string { return defaultTemplate }
 // level — the referenced file is inlined, but @-lines inside it are left literal.
 func Load(homeDir, repoDir string) (Context, error) {
 	if homeDir == "" {
-		return Context{}, errors.New("strandmd: homeDir required")
+		return Context{}, errHomeDirRequired
 	}
 
 	globalPath := filepath.Join(homeDir, strandRelPath)
@@ -78,7 +83,7 @@ func Load(homeDir, repoDir string) (Context, error) {
 		case errors.Is(rerr, os.ErrNotExist):
 			// no overlay — global-only
 		default:
-			return Context{}, rerr
+			return Context{}, fmt.Errorf("strandmd: read local STRAND.md: %w", rerr)
 		}
 	}
 
@@ -118,14 +123,14 @@ func readOrInit(path, def string) (string, error) {
 		return string(b), nil
 	case errors.Is(err, os.ErrNotExist):
 		if mkErr := os.MkdirAll(filepath.Dir(path), 0o755); mkErr != nil {
-			return "", mkErr
+			return "", fmt.Errorf("strandmd: mkdir .strand: %w", mkErr)
 		}
-		if wErr := os.WriteFile(path, []byte(def), 0o644); wErr != nil {
-			return "", wErr
+		if wErr := os.WriteFile(path, []byte(def), 0o600); wErr != nil {
+			return "", fmt.Errorf("strandmd: write default STRAND.md: %w", wErr)
 		}
 		return def, nil
 	default:
-		return "", err
+		return "", fmt.Errorf("strandmd: read STRAND.md: %w", err)
 	}
 }
 
@@ -150,7 +155,12 @@ func expandImports(text, baseDir string) string {
 		if !filepath.IsAbs(target) {
 			target = filepath.Join(baseDir, target)
 		}
-		b, err := os.ReadFile(target)
+		// G703: the @-import target is a path written in the user's own STRAND.md
+		// (user-managed config, like CLAUDE.md @-imports). Pointing at a file
+		// outside the repo — the global ~/.strand, a shared north-star-mini — is
+		// the intended use, not untrusted input.
+		b, err := os.ReadFile(target) //nolint:gosec // G703: user-managed config path, see comment above
+
 		if err != nil {
 			out = append(out, ln) // missing import: leave the line as-is
 			continue
