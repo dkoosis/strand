@@ -1235,7 +1235,7 @@ func (s *Server) tier2Title(ctx context.Context, src IssueSource, repo registry.
 	sg, err := suggest.Tier2(ctx, c, &suggest.Tier2Input{
 		Strand:    sc.Text,
 		Actors:    sc.Actors,
-		NorthStar: s.synFor(repo).NorthStar,
+		NorthStar: s.northStarFor(repo),
 		Title:     issue.Title,
 		Body:      issue.Description,
 		Type:      issue.IssueType,
@@ -1836,14 +1836,22 @@ var allIssues = []string{"--limit", "0"}
 func (s *Server) synFor(repo registry.Repo) strand.Synthesis {
 	syn := s.syn
 	syn.Project = repo.Name
-	// A non-empty s.syn.NorthStar is the --northstar flag and wins; with no flag
-	// the masthead reads the active repo's canonical one-line North Star from
-	// north-star-mini.md (decision nug 952acad4aca2). Missing/empty → blank.
-	if syn.NorthStar == "" {
-		syn.NorthStar = northStarMini(repo.Path)
-	}
+	syn.NorthStar = s.northStarFor(repo)
 	syn.JTBD = jtbd.Load(repo.Path)
 	return syn
+}
+
+// northStarFor resolves the project's one-line North Star without the JTBD load
+// synFor does — the keyed Suggest path wants the masthead line only, not a
+// docs/jtbd.md read on every call (JTBD stays inline-cited, never fetched). A
+// non-empty s.syn.NorthStar is the --northstar flag and wins; with no flag the
+// active repo's canonical north-star-mini.md is read (decision nug 952acad4aca2).
+// Missing/empty → "".
+func (s *Server) northStarFor(repo registry.Repo) string {
+	if s.syn.NorthStar != "" {
+		return s.syn.NorthStar
+	}
+	return northStarMini(repo.Path)
 }
 
 // northStarMini returns the North Star reminder for a repo, read from

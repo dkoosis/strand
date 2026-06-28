@@ -37,7 +37,7 @@ type Tier2Input struct {
 const tier2Instruction = `You are strand's bead namer. Propose ONE sharper title for the bead described below.
 
 Rules:
-- Name the work's own concrete outcome as "Verb object" (bead-fmt style), grounded in the north star.
+- Match the title's shape to the bead's Type, following the Bead Quality Rubric above — epic: the done-state capability the arc delivers; story: "<actor> can <outcome>"; task: a "Verb object" done-state. Ground it in the north star.
 - Draw any actor reference from the ## Actors section above; never invent an actor.
 - Propose a title only. Never add or mention a "jtbd" key or any metadata key.
 - Return ONLY the proposed title on a single line — no quotes, no label, no preamble.`
