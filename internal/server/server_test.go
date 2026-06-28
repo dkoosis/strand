@@ -7,6 +7,8 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +19,7 @@ import (
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/internal/strand"
+	"github.com/dkoosis/strand/internal/suggest"
 	"github.com/dkoosis/strand/web"
 )
 
@@ -445,7 +448,25 @@ func newTestServer(t *testing.T, src IssueSource) *Server {
 	}
 	reg := registry.InMemory(demoRepo)
 	srcFor := func(registry.Repo) IssueSource { return src }
-	return New(srcFor, reg, tmpl, web.Static(), strand.Synthesis{NorthStar: "remember across sessions"})
+	srv := New(srcFor, reg, tmpl, web.Static(), strand.Synthesis{NorthStar: "remember across sessions"})
+	// Default the model gate to unavailable so the Tier-1 suggest tests stay
+	// deterministic and offline regardless of ANTHROPIC_API_KEY in the env; the
+	// Tier-2 tests swap in a stub completer (st-suggest.3.3).
+	srv.suggestLLM = func() (suggest.Completer, bool) { return nil, false }
+	return srv
+}
+
+// fakeCompleter is the server-side model stub: it satisfies suggest.Completer with
+// a canned reply (or error), so the Tier-2 escalation is exercised with no network.
+type fakeCompleter struct {
+	reply string
+	err   error
+	calls int
+}
+
+func (f *fakeCompleter) Complete(context.Context, string, string) (string, error) {
+	f.calls++
+	return f.reply, f.err
 }
 
 func do(t *testing.T, srv *Server, path string) *httptest.ResponseRecorder {
@@ -1305,6 +1326,110 @@ func TestSuggestApplyWritesViaExistingEdit(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Add the suggest preview slot") {
 		t.Errorf("drawer missing the applied title:\n%s", rec.Body.String())
+	}
+}
+
+// TestSuggestTier2GroundsTitleWhenKeyed: with a model key present, GET suggest
+// runs the Tier-2 path — the grounded model title and an anchored Why citing the
+// north star render in the same preview slot, through the injected completer (no
+// network), and still writes nothing (st-suggest.3.3).
+func TestSuggestTier2GroundsTitleWhenKeyed(t *testing.T) {
+	stub := oneBead(&bd.Issue{
+		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "story",
+		Description: "Add a suggest preview slot to the drawer.",
+	})
+	srv := newTestServer(t, stub)
+	srv.homeDir = t.TempDir() // STRAND.md initializes here, never the real ~/.strand
+	fc := &fakeCompleter{reply: "Add the drawer suggest preview slot"}
+	srv.suggestLLM = func() (suggest.Completer, bool) { return fc, true }
+
+	rec := do(t, srv, "/bead/demo-x/suggest?kind=title")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET suggest = %d, want 200", rec.Code)
+	}
+	if fc.calls != 1 {
+		t.Errorf("model called %d times, want exactly 1 (Tier-2, injected seam)", fc.calls)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Add the drawer suggest preview slot", // the grounded model title
+		"Anchored to the north star",          // the Why cites the north star
+		"remember across sessions",            // the north-star line itself
+		`class="dr-suggest-apply"`,            // Apply remains the only commit gesture
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Tier-2 preview missing %q:\n%s", want, body)
+		}
+	}
+	if stub.updateCalls != 0 {
+		t.Errorf("suggest issued %d writes, want 0 (read-only, never auto-applies)", stub.updateCalls)
+	}
+}
+
+// TestSuggestFallsBackToTier1WhenUnkeyed: with no model key, GET suggest serves the
+// Tier-1 deterministic proposal with no anchor and no error (st-suggest.3.3 gate).
+func TestSuggestFallsBackToTier1WhenUnkeyed(t *testing.T) {
+	stub := oneBead(&bd.Issue{
+		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "story",
+		Description: "Add a suggest preview slot to the drawer.",
+	})
+	srv := newTestServer(t, stub) // default model gate reports unavailable
+	rec := do(t, srv, "/bead/demo-x/suggest?kind=title")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET suggest = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Add a suggest preview slot") {
+		t.Errorf("unkeyed suggest did not fall back to the Tier-1 proposal:\n%s", body)
+	}
+	if strings.Contains(body, "Anchored") {
+		t.Errorf("unkeyed suggest produced an anchored (Tier-2) Why:\n%s", body)
+	}
+}
+
+// TestSuggestTier2DegradesOnModelError: a model failure on the keyed path degrades
+// to the Tier-1 proposal at 200 — Suggest never surfaces the model error
+// (st-suggest.3.3).
+func TestSuggestTier2DegradesOnModelError(t *testing.T) {
+	stub := oneBead(&bd.Issue{
+		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "story",
+		Description: "Add a suggest preview slot to the drawer.",
+	})
+	srv := newTestServer(t, stub)
+	srv.homeDir = t.TempDir()
+	srv.suggestLLM = func() (suggest.Completer, bool) {
+		return &fakeCompleter{err: errors.New("model down")}, true
+	}
+	rec := do(t, srv, "/bead/demo-x/suggest?kind=title")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET suggest = %d, want 200 (degrade, not error)", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Add a suggest preview slot") {
+		t.Errorf("model error did not degrade to the Tier-1 proposal:\n%s", body)
+	}
+	if strings.Contains(body, "Anchored") {
+		t.Errorf("a failed model call still produced an anchored Why:\n%s", body)
+	}
+}
+
+// TestCitedJobOnlyWhenReferenced pins the JTBD gate at the server boundary: the job
+// resolves only when the bead's description already cites the id — never fetched
+// for a bead that doesn't reference one (st-suggest.3.3 acceptance).
+func TestCitedJobOnlyWhenReferenced(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	table := "| id    | job                         |\n|-------|-----------------------------|\n| j-001 | Triage what to work on next |\n"
+	if err := os.WriteFile(filepath.Join(dir, "docs", "jtbd.md"), []byte(table), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := citedJob(dir, "A slice.\nJTBD: j-001\nmore detail."); got != "Triage what to work on next" {
+		t.Errorf("citedJob with a citation = %q, want the resolved job", got)
+	}
+	if got := citedJob(dir, "A body that references no job at all."); got != "" {
+		t.Errorf("citedJob without a citation = %q, want empty (never fetched)", got)
 	}
 }
 

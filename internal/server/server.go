@@ -24,8 +24,10 @@ import (
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/insight"
 	"github.com/dkoosis/strand/internal/jtbd"
+	"github.com/dkoosis/strand/internal/llm"
 	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/internal/strand"
+	"github.com/dkoosis/strand/internal/strandmd"
 	"github.com/dkoosis/strand/internal/suggest"
 )
 
@@ -139,6 +141,15 @@ type Server struct {
 	now      func() time.Time // clock for the stale cutoff; a test seam (default time.Now)
 	cache    *snapshotCache   // per-repo in-process read cache (strand-9s6)
 
+	// Tier-2 Suggest seams (st-suggest.3.3). suggestLLM builds the key-gated model
+	// client (default defaultSuggestLLM over llm.New); tests swap it for a stub so
+	// the namer never touches the network. homeDir roots the global STRAND.md load
+	// (default os.UserHomeDir); tests point it at a temp dir so a Suggest call never
+	// initializes the real ~/.strand. Both are read only inside the keyed Tier-2
+	// branch, so the unkeyed Tier-1 path touches neither.
+	suggestLLM func() (suggest.Completer, bool)
+	homeDir    string
+
 	// Lifecycle for detached background work (the Insights deps prefetch). bgCtx
 	// roots every goBackground context so Stop can cancel them; bgWG tracks the
 	// goroutines so Stop can wait them out. The HTTP drain covers request handlers
@@ -167,7 +178,22 @@ func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, sta
 	s := &Server{srcFor: srcFor, reg: reg, tmpl: tmpl, static: static, syn: syn, shutdown: defaultShutdown, now: time.Now}
 	s.cache = newSnapshotCache(func() time.Time { return s.now() })
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
+	s.suggestLLM = defaultSuggestLLM
+	s.homeDir, _ = os.UserHomeDir()
 	return s
+}
+
+// defaultSuggestLLM is the production Tier-2 model gate: it builds the key-gated
+// llm client, reporting unavailable (so Suggest stays Tier-1) when no API key is
+// set. It adapts *llm.Client to the suggest.Completer seam and returns a nil
+// interface — not a typed-nil — when unavailable, so the caller's ok-check is the
+// only gate (mirrors `bd find-duplicates --ai`).
+func defaultSuggestLLM() (suggest.Completer, bool) {
+	c, ok := llm.New()
+	if !ok {
+		return nil, false
+	}
+	return c, true
 }
 
 // goBackground runs fn in a tracked goroutine on a server-owned context, so work
@@ -1157,7 +1183,7 @@ type sectionPreview struct {
 func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, _, ok := s.source()
+	src, repo, ok := s.source()
 	if !ok {
 		s.renderError(w, errNoRepo)
 		return
@@ -1176,21 +1202,91 @@ func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "sectionPreview", sectionPreview{ID: issue.ID, S: sg})
 		return
 	}
-	parent := ""
-	if issue.Parent != "" {
-		// Best-effort graph context: a read miss leaves it empty, never an error —
-		// Suggest stays advisory and must not fail on a thin parent link.
-		if p, perr := src.Show(ctx, issue.Parent); perr == nil && p != nil {
-			parent = p.Title
+	// Tier-2: when a model key is present, ground the title in the resolved
+	// STRAND.md + north star + graph. Any failure (strand load or model call) falls
+	// through to the Tier-1 deterministic namer below — Suggest is advisory and never
+	// errors on the model path; an absent key keeps the whole branch dark, so the
+	// unkeyed path costs no STRAND.md load and no network (st-suggest.3.3).
+	if c, keyed := s.suggestLLM(); keyed {
+		if sg, terr := s.tier2Title(ctx, src, repo, issue, c); terr == nil {
+			s.render(w, "suggestPreview", suggestPreview{ID: issue.ID, Current: issue.Title, S: sg})
+			return
 		}
 	}
 	sg := suggest.Title(suggest.TitleInput{
 		Title:  issue.Title,
 		Body:   issue.Description,
 		Type:   issue.IssueType,
-		Parent: parent,
+		Parent: parentTitle(ctx, src, issue.Parent),
 	})
 	s.render(w, "suggestPreview", suggestPreview{ID: issue.ID, Current: issue.Title, S: sg})
+}
+
+// tier2Title builds the model-grounded title suggestion: it resolves the layered
+// STRAND.md, gathers the per-call grounding (north star, parent, children, and an
+// inline-cited job only when the page already references one), and runs the Tier-2
+// namer. A strand-load or model error is returned so handleSuggest falls back to
+// Tier-1 — the model path never breaks Suggest (st-suggest.3.3).
+func (s *Server) tier2Title(ctx context.Context, src IssueSource, repo registry.Repo, issue *bd.Issue, c suggest.Completer) (suggest.Suggestion, error) {
+	sc, err := strandmd.Load(s.homeDir, repo.Path)
+	if err != nil {
+		return suggest.Suggestion{}, err
+	}
+	return suggest.Tier2(ctx, c, suggest.Tier2Input{
+		Strand:    sc.Text,
+		Actors:    sc.Actors,
+		NorthStar: s.synFor(repo).NorthStar,
+		Title:     issue.Title,
+		Body:      issue.Description,
+		Type:      issue.IssueType,
+		Parent:    parentTitle(ctx, src, issue.Parent),
+		Children:  childTitles(ctx, src, issue.ID),
+		Job:       citedJob(repo.Path, issue.Description),
+	})
+}
+
+// parentTitle returns the parent bead's title, or "" on no parent or a read miss.
+// Best-effort graph context: Suggest stays advisory and must not fail on a thin
+// parent link.
+func parentTitle(ctx context.Context, src IssueSource, parentID string) string {
+	if parentID == "" {
+		return ""
+	}
+	if p, err := src.Show(ctx, parentID); err == nil && p != nil {
+		return p.Title
+	}
+	return ""
+}
+
+// childTitles returns the titles of the bead's direct children, read from the
+// (cached) repo list. A list error yields no children rather than failing Suggest.
+func childTitles(ctx context.Context, src IssueSource, id string) []string {
+	issues, err := src.List(ctx, allIssues...)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for i := range issues {
+		if issues[i].Parent == id {
+			out = append(out, issues[i].Title)
+		}
+	}
+	return out
+}
+
+// citedJob resolves the JTBD job a bead's description already cites, or "" when it
+// cites none — the job reaches the model ONLY when the page references it, never
+// fetched and never required (st-suggest.3.3). A missing registry or an unresolved
+// id is "", not an error.
+func citedJob(repoPath, description string) string {
+	id, ok := jtbd.Cite(description)
+	if !ok {
+		return ""
+	}
+	if job, ok := jtbd.Load(repoPath).Resolve(id); ok {
+		return job
+	}
+	return ""
 }
 
 // renderDrawer redraws the detail panel from bd's truth: the issue plus its
