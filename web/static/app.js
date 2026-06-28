@@ -243,28 +243,32 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// ---- title Suggest (st-suggest.1) ----
-// The Suggest button loads a current-vs-proposed preview into #dr-suggest-preview.
-// Apply copies the proposed text into the existing title input and dispatches its
-// change event, so the normal change→PATCH edit path commits it — Suggest itself
-// writes nothing. Dismiss just clears the preview. Delegated so both keep working
-// after htmx swaps the drawer or the preview fragment in.
-function clearSuggestPreview() {
-  const slot = document.getElementById("dr-suggest-preview");
+// ---- Suggest (title st-suggest.1, sections st-suggest.2) ----
+// A Suggest button loads a preview into its own .dr-suggest-preview slot — title
+// into the drawer head, sections under Description. Apply copies the proposed text
+// into the editor input named by data-target (.dr-title or .dr-desc) and dispatches
+// its change event, so the normal change→PATCH path commits it via internal/bd —
+// Suggest itself writes nothing. Dismiss just clears the slot. Delegated so both
+// keep working after htmx swaps the drawer or a preview fragment in.
+const SUGGEST_TARGETS = { title: ".dr-title", description: ".dr-desc" };
+function clearSuggestPreview(el) {
+  const slot = el.closest(".dr-suggest-preview");
   if (slot) slot.innerHTML = "";
 }
 document.addEventListener("click", (e) => {
   const apply = e.target.closest(".dr-suggest-apply");
   if (apply) {
-    const input = document.querySelector(".dr-title");
+    const sel = SUGGEST_TARGETS[apply.getAttribute("data-target")] || ".dr-title";
+    const input = document.querySelector(sel);
     if (input) {
       input.value = apply.getAttribute("data-value") || "";
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }
-    clearSuggestPreview();
+    clearSuggestPreview(apply);
     return;
   }
-  if (e.target.closest(".dr-suggest-dismiss")) clearSuggestPreview();
+  const dismiss = e.target.closest(".dr-suggest-dismiss");
+  if (dismiss) clearSuggestPreview(dismiss);
 });
 // Keyboard-activated [role=button] tiles/rows/heads fire htmx on keyup (Enter/Space),
 // but Space's default page-scroll happens on keydown — before the keyup trigger. htmx

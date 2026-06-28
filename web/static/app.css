@@ -441,6 +441,12 @@ input.dr-title:focus { border-color: var(--st-open); outline: none; background: 
 .dr-suggest-actions button { font: inherit; font-size: var(--fs-8); padding: var(--s-1) var(--s-4); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; }
 .dr-suggest-apply:hover { border-color: var(--st-open); color: var(--st-open); }
 .dr-suggest-dismiss:hover { border-color: var(--st-blocked); color: var(--st-blocked); }
+/* section gaps (st-suggest.2): the missing-section list and each draft scaffold */
+.dr-suggest-gaps { list-style: none; margin: var(--s-2) 0 0; padding: 0; }
+.dr-suggest-gaps li { margin: var(--s-3) 0 0; }
+.dr-suggest-draft { margin: var(--s-1) 0 0; padding: var(--s-2) var(--s-3); font: var(--fs-9)/1.5 var(--mono, monospace); white-space: pre-wrap; color: var(--ink-2); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+/* Suggest-sections button sits inline-right of the Description heading */
+.dr-desc-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-3); }
 
 .dr-field { display: block; margin: 0 0 var(--s-4); }
 .dr-field label { display: block; font-size: var(--fs-9); letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }

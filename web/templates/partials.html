@@ -384,7 +384,11 @@
   </div>
 </div>
 <div class="dr-body">
-  <h3>Description</h3>
+  <div class="dr-desc-head">
+    <h3>Description</h3>
+    <button type="button" class="dr-suggest-btn" hx-get="/bead/{{.ID}}/suggest?kind=body" hx-target="#dr-suggest-body-preview" hx-swap="innerHTML">Suggest sections</button>
+  </div>
+  <div id="dr-suggest-body-preview" class="dr-suggest-preview" aria-live="polite"></div>
   <form class="dr-field dr-field-primary" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change" onsubmit="event.preventDefault();">
     <input type="hidden" name="field" value="description">
     <textarea class="dr-desc" name="value" rows="10" placeholder="No description recorded.">{{.Description}}</textarea>
@@ -481,7 +485,34 @@
   <div class="dr-suggest-row"><span class="dr-suggest-tag">proposed</span><span class="dr-suggest-text dr-suggest-proposed">{{.S.Proposed}}</span></div>
   {{if .S.Why}}<p class="dr-suggest-why">{{.S.Why}}</p>{{end}}
   <div class="dr-suggest-actions">
-    <button type="button" class="dr-suggest-apply" data-value="{{.S.Proposed}}">Apply</button>
+    <button type="button" class="dr-suggest-apply" data-target="title" data-value="{{.S.Proposed}}">Apply</button>
+    <button type="button" class="dr-suggest-dismiss">Dismiss</button>
+  </div>
+</div>
+{{end}}
+{{end}}
+
+{{/* sectionPreview is the body Suggest slot (st-suggest.2): the required sections
+     a bead of this type is missing, each with a draft scaffold. Apply copies the
+     augmented description into the existing .dr-desc textarea and fires its change
+     event (app.js), so the normal change→PATCH path writes it via internal/bd —
+     Suggest writes nothing itself. None says so rather than padding. */}}
+{{define "sectionPreview"}}
+{{if .S.None}}
+<div class="dr-suggest-none" role="status">{{.S.Why}}</div>
+{{else}}
+<div class="dr-suggest" role="group" aria-label="section suggestion">
+  <p class="dr-suggest-why">{{.S.Why}}</p>
+  <ul class="dr-suggest-gaps">
+    {{range .S.Missing}}
+    <li>
+      <div class="dr-suggest-row"><span class="dr-suggest-tag">add</span><span class="dr-suggest-text">{{.Heading}}</span></div>
+      <pre class="dr-suggest-draft">{{.Draft}}</pre>
+    </li>
+    {{end}}
+  </ul>
+  <div class="dr-suggest-actions">
+    <button type="button" class="dr-suggest-apply" data-target="description" data-value="{{.S.Proposed}}">Apply</button>
     <button type="button" class="dr-suggest-dismiss">Dismiss</button>
   </div>
 </div>
