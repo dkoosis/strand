@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -47,7 +46,13 @@ func classify(msg string) error {
 // (spec D6/Q5: every bd call goes through one mutex'd helper). One global lock is
 // the safest reading: it over-serializes across distinct repos, but strand is a
 // single localhost user and that cost is nil next to a corrupted store.
-var execMu sync.Mutex
+//
+// It is a capacity-1 channel, not a sync.Mutex, so acquisition can honor the
+// caller's context (st-kl8): a send takes the lock, a receive releases it, and a
+// select on ctx.Done() lets a caller whose deadline passes while it waits bail
+// out with ctx.Err() instead of blocking forever behind a hung holder. Capacity
+// 1 keeps the single-writer guarantee — at most one goroutine holds the slot.
+var execMu = make(chan struct{}, 1)
 
 // Issue mirrors the JSON shape bd emits from `list`/`show`. Fields bd omits stay
 // at their zero value; extra fields bd adds later are ignored, not an error.
@@ -139,8 +144,29 @@ func (c *Client) bin() string {
 // run executes bd with args and returns stdout. A non-zero exit becomes an error
 // carrying bd's stderr, which is usually a readable hint.
 func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
-	execMu.Lock()
-	defer execMu.Unlock()
+	// Acquire the single-writer lock, but honor ctx: if the caller's deadline
+	// passes while it waits behind a held lock, return ctx.Err() rather than
+	// block indefinitely. A hung bd holder must not starve every concurrent
+	// caller past its own deadline (st-kl8). The send acquires; the deferred
+	// receive releases. Serialization is unchanged — exactly one holder at a time.
+	// Fast-fail an already-done ctx: a free lock could otherwise win the select
+	// pseudo-randomly over ctx.Done(), spawning a doomed exec.
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("bd: acquire write lock: %w", err)
+	}
+	select {
+	case execMu <- struct{}{}:
+	case <-ctx.Done():
+		return nil, fmt.Errorf("bd: acquire write lock: %w", ctx.Err())
+	}
+	defer func() { <-execMu }()
+	// We hold the lock, but ctx may have fired while we waited behind a held
+	// holder — the select can pick the send when both cases are ready. Surface
+	// ctx.Err() rather than run a doomed command that misclassifies as ErrBD,
+	// so the parked-waiter timeout path stays deterministic (st-kl8).
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("bd: acquire write lock: %w", err)
+	}
 	//nolint:gosec // G204: bd is an operator-configured binary and args run via exec (no shell), so values like a status filter can't inject commands.
 	cmd := exec.CommandContext(ctx, c.bin(), args...)
 	cmd.Dir = c.Dir

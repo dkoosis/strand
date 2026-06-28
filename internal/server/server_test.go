@@ -138,7 +138,7 @@ func (s *stubBD) Comment(_ context.Context, id, text string) error {
 		return s.writeErr
 	}
 	if text == "" {
-		return bd.ErrEmptyText
+		return fmt.Errorf("comment: empty text: %w", bd.ErrInvalidArg)
 	}
 	if s.comments == nil {
 		s.comments = map[string][]bd.Comment{}
@@ -219,7 +219,7 @@ func (s *stubBD) Create(_ context.Context, opts *bd.CreateOpts) (*bd.Issue, erro
 		return nil, s.writeErr
 	}
 	if opts.Title == "" {
-		return nil, bd.ErrEmptyTitle
+		return nil, fmt.Errorf("create: empty title: %w", bd.ErrInvalidArg)
 	}
 	// The first Create of a request keeps the legacy demo-new id (the common
 	// single create, and the new-parent mint which always runs first). A second
@@ -1498,7 +1498,7 @@ func TestAddEmptyCommentIsHonest(t *testing.T) {
 	if !strings.Contains(body, "Keep me") {
 		t.Errorf("drawer dropped the bead on a failed comment:\n%s", body)
 	}
-	if !strings.Contains(body, bd.ErrEmptyText.Error()) {
+	if !strings.Contains(body, "empty text") {
 		t.Errorf("drawer hides the empty-comment error:\n%s", body)
 	}
 }
@@ -1674,7 +1674,7 @@ func TestCreateEmptyTitleIsHonest(t *testing.T) {
 	if !strings.Contains(body, `hx-post="/new"`) {
 		t.Errorf("failed create did not re-render the form:\n%s", body)
 	}
-	if !strings.Contains(body, bd.ErrEmptyTitle.Error()) {
+	if !strings.Contains(body, "empty title") {
 		t.Errorf("form hides the empty-title error:\n%s", body)
 	}
 }
