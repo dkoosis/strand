@@ -171,7 +171,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /board", s.handleBoard)
 	mux.HandleFunc("GET /insights", s.handleInsights)
 	mux.HandleFunc("GET /bead/{id}", s.handleBead)
-	s.mutate(mux, "GET /bead/{id}/suggest", s.handleSuggest)
+	mux.HandleFunc("GET /bead/{id}/suggest", s.handleSuggest)
 	s.mutate(mux, "PATCH /bead/{id}", s.handleEdit)
 	s.mutate(mux, "POST /bead/{id}/move", s.handleMove)
 	s.mutate(mux, "POST /bead/{id}/rank", s.handleRank)

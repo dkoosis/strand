@@ -70,6 +70,26 @@ func TestTitleFlagsAndRewrites(t *testing.T) {
 			in:      TitleInput{Title: "Phase 3", Type: "task", Parent: "Drawer shaping surface"},
 			wantHas: "Drawer shaping surface",
 		},
+		{
+			name:    "bolded lead verb is recognized through markdown emphasis",
+			in:      TitleInput{Title: "Phase 2", Type: "story", Body: "**Add** a suggest preview slot to the drawer."},
+			wantHas: "Add a suggest preview slot",
+		},
+		{
+			name:    "leading code fence is skipped, not used as the clause",
+			in:      TitleInput{Title: "cleanup", Type: "task", Body: "```go\nfunc x() {}\n```\nGuard the loader against a nil repo."},
+			wantHas: "Guard the loader",
+		},
+		{
+			name:    "ordered-list marker is stripped before sentence cutting",
+			in:      TitleInput{Title: "Phase 1", Type: "task", Body: "1. Add the suggest preview slot."},
+			wantHas: "Add the suggest preview slot",
+		},
+		{
+			name:    "bucket word with a trailing colon is still stripped",
+			in:      TitleInput{Title: "Cleanup: the registry loader", Type: "task"},
+			wantHas: "registry loader",
+		},
 	}
 
 	for _, tc := range tests {

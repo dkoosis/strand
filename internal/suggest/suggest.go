@@ -118,7 +118,7 @@ func propose(in TitleInput) string {
 // action verb — that clause is itself a Verb-object title — trimmed to a title
 // length. Empty when the body is missing or its opener is not an action verb.
 func actionPhrase(body string) string {
-	words := strings.Fields(firstClause(body))
+	words := trimEmphasisWords(strings.Fields(firstClause(body)))
 	if len(words) == 0 || !actionVerbs[strings.ToLower(words[0])] {
 		return ""
 	}
@@ -138,21 +138,41 @@ func objectPhrase(title, body, parent string) string {
 }
 
 // firstClause returns the first meaningful clause of a body: the first non-blank,
-// non-heading line, cut at the first sentence terminator and stripped of leading
-// markdown bullet/quote marks.
+// non-heading line outside a fenced code block, cut at the first sentence
+// terminator and stripped of leading markdown bullet/quote and ordered-list marks.
 func firstClause(body string) string {
+	inFence := false
 	for raw := range strings.SplitSeq(body, "\n") {
 		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue // blank or markdown heading — not body content
+		if strings.HasPrefix(line, "```") {
+			inFence = !inFence
+			continue // a code-fence delimiter — toggle, never content
+		}
+		if inFence || line == "" || strings.HasPrefix(line, "#") {
+			continue // fenced code, blank, or markdown heading — not body content
 		}
 		line = strings.TrimSpace(strings.TrimLeft(line, "-*>•\t "))
+		line = stripListMarker(line) // drop a leading "1." before cutSentence sees its dot
 		if line == "" {
 			continue
 		}
 		return cutSentence(line)
 	}
 	return ""
+}
+
+// stripListMarker drops a leading ordered-list marker ("1.", "2)") so a numbered
+// step reads as its content. Without it, cutSentence would stop at the marker's
+// own period and return just the digit.
+func stripListMarker(line string) string {
+	i := 0
+	for i < len(line) && line[i] >= '0' && line[i] <= '9' {
+		i++
+	}
+	if i > 0 && i < len(line) && (line[i] == '.' || line[i] == ')') {
+		return strings.TrimSpace(line[i+1:])
+	}
+	return line
 }
 
 // cutSentence returns line up to its first sentence terminator (. ! ?), dropping
@@ -171,7 +191,9 @@ func stripBucket(title string) string {
 	words := strings.Fields(title)
 	out := words
 	for len(out) > 0 {
-		head := strings.ToLower(out[0])
+		// Trim trailing list/label punctuation so "Cleanup:" or "Refactor-" still
+		// matches a bucket word.
+		head := strings.TrimRight(strings.ToLower(out[0]), ":-")
 		if head == "phase" {
 			out = stripPhaseHead(out)
 			continue
@@ -201,7 +223,7 @@ func stripPhaseHead(words []string) []string {
 // cleanObject trims a phrase to a tidy object: cut at a sentence, drop a leading
 // article, and clamp the word count. Empty when nothing is left.
 func cleanObject(phrase string) string {
-	words := strings.Fields(cutSentence(strings.TrimSpace(phrase)))
+	words := trimEmphasisWords(strings.Fields(cutSentence(strings.TrimSpace(phrase))))
 	if len(words) > 0 && articles[strings.ToLower(words[0])] {
 		words = words[1:]
 	}
@@ -209,6 +231,19 @@ func cleanObject(phrase string) string {
 		return ""
 	}
 	return clamp(words, maxObjectWords)
+}
+
+// trimEmphasisWords strips surrounding markdown emphasis (*, _, ~, `) from each
+// word and drops any that reduce to nothing, so a bolded lead verb like **Add**
+// is recognized and a proposal never carries stray markup.
+func trimEmphasisWords(words []string) []string {
+	out := words[:0]
+	for _, w := range words {
+		if w = strings.Trim(w, "*_~`"); w != "" {
+			out = append(out, w)
+		}
+	}
+	return out
 }
 
 // verbForType picks the default leading verb when the body offers none, keyed to
