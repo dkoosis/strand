@@ -87,7 +87,11 @@ func main() {
 	}
 
 	log.Printf("strand %s: serving http://%s  (ctrl-c to stop)", Version, *addr)
-	if err := serve(ctx, httpSrv, ln); err != nil {
+	err = serve(ctx, httpSrv, ln)
+	// Drain detached background work (the deps prefetch) AFTER the HTTP drain, so
+	// no goroutine is still spawning bd or writing the snapshot cache at exit (str-47z).
+	srv.Stop()
+	if err != nil {
 		log.Fatalf("strand: %v", err)
 	}
 }

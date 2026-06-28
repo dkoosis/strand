@@ -122,6 +122,14 @@ type Server struct {
 	shutdown func()           // raised by POST /shutdown; a test seam over the interrupt hook
 	now      func() time.Time // clock for the stale cutoff; a test seam (default time.Now)
 	cache    *snapshotCache   // per-repo in-process read cache (strand-9s6)
+
+	// Lifecycle for detached background work (the Insights deps prefetch). bgCtx
+	// roots every goBackground context so Stop can cancel them; bgWG tracks the
+	// goroutines so Stop can wait them out. The HTTP drain covers request handlers
+	// only — these outlive their request and would otherwise escape it (str-47z).
+	bgCtx    context.Context //nolint:containedctx // the server owns the lifecycle of its detached goroutines; bgCtx IS that lifecycle, cancelled by Stop.
+	bgCancel context.CancelFunc
+	bgWG     sync.WaitGroup
 }
 
 // defaultShutdown raises os.Interrupt at strand's own process, so the Quit button
@@ -142,7 +150,33 @@ func defaultShutdown() {
 func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, static http.Handler, syn strand.Synthesis) *Server {
 	s := &Server{srcFor: srcFor, reg: reg, tmpl: tmpl, static: static, syn: syn, shutdown: defaultShutdown, now: time.Now}
 	s.cache = newSnapshotCache(func() time.Time { return s.now() })
+	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	return s
+}
+
+// goBackground runs fn in a tracked goroutine on a server-owned context, so work
+// that must outlive its request — the Insights deps prefetch (str-udl) — dies with
+// the server instead of escaping the shutdown drain (str-47z). The context is
+// detached from the request (the request ctx dies the moment the handler returns)
+// but rooted in bgCtx, which Stop cancels; the WaitGroup lets Stop block until the
+// goroutine lands, so no bd spawn or snapshot-cache write outlives shutdown.
+func (s *Server) goBackground(timeout time.Duration, fn func(context.Context)) {
+	s.bgWG.Go(func() {
+		ctx, cancel := context.WithTimeout(s.bgCtx, timeout)
+		defer cancel()
+		fn(ctx)
+	})
+}
+
+// Stop cancels in-flight background work (goBackground) and waits for it to land.
+// httpSrv.Shutdown drains request handlers only; the detached prefetch goroutines
+// outlive it, so main calls Stop AFTER the HTTP drain to guarantee nothing is
+// still spawning bd or writing the snapshot cache once the process exits (str-47z).
+// Cancellation makes the wait short — an in-flight `bd dep list` is killed via its
+// context rather than run to its 10s timeout. Idempotent.
+func (s *Server) Stop() {
+	s.bgCancel()
+	s.bgWG.Wait()
 }
 
 // source resolves the active repo's issue source. ok is false when no repo is
@@ -370,15 +404,15 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	// Open warms every view, not just this one: buildStrand warmed the List
 	// snapshot, so prefetch the repo-wide Deps too — that makes the first Insights
 	// click (the one view needing edges) hit memory instead of paying a cold `dep
-	// list` spawn (str-udl). Warm it in the background on a detached context: the
-	// landing must not block on a ~0.5s spawn the user may never need, and the
-	// request ctx dies the moment handleHome returns. A prefetch failure is
-	// non-fatal — the landing renders and Insights fetches its own deps on demand.
-	go func() {
-		bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, _ = src.Deps(bgCtx)
-	}()
+	// list` spawn (str-udl). Warm it in the background, detached from the request
+	// (the landing must not block on a ~0.5s spawn the user may never need, and the
+	// request ctx dies the moment handleHome returns) but bound to the server via
+	// goBackground, so shutdown drains it instead of letting it escape (str-47z). A
+	// prefetch failure is non-fatal — the landing renders and Insights fetches its
+	// own deps on demand.
+	s.goBackground(10*time.Second, func(ctx context.Context) {
+		_, _ = src.Deps(ctx)
+	})
 	s.render(w, "page", pageData{
 		Strand: f,
 		List:   listViewFor(f, "", "", ""),
@@ -1397,7 +1431,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "createForm", form)
 	}
 
-	parent, err := s.resolveParent(ctx, src, &form)
+	parent, minted, err := s.resolveParent(ctx, src, &form)
 	if err != nil {
 		reject(err)
 		return
@@ -1409,7 +1443,9 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	issue, err := src.Create(ctx, &opts)
 	if err != nil {
-		reject(err)
+		// The child create failed; if we just minted its parent, undo it so the
+		// failed pair leaves no orphan epic (str-qig).
+		reject(compensateOrphan(src, minted, err))
 		return
 	}
 	w.Header().Set("HX-Trigger", "refreshList")
@@ -1417,32 +1453,55 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // resolveParent turns the picker choice into the --parent id the create should
-// carry, enforcing the forced-parent contract. The empty choice is rejected
-// (no accidental parentless bead); off-epic resolves to "" (a deliberate root);
-// the inline path mints a new epic and returns its id; anything else is taken as
-// an existing parent id. Minting the parent first means a failure there surfaces
-// before the child is created, so a half-made pair can't result.
-func (s *Server) resolveParent(ctx context.Context, src IssueSource, form *createForm) (string, error) {
+// carry, enforcing the forced-parent contract. The empty choice is rejected (no
+// accidental parentless bead); off-epic resolves to "" (a deliberate root); the
+// inline path mints a new epic and returns its id; anything else is taken as an
+// existing parent id. The minted issue is returned (non-nil only on the inline
+// path) so the caller can compensate it away if the child create then fails: bd
+// has no transaction, so a parent-mint that succeeds before a failed child would
+// otherwise orphan the epic (str-qig).
+func (s *Server) resolveParent(ctx context.Context, src IssueSource, form *createForm) (parent string, minted *bd.Issue, err error) {
 	switch form.Parent {
 	case "":
-		return "", errNoParent
+		return "", nil, errNoParent
 	case parentOffEpic:
-		return "", nil
+		return "", nil, nil
 	case parentNew:
 		if form.ParentNewTitle == "" {
-			return "", errNoParentTitle
+			return "", nil, errNoParentTitle
 		}
-		parent, err := src.Create(ctx, &bd.CreateOpts{Title: form.ParentNewTitle, Type: "epic"})
+		epic, err := src.Create(ctx, &bd.CreateOpts{Title: form.ParentNewTitle, Type: "epic"})
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
-		if parent == nil {
-			return "", errNoParent
+		if epic == nil {
+			return "", nil, errNoParent
 		}
-		return parent.ID, nil
+		return epic.ID, epic, nil
 	default:
-		return form.Parent, nil
+		return form.Parent, nil, nil
 	}
+}
+
+// compensateOrphan cleans up a parent epic that was just minted for a create /
+// reparent that then failed, so a failed two-call pair leaves no orphan behind.
+// bd has no transaction (one serialized write path through the subprocess), so
+// this is best-effort compensation, not a rollback. minted is nil whenever the
+// parent already existed (an existing pick, or off-epic) — nothing to undo, and
+// the cause is returned untouched. The delete runs on a fresh bounded context
+// because the request ctx may be the very thing that failed (timeout/cancel) and
+// would refuse the compensating write too. If the delete also fails the orphan
+// can't be hidden, so the returned error names it for the user to remove by hand.
+func compensateOrphan(src IssueSource, minted *bd.Issue, cause error) error {
+	if minted == nil {
+		return cause
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := src.Delete(ctx, minted.ID); err != nil {
+		return fmt.Errorf("%w — and its new parent %s could not be cleaned up; delete it by hand", cause, minted.ID)
+	}
+	return cause
 }
 
 // attachForm is the "No epic" → attach-to-epic drawer's state: the orphan story
@@ -1533,13 +1592,15 @@ func (s *Server) handleAttachEpic(w http.ResponseWriter, r *http.Request) {
 		reject(errNoAttachStory)
 		return
 	}
-	epicID, err := s.resolveAttachEpic(ctx, src, &form)
+	epicID, minted, err := s.resolveAttachEpic(ctx, src, &form)
 	if err != nil {
 		reject(err)
 		return
 	}
 	if _, err := src.SetParent(ctx, form.StoryID, epicID); err != nil {
-		reject(err)
+		// The reparent failed; if we just minted the target epic, undo it so the
+		// failed attach leaves no orphan epic (str-qig).
+		reject(compensateOrphan(src, minted, err))
 		return
 	}
 	w.Header().Set("HX-Trigger", "refreshList")
@@ -1553,25 +1614,28 @@ func (s *Server) handleAttachEpic(w http.ResponseWriter, r *http.Request) {
 
 // resolveAttachEpic turns the picker choice into the epic id the reparent targets.
 // The inline path mints a new epic and returns its id; an existing choice is taken
-// as the epic id; an empty choice is rejected (no accidental no-op move).
-func (s *Server) resolveAttachEpic(ctx context.Context, src IssueSource, form *attachForm) (string, error) {
+// as the epic id; an empty choice is rejected (no accidental no-op move). The
+// minted issue is returned (non-nil only on the inline path) so the caller can
+// compensate it away if the reparent then fails — bd has no transaction, so a
+// mint-then-failed-SetParent would otherwise orphan the epic (str-qig).
+func (s *Server) resolveAttachEpic(ctx context.Context, src IssueSource, form *attachForm) (epicID string, minted *bd.Issue, err error) {
 	switch form.Epic {
 	case attachNew:
 		if form.EpicTitle == "" {
-			return "", errNoEpicChoice
+			return "", nil, errNoEpicChoice
 		}
 		epic, err := src.Create(ctx, &bd.CreateOpts{Title: form.EpicTitle, Type: "epic"})
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		if epic == nil {
-			return "", errNoEpicChoice
+			return "", nil, errNoEpicChoice
 		}
-		return epic.ID, nil
+		return epic.ID, epic, nil
 	case "":
-		return "", errNoEpicChoice
+		return "", nil, errNoEpicChoice
 	default:
-		return form.Epic, nil
+		return form.Epic, nil, nil
 	}
 }
 

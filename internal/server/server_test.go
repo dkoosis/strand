@@ -24,6 +24,10 @@ import (
 // the kind statusForError must treat as our own 500.
 var errMarshal = errors.New("json: unsupported type")
 
+// errStubWrite stands in for a bd write failure the stub injects on demand
+// (createFailAt) — the partial-create failure path the orphan guard handles (str-qig).
+var errStubWrite = errors.New("bd: write failed")
+
 // stubBD is an in-memory issueSource so the handlers run without the bd CLI
 // (spec Q0: fake the bd boundary, assert on the rendered HTML).
 type stubBD struct {
@@ -34,6 +38,12 @@ type stubBD struct {
 	listErr  error
 	showErr  error
 	writeErr error // when set, every write fails with it; the show map stays put
+
+	createCalls  int      // count of Create calls so far (incl. failed) — drives createFailAt.
+	createFailAt int      // 1-based index of the Create call that fails (0 = never); models a child create failing after the parent minted (str-qig).
+	setParentErr error    // when set, SetParent fails but Create still succeeds — models a reparent failing after the epic minted (str-qig).
+	deleteErr    error    // when set, Delete fails — models compensation itself failing (str-qig).
+	deleteWrites []string // ordered log of Delete ids, for the orphan-compensation tests.
 
 	lastField   string // the field/value of the most recent Update — lets the board
 	lastValue   string // move test assert it issued the right bd update.
@@ -201,6 +211,10 @@ func (s *stubBD) LabelRemove(_ context.Context, id, label string) error {
 // Create mints a bead with a fixed id and stores it so the post-create drawer
 // re-read finds it; an empty title fails like bd's validation does.
 func (s *stubBD) Create(_ context.Context, opts *bd.CreateOpts) (*bd.Issue, error) {
+	s.createCalls++
+	if s.createFailAt == s.createCalls {
+		return nil, errStubWrite
+	}
 	if s.writeErr != nil {
 		return nil, s.writeErr
 	}
@@ -233,6 +247,10 @@ func (s *stubBD) DeletePreview(_ context.Context, id string) (string, error) {
 }
 
 func (s *stubBD) Delete(_ context.Context, id string) error {
+	s.deleteWrites = append(s.deleteWrites, id)
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
 	if s.writeErr != nil {
 		return s.writeErr
 	}
@@ -293,6 +311,9 @@ func (s *stubBD) SetRank(_ context.Context, id string, rank float64) (*bd.Issue,
 // follow-up buildStrand re-read sees the story laddered up under its epic.
 // writeErr models a bd outage: the list stays put and the handler must surface it.
 func (s *stubBD) SetParent(_ context.Context, id, parent string) (*bd.Issue, error) {
+	if s.setParentErr != nil {
+		return nil, s.setParentErr
+	}
 	if s.writeErr != nil {
 		return nil, s.writeErr
 	}
@@ -366,6 +387,51 @@ func TestReadHelpersTakeReadSource(t *testing.T) {
 	srv.renderDrawer(ctx, rec, src, &sampleIssues[0], nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("renderDrawer status = %d, want 200", rec.Code)
+	}
+}
+
+// prefetchStub overrides the embedded stub's Deps with one that parks on its
+// context, so a test can prove the home-page deps prefetch is tracked: it signals
+// when it starts and reports the context error it ends on. Every other method
+// comes from the embedded *stubBD.
+type prefetchStub struct {
+	*stubBD
+	started chan struct{} // closed when Deps begins running
+	ctxErr  chan error    // the ctx.Err() the parked Deps returned on
+}
+
+func (p *prefetchStub) Deps(ctx context.Context, _ ...string) ([]bd.DepEdge, error) {
+	close(p.started)
+	<-ctx.Done()
+	p.ctxErr <- ctx.Err()
+	return nil, ctx.Err()
+}
+
+// TestStopDrainsPrefetch pins the shutdown ordering (str-47z): handleHome spawns
+// the deps prefetch on a server-owned context, and Stop must cancel it and block
+// until it lands — so no detached goroutine outlives shutdown writing the snapshot
+// cache. The buffered ctxErr lets the post-Stop read be non-blocking: if Stop
+// returned before the goroutine finished, the channel would still be empty.
+func TestStopDrainsPrefetch(t *testing.T) {
+	p := &prefetchStub{
+		stubBD:  &stubBD{issues: sampleIssues},
+		started: make(chan struct{}),
+		ctxErr:  make(chan error, 1),
+	}
+	srv := newTestServer(t, p)
+
+	do(t, srv, "/") // handleHome spawns the prefetch on the server context
+	<-p.started     // it is running, parked on that context
+
+	srv.Stop() // must cancel the prefetch and wait for it to return
+
+	select {
+	case err := <-p.ctxErr:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("prefetch ended on %v, want context.Canceled", err)
+		}
+	default:
+		t.Fatal("Stop returned before the prefetch drained")
 	}
 }
 
@@ -688,6 +754,32 @@ func TestAttachEpicNew(t *testing.T) {
 	// reparent onto exactly that fresh id.
 	if len(stub.parentWrites) != 1 || stub.parentWrites[0] != (parentWrite{"solo", "demo-new"}) {
 		t.Errorf("reparent write = %+v, want one {solo demo-new}", stub.parentWrites)
+	}
+}
+
+// TestAttachEpicNewReparentFailureCompensatesEpic: when the new epic mints but the
+// reparent then fails, the handler best-effort deletes the freshly minted epic so
+// no orphan is left, and re-renders the form with bd's error (str-qig).
+func TestAttachEpicNewReparentFailureCompensatesEpic(t *testing.T) {
+	stub := &stubBD{
+		issues:       []bd.Issue{{ID: "solo", Title: "Standalone", IssueType: "task", Status: "open", Priority: new(2)}},
+		show:         map[string]*bd.Issue{"solo": {ID: "solo", Title: "Standalone"}},
+		setParentErr: errStubWrite, // epic mints, reparent fails
+	}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/attach-epic", "story=solo&epic=__new__&epic_new=Fresh+Epic")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /attach-epic = %d, want 200 (form re-render)", rec.Code)
+	}
+	if len(stub.createOpts) != 1 {
+		t.Fatalf("epic should still have minted, got %+v", stub.createOpts)
+	}
+	if len(stub.deleteWrites) != 1 || stub.deleteWrites[0] != "demo-new" {
+		t.Errorf("orphan epic not compensated: deleteWrites = %v, want [demo-new]", stub.deleteWrites)
+	}
+	if !strings.Contains(rec.Body.String(), errStubWrite.Error()) {
+		t.Errorf("form hides bd's reparent error:\n%s", rec.Body.String())
 	}
 }
 
@@ -1419,6 +1511,48 @@ func TestCreateNewParentInline(t *testing.T) {
 	}
 	if stub.createOpts[1].Title != "Child" || stub.createOpts[1].Parent != "demo-new" {
 		t.Errorf("child should hang under the minted parent, got %+v", stub.createOpts[1])
+	}
+}
+
+// TestCreateChildFailureCompensatesParent: when the inline-new-parent epic mints
+// but the child create then fails, the handler best-effort deletes the freshly
+// minted epic so no orphan is left, and re-renders the form with bd's error (str-qig).
+func TestCreateChildFailureCompensatesParent(t *testing.T) {
+	stub := &stubBD{show: map[string]*bd.Issue{}, createFailAt: 2} // 1st create (parent) ok, 2nd (child) fails
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/new",
+		"title=Child&type=task&priority=2&parent=__new__&parent_new=New+Epic")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /new = %d, want 200 (form re-render)", rec.Code)
+	}
+	if len(stub.deleteWrites) != 1 || stub.deleteWrites[0] != "demo-new" {
+		t.Errorf("orphan parent not compensated: deleteWrites = %v, want [demo-new]", stub.deleteWrites)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `hx-post="/new"`) {
+		t.Errorf("failed create did not re-render the form:\n%s", body)
+	}
+	if !strings.Contains(body, errStubWrite.Error()) {
+		t.Errorf("form hides bd's create error:\n%s", body)
+	}
+}
+
+// TestCreateChildFailureSurfacesUncleanedOrphan: when the child create fails AND
+// the compensating delete also fails, the handler can't hide the orphan — it
+// names the leftover epic in the error so the user can remove it by hand (str-qig).
+func TestCreateChildFailureSurfacesUncleanedOrphan(t *testing.T) {
+	stub := &stubBD{show: map[string]*bd.Issue{}, createFailAt: 2, deleteErr: errStubWrite}
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/new",
+		"title=Child&type=task&priority=2&parent=__new__&parent_new=New+Epic")
+
+	if len(stub.deleteWrites) != 1 {
+		t.Fatalf("compensation not attempted: deleteWrites = %v", stub.deleteWrites)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "demo-new") || !strings.Contains(body, "could not be cleaned up") {
+		t.Errorf("uncleaned orphan not surfaced to the user:\n%s", body)
 	}
 }
 
