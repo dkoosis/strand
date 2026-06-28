@@ -1,6 +1,47 @@
 package bd
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+)
+
+// TestRun_ReturnsContextErr_When_CancelledWaitingOnHeldLock pins the liveness fix
+// from st-kl8: the process-wide single-writer lock (execMu) must honor ctx while a
+// caller waits for it. We hold the lock for the whole test so the caller can never
+// acquire it; with a context-blind Lock() the caller blocks behind the holder
+// indefinitely (the bug). A ctx-aware acquisition returns ctx.Err() promptly even
+// though the lock is still held — proving the wait, not just the run, respects ctx.
+// Holding the lock the entire time is the proof: run can only exit via ctx.Done().
+func TestRun_ReturnsContextErr_When_CancelledWaitingOnHeldLock(t *testing.T) {
+	// Acquire and hold the single-writer lock; release only at test end (after we
+	// have observed the caller's return) so the lock is unavailable throughout.
+	execMu <- struct{}{}
+	defer func() { <-execMu }()
+
+	c := &Client{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := c.run(ctx, "list", "--json")
+		errCh <- err
+	}()
+
+	// Cancel while the caller is parked waiting on the held lock.
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("run returned %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("run blocked on the held lock past ctx cancel; execMu must honor ctx")
+	}
+}
 
 // TestDecodeIssuePriority pins the Priority decode contract now that Issue.Priority
 // is *int. A present field decodes to a non-nil pointer (0 included); an absent
