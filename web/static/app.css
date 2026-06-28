@@ -425,6 +425,23 @@ input.dr-title:focus { border-color: var(--st-open); outline: none; background: 
 .dr-actions { display: flex; gap: var(--s-3); margin-top: var(--s-5); }
 .dr-actions button { font: inherit; font-size: var(--fs-8); padding: var(--s-2) var(--s-5); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; }
 .dr-actions button:hover { border-color: var(--st-open); color: var(--st-open); }
+/* title Suggest (st-suggest.1): a subtle button under the title and the
+   current-vs-proposed preview slot it loads. */
+.dr-title-tools { margin: var(--s-2) 0 0; }
+.dr-suggest-btn { font: inherit; font-size: var(--fs-9); letter-spacing: .03em; padding: var(--s-1) var(--s-3); border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--ink-3); cursor: pointer; }
+.dr-suggest-btn:hover { border-color: var(--st-open); color: var(--st-open); }
+.dr-suggest-preview:empty { display: none; }
+.dr-suggest { margin: var(--s-3) 0 0; padding: var(--s-3) var(--s-4); border: 1px solid var(--line); border-radius: 6px; background: color-mix(in srgb, var(--st-open) 6%, transparent); }
+.dr-suggest-none { margin: var(--s-3) 0 0; font-size: var(--fs-8); color: var(--ink-3); }
+.dr-suggest-row { display: flex; gap: var(--s-3); align-items: baseline; margin: var(--s-1) 0; font-size: var(--fs-8); }
+.dr-suggest-tag { flex: none; width: 4.5em; font-size: var(--fs-9); letter-spacing: .04em; text-transform: uppercase; color: var(--ink-4); }
+.dr-suggest-proposed { font-weight: 600; color: var(--ink); }
+.dr-suggest-why { margin: var(--s-2) 0 0; font-size: var(--fs-9); color: var(--ink-3); }
+.dr-suggest-actions { display: flex; gap: var(--s-3); margin-top: var(--s-3); }
+.dr-suggest-actions button { font: inherit; font-size: var(--fs-8); padding: var(--s-1) var(--s-4); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); cursor: pointer; }
+.dr-suggest-apply:hover { border-color: var(--st-open); color: var(--st-open); }
+.dr-suggest-dismiss:hover { border-color: var(--st-blocked); color: var(--st-blocked); }
+
 .dr-field { display: block; margin: 0 0 var(--s-4); }
 .dr-field label { display: block; font-size: var(--fs-9); letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
 .dr-field select, .dr-field input, .dr-field textarea { width: 100%; font: inherit; font-size: var(--fs-base); margin-top: var(--s-2); padding: var(--s-2) var(--s-3); border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }

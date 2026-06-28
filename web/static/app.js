@@ -242,6 +242,30 @@ document.addEventListener("keydown", (e) => {
     minimapFilter(f);
   }
 });
+
+// ---- title Suggest (st-suggest.1) ----
+// The Suggest button loads a current-vs-proposed preview into #dr-suggest-preview.
+// Apply copies the proposed text into the existing title input and dispatches its
+// change event, so the normal change→PATCH edit path commits it — Suggest itself
+// writes nothing. Dismiss just clears the preview. Delegated so both keep working
+// after htmx swaps the drawer or the preview fragment in.
+function clearSuggestPreview() {
+  const slot = document.getElementById("dr-suggest-preview");
+  if (slot) slot.innerHTML = "";
+}
+document.addEventListener("click", (e) => {
+  const apply = e.target.closest(".dr-suggest-apply");
+  if (apply) {
+    const input = document.querySelector(".dr-title");
+    if (input) {
+      input.value = apply.getAttribute("data-value") || "";
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    clearSuggestPreview();
+    return;
+  }
+  if (e.target.closest(".dr-suggest-dismiss")) clearSuggestPreview();
+});
 // Keyboard-activated [role=button] tiles/rows/heads fire htmx on keyup (Enter/Space),
 // but Space's default page-scroll happens on keydown — before the keyup trigger. htmx
 // won't preventDefault a keydown on a non-form element, so cancel it here; activation

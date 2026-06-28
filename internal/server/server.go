@@ -26,6 +26,7 @@ import (
 	"github.com/dkoosis/strand/internal/jtbd"
 	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/internal/strand"
+	"github.com/dkoosis/strand/internal/suggest"
 )
 
 // errNoRepo means no beads workspace is active. The landing turns it into an
@@ -170,6 +171,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /board", s.handleBoard)
 	mux.HandleFunc("GET /insights", s.handleInsights)
 	mux.HandleFunc("GET /bead/{id}", s.handleBead)
+	mux.HandleFunc("GET /bead/{id}/suggest", s.handleSuggest)
 	s.mutate(mux, "PATCH /bead/{id}", s.handleEdit)
 	s.mutate(mux, "POST /bead/{id}/move", s.handleMove)
 	s.mutate(mux, "POST /bead/{id}/rank", s.handleRank)
@@ -1075,6 +1077,56 @@ func (s *Server) handleBead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderDrawer(ctx, w, src, issue, nil)
+}
+
+// suggestPreview is the Suggest slot's data: the bead id (so Apply/Dismiss act on
+// the right drawer), the current title, and the deterministic proposal. S.None
+// drives the "nothing to suggest" branch; otherwise the template renders
+// current-vs-proposed with Apply/Dismiss controls.
+type suggestPreview struct {
+	ID      string
+	Current string
+	S       suggest.Suggestion
+}
+
+// handleSuggest renders a Tier-1 title suggestion for the bead as a current-vs-
+// proposed preview. It is read-only by design (st-suggest.1): it loads the bead,
+// runs the deterministic namer, and renders the preview slot — no bd write.
+// Apply is the user's gesture in the browser, which copies the proposal into the
+// existing title input and fires its change→PATCH edit path; Suggest itself
+// writes nothing. .1 serves title only, whatever ?kind requests.
+func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := reqContext(r)
+	defer cancel()
+	src, _, ok := s.source()
+	if !ok {
+		s.renderError(w, errNoRepo)
+		return
+	}
+	issue, err := src.Show(ctx, r.PathValue("id"))
+	if err != nil {
+		s.renderError(w, err)
+		return
+	}
+	if issue == nil {
+		s.renderError(w, errNoIssue)
+		return
+	}
+	parent := ""
+	if issue.Parent != "" {
+		// Best-effort graph context: a read miss leaves it empty, never an error —
+		// Suggest stays advisory and must not fail on a thin parent link.
+		if p, perr := src.Show(ctx, issue.Parent); perr == nil && p != nil {
+			parent = p.Title
+		}
+	}
+	sg := suggest.Title(suggest.TitleInput{
+		Title:  issue.Title,
+		Body:   issue.Description,
+		Type:   issue.IssueType,
+		Parent: parent,
+	})
+	s.render(w, "suggestPreview", suggestPreview{ID: issue.ID, Current: issue.Title, S: sg})
 }
 
 // renderDrawer redraws the detail panel from bd's truth: the issue plus its

@@ -364,6 +364,10 @@
     <input type="hidden" name="field" value="title">
     <input class="dr-title" name="value" value="{{.Title}}" aria-label="title">
   </form>
+  <div class="dr-title-tools">
+    <button type="button" class="dr-suggest-btn" hx-get="/bead/{{.ID}}/suggest?kind=title" hx-target="#dr-suggest-preview" hx-swap="innerHTML">Suggest title</button>
+  </div>
+  <div id="dr-suggest-preview" class="dr-suggest-preview" aria-live="polite"></div>
   <div class="dr-shape-row">
     <form class="dr-field dr-field-inline" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change" onsubmit="event.preventDefault();">
       <input type="hidden" name="field" value="priority">
@@ -462,6 +466,26 @@
     <div class="dr-sys-row"><dt>Est. cost (USD)</dt><dd>{{metaVal .Metadata "est_cost_usd"}}</dd></div>
   </dl>
 </div>
+{{end}}
+
+{{/* suggestPreview is the read-only Suggest slot (st-suggest.1): current-vs-
+     proposed with Apply/Dismiss. Apply copies the proposal into the existing
+     .dr-title input and fires its change event (app.js), so the normal
+     change→PATCH edit path commits it — Suggest writes nothing itself. */}}
+{{define "suggestPreview"}}
+{{if .S.None}}
+<div class="dr-suggest-none" role="status">Title already reads as Verb + object — nothing to suggest.</div>
+{{else}}
+<div class="dr-suggest" role="group" aria-label="title suggestion">
+  <div class="dr-suggest-row"><span class="dr-suggest-tag">current</span><span class="dr-suggest-text">{{.Current}}</span></div>
+  <div class="dr-suggest-row"><span class="dr-suggest-tag">proposed</span><span class="dr-suggest-text dr-suggest-proposed">{{.S.Proposed}}</span></div>
+  {{if .S.Why}}<p class="dr-suggest-why">{{.S.Why}}</p>{{end}}
+  <div class="dr-suggest-actions">
+    <button type="button" class="dr-suggest-apply" data-value="{{.S.Proposed}}">Apply</button>
+    <button type="button" class="dr-suggest-dismiss">Dismiss</button>
+  </div>
+</div>
+{{end}}
 {{end}}
 
 {{define "createForm"}}

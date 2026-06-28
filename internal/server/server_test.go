@@ -35,8 +35,9 @@ type stubBD struct {
 	showErr  error
 	writeErr error // when set, every write fails with it; the show map stays put
 
-	lastField string // the field/value of the most recent Update — lets the board
-	lastValue string // move test assert it issued the right bd update.
+	lastField   string // the field/value of the most recent Update — lets the board
+	lastValue   string // move test assert it issued the right bd update.
+	updateCalls int    // count of Update calls — the Suggest tests assert Apply is one write, no write path of its own.
 
 	rankWrites   []rankWrite   // ordered log of SetRank calls, for the reorder tests.
 	parentWrites []parentWrite // ordered log of SetParent calls, for the attach-epic tests.
@@ -246,6 +247,7 @@ func (s *stubBD) Delete(_ context.Context, id string) error {
 
 func (s *stubBD) Update(_ context.Context, id, field, value string) (*bd.Issue, error) {
 	s.lastField, s.lastValue = field, value
+	s.updateCalls++
 	if s.writeErr != nil {
 		return nil, s.writeErr
 	}
@@ -1118,6 +1120,99 @@ func TestEditFieldReflects(t *testing.T) {
 	}
 	if strings.Contains(body, "Old name") {
 		t.Error("drawer still shows the stale title")
+	}
+}
+
+// TestDrawerHasSuggestAffordance: the drawer renders the Suggest button wired to
+// the read-only suggest endpoint and the preview slot it targets (st-suggest.1).
+func TestDrawerHasSuggestAffordance(t *testing.T) {
+	srv := newTestServer(t, oneBead(&bd.Issue{
+		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "story",
+		Description: "Add a suggest preview slot to the drawer.",
+	}))
+	body := do(t, srv, "/bead/demo-x").Body.String()
+	for _, want := range []string{
+		`class="dr-suggest-btn"`,
+		`hx-get="/bead/demo-x/suggest?kind=title"`,
+		`id="dr-suggest-preview"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("drawer missing suggest affordance %q", want)
+		}
+	}
+}
+
+// TestSuggestPreviewRenders: GET suggest on an inert-titled bead renders a
+// current-vs-proposed preview with Apply/Dismiss, drawn from the body, and writes
+// nothing — the endpoint is read-side (st-suggest.1).
+func TestSuggestPreviewRenders(t *testing.T) {
+	stub := oneBead(&bd.Issue{
+		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "story",
+		Description: "Add a suggest preview slot to the drawer.",
+	})
+	srv := newTestServer(t, stub)
+	rec := do(t, srv, "/bead/demo-x/suggest?kind=title")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET suggest = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"current", "proposed", "Phase 2", // current-vs-proposed framing + the live title
+		"Add a suggest preview slot",                  // the Verb-object proposal from the body
+		`class="dr-suggest-apply"`, `data-value="Add`, // Apply carries the proposal
+		`class="dr-suggest-dismiss"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("preview missing %q:\n%s", want, body)
+		}
+	}
+	if stub.updateCalls != 0 {
+		t.Errorf("suggest issued %d writes, want 0 (read-only)", stub.updateCalls)
+	}
+}
+
+// TestSuggestSharpTitleNothing: a title that already reads as Verb-object yields
+// the "nothing to suggest" preview with no Apply control (st-suggest.1).
+func TestSuggestSharpTitleNothing(t *testing.T) {
+	stub := oneBead(&bd.Issue{
+		ID: "demo-x", Title: "Add the waiting-on-you lane", Status: "open",
+		IssueType: "story", Description: "Body text.",
+	})
+	srv := newTestServer(t, stub)
+	rec := do(t, srv, "/bead/demo-x/suggest?kind=title")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET suggest = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "nothing to suggest") {
+		t.Errorf("sharp title did not yield the nothing-to-suggest preview:\n%s", body)
+	}
+	if strings.Contains(body, `class="dr-suggest-apply"`) {
+		t.Error("sharp-title preview offered an Apply control")
+	}
+	if stub.updateCalls != 0 {
+		t.Errorf("suggest issued %d writes, want 0 (read-only)", stub.updateCalls)
+	}
+}
+
+// TestSuggestApplyWritesViaExistingEdit: the Apply gesture posts the proposed
+// title through the *existing* PATCH edit path — exactly one Update, and the
+// drawer reflects it. Suggest adds no second write path (st-suggest.1).
+func TestSuggestApplyWritesViaExistingEdit(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "story"})
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPatch, "/bead/demo-x", "field=title&value=Add+the+suggest+preview+slot")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH apply = %d, want 200", rec.Code)
+	}
+	if stub.updateCalls != 1 {
+		t.Errorf("apply issued %d Update calls, want exactly 1", stub.updateCalls)
+	}
+	if stub.lastField != "title" || stub.lastValue != "Add the suggest preview slot" {
+		t.Errorf("apply wrote %s=%q, want title=Add the suggest preview slot", stub.lastField, stub.lastValue)
+	}
+	if !strings.Contains(rec.Body.String(), "Add the suggest preview slot") {
+		t.Errorf("drawer missing the applied title:\n%s", rec.Body.String())
 	}
 }
 
