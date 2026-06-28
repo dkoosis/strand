@@ -107,10 +107,17 @@ func headingsIn(body string) map[string]bool {
 			inFence = !inFence
 			continue
 		}
-		if inFence || !strings.HasPrefix(line, "#") {
+		rest := strings.TrimLeft(line, "#")
+		level := len(line) - len(rest)
+		// CommonMark: 1–6 leading '#' then a space/tab. A bare '#Foo' is a
+		// paragraph, not a heading, so it must not count as a present section.
+		if inFence || level == 0 || level > 6 {
 			continue
 		}
-		title := strings.TrimRight(strings.TrimSpace(strings.TrimLeft(line, "#")), ":")
+		if rest != "" && rest[0] != ' ' && rest[0] != '\t' {
+			continue
+		}
+		title := strings.TrimRight(strings.TrimSpace(rest), ":")
 		if title != "" {
 			out[strings.ToLower(title)] = true
 		}
@@ -127,7 +134,7 @@ func appendSections(body string, missing []SectionGap) string {
 		drafts[i] = m.Draft
 	}
 	block := strings.Join(drafts, "\n\n")
-	if body = strings.Trim(body, "\n \t"); body == "" {
+	if body = strings.TrimSpace(body); body == "" {
 		return block
 	}
 	return body + "\n\n" + block

@@ -66,6 +66,16 @@ func TestSectionsFlagsGaps(t *testing.T) {
 			in:       SectionInput{Type: "task", Body: "```md\n## Acceptance Criteria\n```\nReal body."},
 			wantGaps: []string{"Acceptance Criteria"},
 		},
+		{
+			name:     "no space after hash is not a heading (CommonMark)",
+			in:       SectionInput{Type: "task", Body: "#Acceptance Criteria\n- done"},
+			wantGaps: []string{"Acceptance Criteria"},
+		},
+		{
+			name:     "seven hashes exceed heading levels and do not count",
+			in:       SectionInput{Type: "task", Body: "####### Acceptance Criteria\n- done"},
+			wantGaps: []string{"Acceptance Criteria"},
+		},
 	}
 
 	for _, tc := range tests {
