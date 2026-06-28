@@ -97,6 +97,9 @@ const reviewNeededKey = "review_needed"
 // carrying both is a decision — the stronger "needs a human call" signal — so the
 // waiting lane never double-counts it. A bead with neither is neither (claimable).
 func humanGate(iss *bd.Issue) (decision, review bool) {
+	if iss == nil {
+		return false, false
+	}
 	if slices.Contains(iss.Labels, humanLabel) {
 		return true, false
 	}
