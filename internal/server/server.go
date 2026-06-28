@@ -99,6 +99,22 @@ var (
 	_ readSource = (*cachingSource)(nil)
 )
 
+// rankWriter is the write slice seedRanks needs: just SetRank. Narrowing the
+// rank-seed path to this seam mirrors readSource on the write side — the rest of
+// the write surface (Update/Claim/Create/…) stays out of reach where only ranks
+// are written, so the helper can't grow a stray write. Any IssueSource — the real
+// *bd.Client, the caching wrapper, a test stub — satisfies it for free.
+type rankWriter interface {
+	SetRank(ctx context.Context, id string, rank float64) (*bd.Issue, error)
+}
+
+// Compile-time proof the fat source and its caching wrapper still satisfy the
+// narrow rank-write seam, so seedRanks accepts whatever source() hands back.
+var (
+	_ rankWriter = (IssueSource)(nil)
+	_ rankWriter = (*cachingSource)(nil)
+)
+
 // SourceFunc builds the bd-backed issue source for a repo. It is the seam the
 // command wires (a real bd.Client scoped to the repo's path) and tests stub (an
 // in-memory fake), so switching the active repo re-scopes every read and write
@@ -1006,7 +1022,7 @@ func rankFor(order []string, ranks map[string]float64, moved string) (rank float
 // renormalize when midpoint space runs out. An id absent from present (closed
 // mid-drag) is skipped so no rank lands on a bead the strand no longer shows; the
 // counter only advances on a write, keeping the survivors' ranks dense.
-func seedRanks(ctx context.Context, src IssueSource, order []string, present map[string]bool) error {
+func seedRanks(ctx context.Context, src rankWriter, order []string, present map[string]bool) error {
 	rank := 1
 	for _, id := range order {
 		if !present[id] {
