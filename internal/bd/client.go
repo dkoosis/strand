@@ -152,7 +152,7 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	select {
 	case execMu <- struct{}{}:
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, fmt.Errorf("bd: acquire write lock: %w", ctx.Err())
 	}
 	defer func() { <-execMu }()
 	//nolint:gosec // G204: bd is an operator-configured binary and args run via exec (no shell), so values like a status filter can't inject commands.
