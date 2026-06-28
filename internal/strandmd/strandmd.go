@@ -165,20 +165,23 @@ func expandImports(text, baseDir string) string {
 			out = append(out, ln) // missing import: leave the line as-is
 			continue
 		}
-		out = append(out, strings.TrimRight(string(b), "\n"))
+		out = append(out, strings.TrimRight(string(b), "\r\n"))
 	}
 	return strings.Join(out, "\n")
 }
 
 // importPath returns the path of an @-import line and whether ln is one. An
-// import line's trimmed form starts with '@' followed by a non-empty path.
+// import line's trimmed form starts with '@' followed by a non-empty,
+// whitespace-free path. The whitespace guard keeps social-style mentions
+// (@Human, "@Agent and @Reviewer") in an ## Actors section from being read as
+// file paths.
 func importPath(ln string) (string, bool) {
 	t := strings.TrimSpace(ln)
 	if !strings.HasPrefix(t, "@") {
 		return "", false
 	}
 	p := strings.TrimSpace(t[1:])
-	if p == "" {
+	if p == "" || strings.ContainsAny(p, " \t") {
 		return "", false
 	}
 	return p, true

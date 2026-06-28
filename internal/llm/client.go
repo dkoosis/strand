@@ -50,7 +50,13 @@ func New() (*Client, bool) {
 // inject option.WithBaseURL / option.WithAPIKey to hit an httptest server instead
 // of the live API; New calls it with no options so the SDK reads the key from the
 // environment.
+//
+// WithMaxRetries(0) is prepended so the one-call/no-retry contract holds: the SDK
+// retries twice by default on 429/5xx/transient errors, which would let Complete
+// issue up to three Messages calls. A best-effort Suggest fails fast to Tier-1
+// instead. It is prepended (not appended) so a caller option can still override it.
 func newWithOptions(opts ...option.RequestOption) *Client {
+	opts = append([]option.RequestOption{option.WithMaxRetries(0)}, opts...)
 	return &Client{
 		client: anthropic.NewClient(opts...),
 		model:  model,

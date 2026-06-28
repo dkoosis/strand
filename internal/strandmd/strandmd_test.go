@@ -258,6 +258,24 @@ func TestMissingImportLeftAsIs(t *testing.T) {
 	}
 }
 
+// TestMentionLineNotImported: a social-style mention in an ## Actors section
+// (@Human, or a line with several @-mentions) is not a single whitespace-free
+// path, so it is left verbatim rather than read as a file.
+func TestMentionLineNotImported(t *testing.T) {
+	home := t.TempDir()
+	repo := t.TempDir()
+	writeStrand(t, home, "## Actors\n- G\n")
+	writeStrand(t, repo, "## Actors\n@Human and @Agent collaborate\n")
+
+	ctx, err := Load(home, repo)
+	if err != nil {
+		t.Fatalf("Load should not error on a mention line: %v", err)
+	}
+	if !strings.Contains(ctx.Text, "@Human and @Agent collaborate") {
+		t.Errorf("mention line should survive verbatim:\n%s", ctx.Text)
+	}
+}
+
 // TestEmptyHomeDirErrors guards the real ~/.strand: an empty homeDir is refused so
 // the loader never writes a default into a path resolved against the cwd.
 func TestEmptyHomeDirErrors(t *testing.T) {
