@@ -19,5 +19,6 @@
 .claude/worktrees/
 # /team heartbeat + dispatch logs (transient)
 .team/
-# bd worktrees (nested siblings: strand-4fj/, strand-alg.2/, …)
+# bd worktrees (nested siblings: strand-4fj/, st-suggest.1/, …)
 /strand-*/
+/st-*/
