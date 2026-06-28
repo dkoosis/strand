@@ -2,25 +2,20 @@ package bd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 )
 
-// Static validation errors, wrapped with the calling op for context. Static so
-// callers can errors.Is them and err113 stays satisfied.
-var (
-	ErrEmptyID      = errors.New("empty id")
-	ErrEmptyTitle   = errors.New("empty title")
-	ErrEmptyText    = errors.New("empty text")
-	ErrUnknownField = errors.New("unknown field")
-)
+// Pre-flight validation failures wrap ErrInvalidArg (the package's existing
+// invalid-argument sentinel, classified to 400 by the server) with a specific
+// message. Wrapping a static error keeps err113 satisfied; the descriptive text
+// carries which field was bad, so no per-field sentinel is needed.
 
 // requireID rejects an empty id; op names the calling method for the error.
 func requireID(id, op string) error {
 	if id == "" {
-		return fmt.Errorf("%s: %w", op, ErrEmptyID)
+		return fmt.Errorf("%s: empty id: %w", op, ErrInvalidArg)
 	}
 	return nil
 }
@@ -56,7 +51,7 @@ func (c *Client) Update(ctx context.Context, id, field, value string) (*Issue, e
 	}
 	flag, ok := updateFlags[field]
 	if !ok {
-		return nil, fmt.Errorf("update: %w %q", ErrUnknownField, field)
+		return nil, fmt.Errorf("update: unknown field %q: %w", field, ErrInvalidArg)
 	}
 	out, err := c.run(ctx, "update", id, flag, value, "--json")
 	if err != nil {
@@ -152,7 +147,7 @@ type CreateOpts struct {
 // past the by-value lint threshold once Parent was added); callers pass &opts.
 func (c *Client) Create(ctx context.Context, opts *CreateOpts) (*Issue, error) {
 	if opts.Title == "" {
-		return nil, fmt.Errorf("create: %w", ErrEmptyTitle)
+		return nil, fmt.Errorf("create: empty title: %w", ErrInvalidArg)
 	}
 	args := []string{"create", "--title", opts.Title}
 	if opts.Description != "" {
@@ -213,7 +208,7 @@ func (c *Client) LabelAdd(ctx context.Context, id, label string) error {
 		return err
 	}
 	if label == "" {
-		return fmt.Errorf("label add: %w", ErrEmptyText)
+		return fmt.Errorf("label add: empty text: %w", ErrInvalidArg)
 	}
 	_, err := c.run(ctx, "label", "add", id, label)
 	return err
@@ -225,7 +220,7 @@ func (c *Client) LabelRemove(ctx context.Context, id, label string) error {
 		return err
 	}
 	if label == "" {
-		return fmt.Errorf("label remove: %w", ErrEmptyText)
+		return fmt.Errorf("label remove: empty text: %w", ErrInvalidArg)
 	}
 	_, err := c.run(ctx, "label", "remove", id, label)
 	return err
@@ -237,7 +232,7 @@ func (c *Client) Comment(ctx context.Context, id, text string) error {
 		return err
 	}
 	if text == "" {
-		return fmt.Errorf("comment: %w", ErrEmptyText)
+		return fmt.Errorf("comment: empty text: %w", ErrInvalidArg)
 	}
 	_, err := c.run(ctx, "comment", id, text, "--json")
 	return err
