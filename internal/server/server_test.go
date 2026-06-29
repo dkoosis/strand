@@ -1015,6 +1015,25 @@ func TestBoardMoveErrorReverts(t *testing.T) {
 	}
 }
 
+// TestBoardMoveRecomputesAttention: the single-card refresh re-runs markAttention on
+// the moved card, so a human-gated bead keeps its ◆ waiting badge without a full
+// board reload (st-03i). Before the fix the boardCard came back with zero-value
+// flags and the badge vanished until the next /board render.
+func TestBoardMoveRecomputesAttention(t *testing.T) {
+	iss := &bd.Issue{ID: "demo-x", Title: "Gated", Status: "open", IssueType: "task", Labels: []string{"human"}}
+	stub := oneBead(iss)
+	stub.issues = []bd.Issue{*iss} // List feeds Classify the human-gate signal
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/move", "field=status&value=in_progress")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST move = %d, want 200", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "bc-wait") {
+		t.Errorf("moved gated card lost its ◆ waiting badge:\n%s", body)
+	}
+}
+
 // rankedStory is a fully-ranked story group (root included — it's a member of its
 // own list), the post-seed state where midpoint inserts apply. Ranks are 1..4 in
 // id order so the rank order and the obvious reading order line up.

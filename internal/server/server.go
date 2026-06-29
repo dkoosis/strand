@@ -840,6 +840,22 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 	}
 	b := strand.NewBead(issue)
 	b.ResolveJTBD(issue.Description, jtbd.Load(repo.Path))
+	// Recompute the moved card's attention flags (st-03i). markAttention runs only on
+	// the full /board render, so this single-card refresh would otherwise drop the ◆
+	// waiting badge and Blocked state until the next full board load. Best-effort: a
+	// read error degrades to the unflagged card rather than failing the move — the
+	// write already landed, and a non-2xx here would wrongly tell the client to revert
+	// a change bd has already stored.
+	if issues, lerr := src.List(ctx, allIssues...); lerr != nil {
+		log.Printf("strand: move %s attention recompute skipped: %v", id, lerr)
+	} else {
+		scope := []strand.Bead{b}
+		if aerr := s.markAttention(ctx, src, scope, issues); aerr != nil {
+			log.Printf("strand: move %s attention recompute skipped: %v", id, aerr)
+		} else {
+			b = scope[0]
+		}
+	}
 	s.render(w, "boardCard", b)
 }
 
