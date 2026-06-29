@@ -259,3 +259,107 @@ func TestDecodeIssueAbsentPriorityIsIndistinguishable(t *testing.T) {
 		t.Fatalf("absent = %d, want nil — the int collapse must be closed", *absent[0].Priority)
 	}
 }
+
+// TestIssueTypeValid pins the closed issue-type vocabulary (task|bug|feature|
+// story|epic|chore): every member reports Valid, anything off the set does not.
+// This is the clamp the create path and any dropdown share, so drift from this
+// set is a rejected value, not a silently-accepted typo.
+func TestIssueTypeValid(t *testing.T) {
+	valid := []IssueType{
+		IssueTypeTask, IssueTypeBug, IssueTypeFeature,
+		IssueTypeStory, IssueTypeEpic, IssueTypeChore,
+	}
+	for _, it := range valid {
+		if !it.Valid() {
+			t.Errorf("IssueType %q should be valid", it)
+		}
+	}
+	for _, bad := range []IssueType{"", "tasks", "Bug", "story ", "unknown"} {
+		if bad.Valid() {
+			t.Errorf("IssueType %q should be invalid", bad)
+		}
+	}
+}
+
+// TestIssueTypesIsTheClosedSet pins that the exported IssueTypes slice — the one
+// source a dropdown and the clamp both read — is exactly the valid members, in a
+// stable order, with no extras. A new bd type must be added here and nowhere else.
+func TestIssueTypesIsTheClosedSet(t *testing.T) {
+	want := []IssueType{
+		IssueTypeTask, IssueTypeBug, IssueTypeFeature,
+		IssueTypeStory, IssueTypeEpic, IssueTypeChore,
+	}
+	if len(IssueTypes) != len(want) {
+		t.Fatalf("IssueTypes has %d members, want %d: %v", len(IssueTypes), len(want), IssueTypes)
+	}
+	for i, it := range want {
+		if IssueTypes[i] != it {
+			t.Errorf("IssueTypes[%d] = %q, want %q", i, IssueTypes[i], it)
+		}
+		if !it.Valid() {
+			t.Errorf("member %q is not Valid — IssueTypes and Valid must share one source", it)
+		}
+	}
+}
+
+// TestDepTypeValid pins the closed dep-edge vocabulary (blocks|parent-child|
+// relates_to): a misspelling that would silently empty the graph view is an
+// invalid value here, caught against the typed constants rather than a bare string.
+func TestDepTypeValid(t *testing.T) {
+	for _, dt := range []DepType{DepBlocks, DepParentChild, DepRelatesTo} {
+		if !dt.Valid() {
+			t.Errorf("DepType %q should be valid", dt)
+		}
+	}
+	for _, bad := range []DepType{"", "block", "relates-to", "parent_child", "Blocks"} {
+		if bad.Valid() {
+			t.Errorf("DepType %q should be invalid", bad)
+		}
+	}
+}
+
+// TestDepTypesIsTheClosedSet mirrors the issue-type guard for dep edges: the
+// exported DepTypes slice is exactly the valid members and nothing else.
+func TestDepTypesIsTheClosedSet(t *testing.T) {
+	want := []DepType{DepBlocks, DepParentChild, DepRelatesTo}
+	if len(DepTypes) != len(want) {
+		t.Fatalf("DepTypes has %d members, want %d: %v", len(DepTypes), len(want), DepTypes)
+	}
+	for i, dt := range want {
+		if DepTypes[i] != dt {
+			t.Errorf("DepTypes[%d] = %q, want %q", i, DepTypes[i], dt)
+		}
+	}
+}
+
+// TestDepEdgeTypeIsTyped pins that DepEdge.Type is the typed DepType, so the
+// graph view filters against the DepBlocks constant rather than a bare "blocks"
+// literal. The decode path still reads bd's string and yields the typed value.
+func TestDepEdgeTypeIsTyped(t *testing.T) {
+	edges, err := decodeEdges([]byte(`[{"issue_id":"a-2","depends_on_id":"a-1","type":"blocks"}]`), []string{"a-2", "a-3"})
+	if err != nil {
+		t.Fatalf("decodeEdges: %v", err)
+	}
+	if len(edges) != 1 {
+		t.Fatalf("got %d edges, want 1", len(edges))
+	}
+	if edges[0].Type != DepBlocks {
+		t.Errorf("edge Type = %q, want DepBlocks", edges[0].Type)
+	}
+	if !edges[0].Type.Valid() {
+		t.Errorf("decoded edge Type %q should be Valid", edges[0].Type)
+	}
+}
+
+// TestIDValid pins the ID concept: an issue handle is valid only when non-empty.
+// The typed handle is the guard against passing a non-id string into an id slot;
+// wiring it into DepAdd/SetParent/Create signatures is a follow-up (those live
+// behind the server-owned IssueSource interface, outside this bead's write-set).
+func TestIDValid(t *testing.T) {
+	if !ID("st-ktk").Valid() {
+		t.Error("non-empty ID should be valid")
+	}
+	if ID("").Valid() {
+		t.Error("empty ID should be invalid")
+	}
+}

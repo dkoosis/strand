@@ -111,9 +111,9 @@ func (i *Issue) Rank() (float64, bool) {
 // soft links ("relates_to"); the graph view keeps only "blocks". The direction
 // matches bd's "down" sense: the issue depends on (is blocked by) the target.
 type DepEdge struct {
-	IssueID     string `json:"issue_id"`
-	DependsOnID string `json:"depends_on_id"`
-	Type        string `json:"type"`
+	IssueID     string  `json:"issue_id"`
+	DependsOnID string  `json:"depends_on_id"`
+	Type        DepType `json:"type"`
 }
 
 // Comment is one note on an issue, as bd emits it from `comments <id> --json`.
@@ -303,10 +303,10 @@ func decodeEdges(out []byte, ids []string) ([]DepEdge, error) {
 	for _, r := range rows {
 		switch {
 		case r.IssueID != "" && r.DependsOnID != "":
-			edges = append(edges, DepEdge{IssueID: r.IssueID, DependsOnID: r.DependsOnID, Type: r.Type})
+			edges = append(edges, DepEdge{IssueID: r.IssueID, DependsOnID: r.DependsOnID, Type: DepType(r.Type)})
 		case r.ID != "" && len(ids) == 1:
 			// Single-ID query: the row is a dependency of the one queried issue.
-			edges = append(edges, DepEdge{IssueID: ids[0], DependsOnID: r.ID, Type: r.DependencyType})
+			edges = append(edges, DepEdge{IssueID: ids[0], DependsOnID: r.ID, Type: DepType(r.DependencyType)})
 		}
 	}
 	return edges, nil

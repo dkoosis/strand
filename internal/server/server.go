@@ -1224,7 +1224,7 @@ func (s *Server) renderDrawer(ctx context.Context, w http.ResponseWriter, src re
 func blockerIDs(deps []bd.DepEdge, id string) []string {
 	var ids []string
 	for _, d := range deps {
-		if d.Type == "blocks" && d.IssueID == id {
+		if d.Type == bd.DepBlocks && d.IssueID == id {
 			ids = append(ids, d.DependsOnID)
 		}
 	}

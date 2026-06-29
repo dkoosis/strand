@@ -228,7 +228,7 @@ func scopeIDs(beads []strand.Bead) ([]string, map[string]bool) {
 func blocksEdges(deps []bd.DepEdge, inScope map[string]bool) []graph.Edge {
 	compute := make([]graph.Edge, 0, len(deps))
 	for _, d := range deps {
-		if d.Type != "blocks" || !inScope[d.IssueID] || !inScope[d.DependsOnID] {
+		if d.Type != bd.DepBlocks || !inScope[d.IssueID] || !inScope[d.DependsOnID] {
 			continue
 		}
 		compute = append(compute, graph.Edge{Dependent: d.IssueID, Dependency: d.DependsOnID})
@@ -302,7 +302,7 @@ func triage(beads []strand.Bead, openBlockers map[string]int, idx map[string]bd.
 func blockerCounts(deps []bd.DepEdge, idx map[string]bd.Issue) map[string]int {
 	open := map[string]int{}
 	for _, d := range deps {
-		if d.Type != "blocks" {
+		if d.Type != bd.DepBlocks {
 			continue
 		}
 		if iss, ok := idx[d.DependsOnID]; ok && iss.Status != bd.StatusClosed {
