@@ -50,11 +50,19 @@ type Suggestion struct {
 	None     bool
 }
 
-// Title proposes a sharper Verb-object title, or returns None when the current
-// title already leads with an action verb or nothing can be drawn from the body.
-// Deterministic: no model, no network.
+// Title proposes a sharper Verb-object title, or returns None when nothing can be
+// proposed: the bead is a story or epic (the model tier owns those shapes), the
+// current title already leads with an action verb, or nothing can be drawn from
+// the body. Deterministic: no model, no network.
 func Title(in TitleInput) Suggestion {
 	t := normalize(in.Title)
+	// The deterministic floor only writes task-shaped "Verb object" titles. A story
+	// ("<actor> can <outcome>") and an epic (a done-state capability arc) need the
+	// model tier's judgment; coercing them into "Add <noun>" reads as a developer
+	// instruction, not the work. Stay quiet and let Tier-2 own them.
+	if isModelOnlyType(in.Type) {
+		return none()
+	}
 	if isSharp(t) {
 		return none()
 	}
@@ -247,15 +255,26 @@ func trimEmphasisWords(words []string) []string {
 }
 
 // verbForType picks the default leading verb when the body offers none, keyed to
-// the bead's kind: a bug is fixed, an epic is built, everything else is added.
+// the bead's kind: a bug is fixed, every other task-shaped kind is added. Story and
+// epic never reach here — Title returns None for them, since the deterministic floor
+// can't write an "<actor> can <outcome>" story or a done-state epic title.
 func verbForType(t string) string {
-	switch strings.ToLower(strings.TrimSpace(t)) {
-	case "bug":
+	if strings.EqualFold(strings.TrimSpace(t), "bug") {
 		return "Fix"
-	case "epic":
-		return "Build"
+	}
+	return "Add"
+}
+
+// isModelOnlyType reports whether a bead's kind needs the model tier to title well —
+// a story ("<actor> can <outcome>") or an epic (a done-state capability arc). The
+// deterministic floor can't shape either, so Title stays quiet rather than coercing
+// them into a task-shaped "Add <noun>".
+func isModelOnlyType(t string) bool {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "story", "epic":
+		return true
 	default:
-		return "Add"
+		return false
 	}
 }
 

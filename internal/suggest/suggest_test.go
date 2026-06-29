@@ -27,7 +27,7 @@ func TestTitleFlagsAndRewrites(t *testing.T) {
 	}{
 		{
 			name:    "phase slot rewrites from the body verb",
-			in:      TitleInput{Title: "Phase 2", Type: "story", Body: "## Slice\nAdd a suggest preview slot to the drawer."},
+			in:      TitleInput{Title: "Phase 2", Type: "task", Body: "## Slice\nAdd a suggest preview slot to the drawer."},
 			wantHas: "Add a suggest preview slot",
 		},
 		{
@@ -46,13 +46,18 @@ func TestTitleFlagsAndRewrites(t *testing.T) {
 			wantHas: "Fix",
 		},
 		{
-			name:    "epic with verbless body defaults to Build",
-			in:      TitleInput{Title: "Phase 1", Type: "epic", Body: "Suggest affordance across the bead drawer."},
-			wantHas: "Build",
+			name:     "story yields None — the model tier owns the '<actor> can <outcome>' shape",
+			in:       TitleInput{Title: "Phase 1", Type: "story", Body: "Suggest affordance across the bead drawer."},
+			wantNone: true,
+		},
+		{
+			name:     "epic yields None — the model tier owns the done-state arc shape",
+			in:       TitleInput{Title: "Phase 1", Type: "epic", Body: "Suggest affordance across the bead drawer."},
+			wantNone: true,
 		},
 		{
 			name:     "sharp Verb-object title is left alone",
-			in:       TitleInput{Title: "Add the waiting-on-you lane", Type: "story", Body: "Body text here."},
+			in:       TitleInput{Title: "Add the waiting-on-you lane", Type: "task", Body: "Body text here."},
 			wantNone: true,
 		},
 		{
@@ -72,7 +77,7 @@ func TestTitleFlagsAndRewrites(t *testing.T) {
 		},
 		{
 			name:    "bolded lead verb is recognized through markdown emphasis",
-			in:      TitleInput{Title: "Phase 2", Type: "story", Body: "**Add** a suggest preview slot to the drawer."},
+			in:      TitleInput{Title: "Phase 2", Type: "task", Body: "**Add** a suggest preview slot to the drawer."},
 			wantHas: "Add a suggest preview slot",
 		},
 		{

@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -1264,7 +1266,7 @@ func TestDrawerHasSuggestAffordance(t *testing.T) {
 // nothing — the endpoint is read-side (st-suggest.1).
 func TestSuggestPreviewRenders(t *testing.T) {
 	stub := oneBead(&bd.Issue{
-		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "story",
+		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "task",
 		Description: "Add a suggest preview slot to the drawer.",
 	})
 	srv := newTestServer(t, stub)
@@ -1374,7 +1376,7 @@ func TestSuggestTier2GroundsTitleWhenKeyed(t *testing.T) {
 // Tier-1 deterministic proposal with no anchor and no error (st-suggest.3.3 gate).
 func TestSuggestFallsBackToTier1WhenUnkeyed(t *testing.T) {
 	stub := oneBead(&bd.Issue{
-		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "story",
+		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "task",
 		Description: "Add a suggest preview slot to the drawer.",
 	})
 	srv := newTestServer(t, stub) // default model gate reports unavailable
@@ -1394,9 +1396,32 @@ func TestSuggestFallsBackToTier1WhenUnkeyed(t *testing.T) {
 // TestSuggestTier2DegradesOnModelError: a model failure on the keyed path degrades
 // to the Tier-1 proposal at 200 — Suggest never surfaces the model error
 // (st-suggest.3.3).
+// TestSuggestUnkeyedLogsOnce: with no model key, the first Suggest logs that Tier-2
+// is disabled (the incident that otherwise hides behind Tier-1 output), and only
+// once — not on every drawer open (PR #61, codex feedback).
+func TestSuggestUnkeyedLogsOnce(t *testing.T) {
+	var buf bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(old)
+
+	stub := oneBead(&bd.Issue{
+		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "task",
+		Description: "Add a suggest preview slot to the drawer.",
+	})
+	srv := newTestServer(t, stub) // default model gate reports unavailable
+	do(t, srv, "/bead/demo-x/suggest?kind=title")
+	do(t, srv, "/bead/demo-x/suggest?kind=title")
+
+	got := buf.String()
+	if n := strings.Count(got, "Tier-2 Suggest disabled"); n != 1 {
+		t.Errorf("disabled warning logged %d times, want exactly 1:\n%s", n, got)
+	}
+}
+
 func TestSuggestTier2DegradesOnModelError(t *testing.T) {
 	stub := oneBead(&bd.Issue{
-		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "story",
+		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "task",
 		Description: "Add a suggest preview slot to the drawer.",
 	})
 	srv := newTestServer(t, stub)
