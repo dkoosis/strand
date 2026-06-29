@@ -996,10 +996,15 @@ func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request) {
 	// errors on the model path; an absent key keeps the whole branch dark, so the
 	// unkeyed path costs no STRAND.md load and no network (st-suggest.3.3).
 	if c, keyed := s.suggestLLM(); keyed {
-		if sg, terr := s.tier2Title(ctx, src, repo, issue, c); terr == nil {
+		sg, terr := s.tier2Title(ctx, src, repo, issue, c)
+		if terr == nil {
 			s.render(w, "suggestPreview", suggestPreview{ID: issue.ID, Current: issue.Title, S: sg})
 			return
 		}
+		// Tier-2 is best-effort; fall through to the Tier-1 floor below. Log the cause
+		// so a dead/invalid key or model error surfaces instead of silently degrading to
+		// worse titles (a 401 from a wrong-typed key looks identical to a thin bead).
+		log.Printf("strand: suggest tier-2 fell back to tier-1 for %s: %v", issue.ID, terr)
 	}
 	sg := suggest.Title(suggest.TitleInput{
 		Title:  issue.Title,

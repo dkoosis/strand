@@ -1264,7 +1264,7 @@ func TestDrawerHasSuggestAffordance(t *testing.T) {
 // nothing — the endpoint is read-side (st-suggest.1).
 func TestSuggestPreviewRenders(t *testing.T) {
 	stub := oneBead(&bd.Issue{
-		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "story",
+		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "task",
 		Description: "Add a suggest preview slot to the drawer.",
 	})
 	srv := newTestServer(t, stub)
@@ -1374,7 +1374,7 @@ func TestSuggestTier2GroundsTitleWhenKeyed(t *testing.T) {
 // Tier-1 deterministic proposal with no anchor and no error (st-suggest.3.3 gate).
 func TestSuggestFallsBackToTier1WhenUnkeyed(t *testing.T) {
 	stub := oneBead(&bd.Issue{
-		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "story",
+		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "task",
 		Description: "Add a suggest preview slot to the drawer.",
 	})
 	srv := newTestServer(t, stub) // default model gate reports unavailable
@@ -1396,7 +1396,7 @@ func TestSuggestFallsBackToTier1WhenUnkeyed(t *testing.T) {
 // (st-suggest.3.3).
 func TestSuggestTier2DegradesOnModelError(t *testing.T) {
 	stub := oneBead(&bd.Issue{
-		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "story",
+		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "task",
 		Description: "Add a suggest preview slot to the drawer.",
 	})
 	srv := newTestServer(t, stub)
