@@ -96,6 +96,50 @@ func TestTriageExplicitlyBlocked(t *testing.T) {
 	}
 }
 
+// TestClassify pins the board's effective-status sort: an open bead with an unmet
+// blocker is blocked; an open bead parked on a human is waiting; a stored "blocked"
+// bead is blocked; a blocked-AND-gated bead is blocked (blocker beats the gate); a
+// bead whose only blocker is absent (closed) is neither; an in-progress bead is
+// neither.
+func TestClassify(t *testing.T) {
+	beads := []strand.Bead{
+		{ID: "blocker", Status: bd.StatusOpen},
+		{ID: "blocked", Status: bd.StatusOpen},
+		{ID: "gated", Status: bd.StatusOpen},
+		{ID: "both", Status: bd.StatusOpen},
+		{ID: "ready", Status: bd.StatusOpen},
+		{ID: "stored", Status: bd.StatusBlocked},
+		{ID: "active", Status: bd.StatusInProgress},
+	}
+	issues := []bd.Issue{
+		{ID: "blocker", Status: bd.StatusOpen},
+		{ID: "blocked", Status: bd.StatusOpen},
+		{ID: "gated", Status: bd.StatusOpen, Labels: []string{"human"}},
+		{ID: "both", Status: bd.StatusOpen, Labels: []string{"human"}},
+		{ID: "ready", Status: bd.StatusOpen},
+		{ID: "stored", Status: bd.StatusBlocked},
+		{ID: "active", Status: bd.StatusInProgress},
+	}
+	deps := []bd.DepEdge{
+		{IssueID: "blocked", DependsOnID: "blocker", Type: "blocks"},
+		{IssueID: "both", DependsOnID: "blocker", Type: "blocks"},
+		{IssueID: "ready", DependsOnID: "gone", Type: "blocks"}, // target absent (closed) → resolved
+	}
+
+	blocked, waiting := Classify(beads, issues, deps)
+
+	wantBlocked := map[string]bool{"blocked": true, "both": true, "stored": true}
+	wantWaiting := map[string]bool{"gated": true}
+	for _, id := range []string{"blocker", "blocked", "gated", "both", "ready", "stored", "active"} {
+		if blocked[id] != wantBlocked[id] {
+			t.Errorf("blocked[%q] = %v, want %v", id, blocked[id], wantBlocked[id])
+		}
+		if waiting[id] != wantWaiting[id] {
+			t.Errorf("waiting[%q] = %v, want %v", id, waiting[id], wantWaiting[id])
+		}
+	}
+}
+
 // TestIsStale: only live work past the cutoff is stale; a zero timestamp isn't.
 func TestIsStale(t *testing.T) {
 	cases := []struct {

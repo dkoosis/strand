@@ -198,6 +198,37 @@ func Compute(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge, now time
 	return out
 }
 
+// Classify sorts a scope's beads into the board's two attention states — blocked
+// (held by an unmet blocker) and waiting (parked on a human) — applying the same
+// precedence as the triage counts: a blocker outranks the human gate, so a
+// blocked-and-gated bead is reported blocked, not waiting. A stored-status "blocked"
+// bead is reported blocked too. A bead in neither state (ready, in progress, closed,
+// deferred) appears in neither map. issues is the full repo list (the blocker and
+// gate signals live on the bd.Issue, not the projected bead); deps are the scope's
+// dependency edges. Reuses the same blocker scan the dashboard runs.
+func Classify(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge) (blocked, waiting map[string]bool) {
+	idx := indexIssues(issues)
+	openBlockers := blockerCounts(deps, idx)
+	blocked = make(map[string]bool)
+	waiting = make(map[string]bool)
+	for i := range beads {
+		b := &beads[i]
+		switch b.Status {
+		case bd.StatusBlocked:
+			blocked[b.ID] = true
+		case bd.StatusOpen:
+			iss := idx[b.ID]
+			switch {
+			case openBlockers[b.ID] > 0:
+				blocked[b.ID] = true
+			case isHumanGated(&iss):
+				waiting[b.ID] = true
+			}
+		}
+	}
+	return blocked, waiting
+}
+
 // Actionable drops epic-type beads (containers) from a scope, leaving the real
 // work the dashboard reasons about. The caller narrows the scope before Compute
 // so the structural graph and triage run over tasks, not the epic shells.
