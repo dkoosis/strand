@@ -114,14 +114,14 @@ func (c *Client) SetRank(ctx context.Context, id string, rank float64) (*Issue, 
 // path must not expose it. parent must be non-empty here — strand only ever
 // attaches an orphan story to an epic; clearing a parent is not a strand gesture.
 // Returns the updated issue when bd emits one (nil if it stays silent).
-func (c *Client) SetParent(ctx context.Context, id, parent string) (*Issue, error) {
-	if err := requireID(id, "setparent"); err != nil {
+func (c *Client) SetParent(ctx context.Context, id, parent ID) (*Issue, error) {
+	if err := requireID(string(id), "setparent"); err != nil {
 		return nil, err
 	}
-	if err := requireID(parent, "setparent parent"); err != nil {
+	if err := requireID(string(parent), "setparent parent"); err != nil {
 		return nil, err
 	}
-	out, err := c.run(ctx, "update", id, "--parent", parent, "--json")
+	out, err := c.run(ctx, "update", string(id), "--parent", string(parent), "--json")
 	if err != nil {
 		return nil, err
 	}
@@ -139,8 +139,8 @@ type CreateOpts struct {
 	// Parent is the parent issue id for the strand's parent axis. Empty means the
 	// bead is created with no epic (no --parent); the create handler enforces that
 	// an empty Parent is a deliberate off-epic choice, never an accidental
-	// parentless bead.
-	Parent string
+	// parentless bead. Typed ID so a caller can't pass a non-id string here.
+	Parent ID
 }
 
 // Create makes a new issue and returns it. opts is taken by pointer (it grew
@@ -163,7 +163,7 @@ func (c *Client) Create(ctx context.Context, opts *CreateOpts) (*Issue, error) {
 		args = append(args, "--assignee", opts.Assignee)
 	}
 	if opts.Parent != "" {
-		args = append(args, "--parent", opts.Parent)
+		args = append(args, "--parent", string(opts.Parent))
 	}
 	out, err := c.run(ctx, append(args, "--json")...)
 	if err != nil {
@@ -175,26 +175,26 @@ func (c *Client) Create(ctx context.Context, opts *CreateOpts) (*Issue, error) {
 // DepAdd records that id depends on (is blocked by) dependsOn, the "blocks" edge
 // the graph reads. bd's default type is blocks, so no -t is needed. Both ids are
 // explicit; bd validates they exist and rejects a self- or duplicate edge.
-func (c *Client) DepAdd(ctx context.Context, id, dependsOn string) error {
-	if err := requireID(id, "dep add"); err != nil {
+func (c *Client) DepAdd(ctx context.Context, id, dependsOn ID) error {
+	if err := requireID(string(id), "dep add"); err != nil {
 		return err
 	}
-	if err := requireID(dependsOn, "dep add target"); err != nil {
+	if err := requireID(string(dependsOn), "dep add target"); err != nil {
 		return err
 	}
-	_, err := c.run(ctx, "dep", "add", id, dependsOn)
+	_, err := c.run(ctx, "dep", "add", string(id), string(dependsOn))
 	return err
 }
 
 // DepRemove drops the dependency from id to dependsOn (bd dep remove <id> <on>).
-func (c *Client) DepRemove(ctx context.Context, id, dependsOn string) error {
-	if err := requireID(id, "dep remove"); err != nil {
+func (c *Client) DepRemove(ctx context.Context, id, dependsOn ID) error {
+	if err := requireID(string(id), "dep remove"); err != nil {
 		return err
 	}
-	if err := requireID(dependsOn, "dep remove target"); err != nil {
+	if err := requireID(string(dependsOn), "dep remove target"); err != nil {
 		return err
 	}
-	_, err := c.run(ctx, "dep", "remove", id, dependsOn)
+	_, err := c.run(ctx, "dep", "remove", string(id), string(dependsOn))
 	return err
 }
 

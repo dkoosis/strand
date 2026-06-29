@@ -71,10 +71,10 @@ type IssueSource interface {
 	Claim(ctx context.Context, id string) (*bd.Issue, error)
 	Close(ctx context.Context, id, reason string) (*bd.Issue, error)
 	SetRank(ctx context.Context, id string, rank float64) (*bd.Issue, error)
-	SetParent(ctx context.Context, id, parent string) (*bd.Issue, error)
+	SetParent(ctx context.Context, id, parent bd.ID) (*bd.Issue, error)
 	Comment(ctx context.Context, id, text string) error
-	DepAdd(ctx context.Context, id, dependsOn string) error
-	DepRemove(ctx context.Context, id, dependsOn string) error
+	DepAdd(ctx context.Context, id, dependsOn bd.ID) error
+	DepRemove(ctx context.Context, id, dependsOn bd.ID) error
 	LabelAdd(ctx context.Context, id, label string) error
 	LabelRemove(ctx context.Context, id, label string) error
 	Create(ctx context.Context, opts *bd.CreateOpts) (*bd.Issue, error)
@@ -1424,7 +1424,7 @@ func (s *Server) handleDepAdd(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	on := strings.TrimSpace(r.FormValue("depends_on"))
 	s.writeAndRefresh(w, r, id, func(ctx context.Context, src IssueSource) (*bd.Issue, error) {
-		return nil, wrapWrite("dep add", src.DepAdd(ctx, id, on))
+		return nil, wrapWrite("dep add", src.DepAdd(ctx, bd.ID(id), bd.ID(on)))
 	})
 }
 
@@ -1433,7 +1433,7 @@ func (s *Server) handleDepRemove(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	on := r.FormValue("depends_on")
 	s.writeAndRefresh(w, r, id, func(ctx context.Context, src IssueSource) (*bd.Issue, error) {
-		return nil, wrapWrite("dep remove", src.DepRemove(ctx, id, on))
+		return nil, wrapWrite("dep remove", src.DepRemove(ctx, bd.ID(id), bd.ID(on)))
 	})
 }
 
@@ -1567,7 +1567,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opts := bd.CreateOpts{Title: form.Title, Type: form.Type, Description: form.Description, Parent: parent}
+	opts := bd.CreateOpts{Title: form.Title, Type: form.Type, Description: form.Description, Parent: bd.ID(parent)}
 	if p, err := strconv.Atoi(form.Priority); err == nil {
 		opts.Priority = &p
 	}
@@ -1727,7 +1727,7 @@ func (s *Server) handleAttachEpic(w http.ResponseWriter, r *http.Request) {
 		reject(err)
 		return
 	}
-	if _, err := src.SetParent(ctx, form.StoryID, epicID); err != nil {
+	if _, err := src.SetParent(ctx, bd.ID(form.StoryID), bd.ID(epicID)); err != nil {
 		// The reparent failed; if we just minted the target epic, undo it so the
 		// failed attach leaves no orphan epic (str-qig).
 		reject(compensateOrphan(src, minted, err))
@@ -2129,7 +2129,7 @@ func (c *cachingSource) SetRank(ctx context.Context, id string, rank float64) (*
 	return iss, err
 }
 
-func (c *cachingSource) SetParent(ctx context.Context, id, parent string) (*bd.Issue, error) {
+func (c *cachingSource) SetParent(ctx context.Context, id, parent bd.ID) (*bd.Issue, error) {
 	iss, err := c.IssueSource.SetParent(ctx, id, parent)
 	if err == nil {
 		c.cache.invalidate(c.repo)
@@ -2145,7 +2145,7 @@ func (c *cachingSource) Comment(ctx context.Context, id, text string) error {
 	return err
 }
 
-func (c *cachingSource) DepAdd(ctx context.Context, id, dependsOn string) error {
+func (c *cachingSource) DepAdd(ctx context.Context, id, dependsOn bd.ID) error {
 	err := c.IssueSource.DepAdd(ctx, id, dependsOn)
 	if err == nil {
 		c.cache.invalidate(c.repo)
@@ -2153,7 +2153,7 @@ func (c *cachingSource) DepAdd(ctx context.Context, id, dependsOn string) error 
 	return err
 }
 
-func (c *cachingSource) DepRemove(ctx context.Context, id, dependsOn string) error {
+func (c *cachingSource) DepRemove(ctx context.Context, id, dependsOn bd.ID) error {
 	err := c.IssueSource.DepRemove(ctx, id, dependsOn)
 	if err == nil {
 		c.cache.invalidate(c.repo)
