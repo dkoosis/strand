@@ -122,6 +122,12 @@ type Server struct {
 	// branch, so the unkeyed Tier-1 path touches neither.
 	suggestLLM func() (suggest.Completer, bool)
 	homeDir    string
+	// noKeyOnce logs the "Tier-2 disabled — no API key" warning a single time, the
+	// first time an unkeyed Suggest falls to Tier-1. Without it the incident this seam
+	// exists to surface (server running with no ANTHROPIC_API_KEY, so every title comes
+	// from the deterministic floor) stays as silent as a thin bead — but logging it per
+	// request would spam every drawer open, so it fires once per process.
+	noKeyOnce sync.Once
 
 	// Lifecycle for detached background work (the Insights deps prefetch). bgCtx
 	// roots every goBackground context so Stop can cancel them; bgWG tracks the
@@ -1003,8 +1009,19 @@ func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request) {
 		}
 		// Tier-2 is best-effort; fall through to the Tier-1 floor below. Log the cause
 		// so a dead/invalid key or model error surfaces instead of silently degrading to
-		// worse titles (a 401 from a wrong-typed key looks identical to a thin bead).
-		log.Printf("strand: suggest tier-2 fell back to tier-1 for %s: %v", issue.ID, terr)
+		// worse titles (a 401 from a wrong-typed key looks identical to a thin bead). A
+		// cancelled request (drawer closed, navigated away) is expected, not an incident
+		// — don't log it, or the noise drowns the real failures (PR #61, gemini).
+		if !errors.Is(terr, context.Canceled) {
+			log.Printf("strand: suggest tier-2 fell back to tier-1 for %s: %v", issue.ID, terr)
+		}
+	} else {
+		// No API key: Tier-2 is never attempted, so the keyed branch above can't log it.
+		// Surface the disabled state once — this is the actual incident dk hit (PR #61,
+		// codex), otherwise indistinguishable from a run of thin beads.
+		s.noKeyOnce.Do(func() {
+			log.Printf("strand: Tier-2 Suggest disabled (ANTHROPIC_API_KEY not set); titles use the deterministic Tier-1 floor")
+		})
 	}
 	sg := suggest.Title(suggest.TitleInput{
 		Title:  issue.Title,
