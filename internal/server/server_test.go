@@ -156,24 +156,24 @@ func (s *stubBD) Comment(_ context.Context, id, text string) error {
 
 // DepAdd records a "blocks" edge so the drawer re-read lists it; writeErr models
 // a bd outage. depWrites logs the call so a test can assert the wiring direction.
-func (s *stubBD) DepAdd(_ context.Context, id, dependsOn string) error {
+func (s *stubBD) DepAdd(_ context.Context, id, dependsOn bd.ID) error {
 	if s.writeErr != nil {
 		return s.writeErr
 	}
-	s.depWrites = append(s.depWrites, depWrite{op: "add", id: id, on: dependsOn})
-	s.deps = append(s.deps, bd.DepEdge{IssueID: id, DependsOnID: dependsOn, Type: "blocks"})
+	s.depWrites = append(s.depWrites, depWrite{op: "add", id: string(id), on: string(dependsOn)})
+	s.deps = append(s.deps, bd.DepEdge{IssueID: string(id), DependsOnID: string(dependsOn), Type: "blocks"})
 	return nil
 }
 
 // DepRemove drops the matching edge from the in-memory set so the re-read reflects it.
-func (s *stubBD) DepRemove(_ context.Context, id, dependsOn string) error {
+func (s *stubBD) DepRemove(_ context.Context, id, dependsOn bd.ID) error {
 	if s.writeErr != nil {
 		return s.writeErr
 	}
-	s.depWrites = append(s.depWrites, depWrite{op: "remove", id: id, on: dependsOn})
+	s.depWrites = append(s.depWrites, depWrite{op: "remove", id: string(id), on: string(dependsOn)})
 	kept := s.deps[:0]
 	for _, d := range s.deps {
-		if d.IssueID == id && d.DependsOnID == dependsOn {
+		if d.IssueID == string(id) && d.DependsOnID == string(dependsOn) {
 			continue
 		}
 		kept = append(kept, d)
@@ -317,17 +317,17 @@ func (s *stubBD) SetRank(_ context.Context, id string, rank float64) (*bd.Issue,
 // SetParent logs the reparent and reflects the new parent in the issue list so a
 // follow-up buildStrand re-read sees the story laddered up under its epic.
 // writeErr models a bd outage: the list stays put and the handler must surface it.
-func (s *stubBD) SetParent(_ context.Context, id, parent string) (*bd.Issue, error) {
+func (s *stubBD) SetParent(_ context.Context, id, parent bd.ID) (*bd.Issue, error) {
 	if s.setParentErr != nil {
 		return nil, s.setParentErr
 	}
 	if s.writeErr != nil {
 		return nil, s.writeErr
 	}
-	s.parentWrites = append(s.parentWrites, parentWrite{id, parent})
+	s.parentWrites = append(s.parentWrites, parentWrite{string(id), string(parent)})
 	for i := range s.issues {
-		if s.issues[i].ID == id {
-			s.issues[i].Parent = parent
+		if s.issues[i].ID == string(id) {
+			s.issues[i].Parent = string(parent)
 		}
 	}
 	return nil, nil //nolint:nilnil // bd may answer silently; the handler re-reads, not this value.
