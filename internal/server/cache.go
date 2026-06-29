@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -161,10 +162,18 @@ type cachingSource struct {
 	repo  string
 }
 
-// List serves the repo's cached `list --limit 0` snapshot, fetching once on a miss
-// (or after the TTL lapses). The bead's reads pass no per-call filter that would
-// change the result (every caller uses allIssues), so one cached list is correct.
+// List serves the repo's cached snapshot for the unfiltered full read only —
+// allIssues (`list --limit 0`), fetching once on a miss. A filtered read (any args
+// other than allIssues) bypasses the snapshot entirely: it passes straight through
+// to bd and neither serves from nor writes to the cache, so a filter can never
+// silently return the full list (LSP guard, st-4g0). The views all read unfiltered
+// through this source; the one filtered read path (pulseListView's external cut)
+// already routes around the cache via the raw source, so the guard is insurance
+// against a future caller wiring a filtered read through here by mistake.
 func (c *cachingSource) List(ctx context.Context, args ...string) ([]bd.Issue, error) {
+	if !slices.Equal(args, allIssues) {
+		return c.IssueSource.List(ctx, args...)
+	}
 	if list, _, ok := c.cache.liveList(c.repo); ok {
 		return list, nil
 	}

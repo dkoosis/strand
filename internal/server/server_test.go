@@ -2426,7 +2426,7 @@ func TestSnapshotCacheConcurrentListDeps(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			if _, err := src.List(ctx); err != nil {
+			if _, err := src.List(ctx, allIssues...); err != nil {
 				t.Errorf("List: %v", err)
 			}
 		}()
@@ -2484,11 +2484,11 @@ func TestSnapshotCacheNoTimeExpiry(t *testing.T) {
 	cs := &cachingSource{IssueSource: src, cache: cache, repo: "demo"}
 	ctx := context.Background()
 
-	if _, err := cs.List(ctx); err != nil { // miss → fetch #1
+	if _, err := cs.List(ctx, allIssues...); err != nil { // miss → fetch #1
 		t.Fatalf("List: %v", err)
 	}
 	clock = clock.Add(time.Hour) // a long look — far past the old 3s TTL
-	if _, err := cs.List(ctx); err != nil {
+	if _, err := cs.List(ctx, allIssues...); err != nil {
 		t.Fatalf("List: %v", err)
 	}
 	if src.listCalls.Load() != 1 {
@@ -2497,11 +2497,76 @@ func TestSnapshotCacheNoTimeExpiry(t *testing.T) {
 
 	cache.invalidate("demo") // explicit refresh / a write drops the snapshot
 
-	if _, err := cs.List(ctx); err != nil { // miss → fetch #2
+	if _, err := cs.List(ctx, allIssues...); err != nil { // miss → fetch #2
 		t.Fatalf("List: %v", err)
 	}
 	if src.listCalls.Load() != 2 {
 		t.Errorf("List spawned %d times after invalidate, want 2 — invalidate must re-fetch", src.listCalls.Load())
+	}
+}
+
+// argAwareBD filters its List result by a --status arg the way bd does, so a test
+// can tell a filtered read from the unfiltered (allIssues) full read — stubBD
+// ignores args and can't. Used to prove cachingSource.List doesn't serve the warm
+// full snapshot to a filtered query (st-4g0).
+type argAwareBD struct {
+	stubBD
+	listCalls atomic.Int64
+}
+
+func (s *argAwareBD) List(_ context.Context, args ...string) ([]bd.Issue, error) {
+	s.listCalls.Add(1)
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--status" {
+			var out []bd.Issue
+			for j := range s.issues {
+				if string(s.issues[j].Status) == args[i+1] {
+					out = append(out, s.issues[j])
+				}
+			}
+			return out, nil
+		}
+	}
+	return s.issues, nil
+}
+
+// TestCachingSourceListArgsAware proves the LSP guard (st-4g0): cachingSource.List
+// serves the snapshot only for the unfiltered allIssues read. A filtered read must
+// reach bd and return just the matching beads — never the warm full snapshot — and
+// must not poison the snapshot, so the next allIssues read still hits memory.
+func TestCachingSourceListArgsAware(t *testing.T) {
+	src := &argAwareBD{stubBD: stubBD{issues: []bd.Issue{
+		{ID: "a", Status: bd.StatusOpen},
+		{ID: "b", Status: bd.StatusClosed},
+	}}}
+	cs := &cachingSource{
+		IssueSource: src,
+		cache:       newSnapshotCache(func() time.Time { return cacheNow }),
+		repo:        "demo",
+	}
+	ctx := context.Background()
+
+	// Warm the cache with the unfiltered read.
+	if list, err := cs.List(ctx, allIssues...); err != nil || len(list) != 2 {
+		t.Fatalf("allIssues List = %v, %v; want 2 issues", list, err)
+	}
+
+	// A filtered read must bypass the warm snapshot and return only the match.
+	closed, err := cs.List(ctx, "--status", string(bd.StatusClosed), "--limit", "0")
+	if err != nil {
+		t.Fatalf("filtered List: %v", err)
+	}
+	if len(closed) != 1 || closed[0].ID != "b" {
+		t.Fatalf("filtered List = %v; want [b] — must not serve the warm full snapshot", closed)
+	}
+
+	// The filtered read reached bd (2 calls total) and left the snapshot intact:
+	// the next allIssues read still serves the full list from memory.
+	if got := src.listCalls.Load(); got != 2 {
+		t.Errorf("List spawned %d times, want 2 (warm allIssues + filtered passthrough)", got)
+	}
+	if list, _, ok := cs.cache.liveList("demo"); !ok || len(list) != 2 {
+		t.Fatalf("snapshot after filtered read = %v (ok=%v); want the full 2-issue list intact", list, ok)
 	}
 }
 
