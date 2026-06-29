@@ -1,5 +1,5 @@
 // Package llm is a thin, key-gated client for strand's Tier-2 Suggest: one
-// non-streaming Anthropic Messages call to Haiku 4.5. It is deliberately minimal
+// non-streaming Anthropic Messages call to Sonnet 4.6. It is deliberately minimal
 // — no retry loop, no streaming, no multi-model abstraction, no provider
 // indirection (st-suggest.3 SIMPLICITY principle). The caller (st-suggest.3.3)
 // assembles the prompt text; this package just sends text and returns text.
@@ -15,10 +15,11 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
-// model is the server-side Tier-2 model: Haiku 4.5, the cheapest current model
-// (claude-haiku-4-5-20251001). Pinned to the dated id so a future default shift
-// can't silently re-route Suggest.
-const model = anthropic.ModelClaudeHaiku4_5_20251001
+// model is the server-side Tier-2 model: Sonnet 4.6 (claude-sonnet-4-6). Naming is
+// a judgment task, so Suggest runs on a mid-tier model rather than the Haiku floor.
+// The id is already version-pinned (4.6, not a floating "latest"), so a default
+// shift can't silently re-route Suggest.
+const model = anthropic.ModelClaudeSonnet4_6
 
 // maxTokens caps one Suggest response. A title plus a short body fits well under
 // this; it is a ceiling, not a target.

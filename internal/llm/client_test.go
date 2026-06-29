@@ -39,11 +39,11 @@ func TestNew_ReportsAvailable_When_KeyPresent(t *testing.T) {
 	}
 }
 
-// TestComplete_SendsHaikuRequestAndReturnsText_When_Called drives the SDK against
+// TestComplete_SendsSonnetRequestAndReturnsText_When_Called drives the SDK against
 // an httptest server (no real network) and asserts: one POST to the Messages
-// endpoint, the Haiku 4.5 model id on the wire, the assembled system + user text
+// endpoint, the Sonnet 4.6 model id on the wire, the assembled system + user text
 // reach the request body, and the response text maps back to the return value.
-func TestComplete_SendsHaikuRequestAndReturnsText_When_Called(t *testing.T) {
+func TestComplete_SendsSonnetRequestAndReturnsText_When_Called(t *testing.T) {
 	var calls int
 	var gotMethod, gotPath string
 	var gotRaw []byte
@@ -57,7 +57,7 @@ func TestComplete_SendsHaikuRequestAndReturnsText_When_Called(t *testing.T) {
 			"id": "msg_test",
 			"type": "message",
 			"role": "assistant",
-			"model": "claude-haiku-4-5-20251001",
+			"model": "claude-sonnet-4-6",
 			"content": [{"type": "text", "text": "Grounded title"}],
 			"stop_reason": "end_turn",
 			"stop_sequence": null,
@@ -91,8 +91,8 @@ func TestComplete_SendsHaikuRequestAndReturnsText_When_Called(t *testing.T) {
 	if err := json.Unmarshal(gotRaw, &body); err != nil {
 		t.Fatalf("decode request body: %v (raw=%s)", err, gotRaw)
 	}
-	if body.Model != "claude-haiku-4-5-20251001" {
-		t.Errorf("request model = %q, want claude-haiku-4-5-20251001", body.Model)
+	if body.Model != "claude-sonnet-4-6" {
+		t.Errorf("request model = %q, want claude-sonnet-4-6", body.Model)
 	}
 	if !strings.Contains(string(gotRaw), "the bead text") {
 		t.Errorf("request body missing user input; raw=%s", gotRaw)
