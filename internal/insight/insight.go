@@ -230,7 +230,7 @@ func Classify(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge) (blocke
 			} else if iss, ok := idx[b.ID]; ok && isHumanGated(&iss) {
 				waiting[b.ID] = true
 			}
-		default: // in_progress: not bucketed to a column, but still ◆ when gated.
+		case bd.StatusInProgress: // not bucketed to a column, but still ◆ when gated.
 			if iss, ok := idx[b.ID]; ok && isHumanGated(&iss) {
 				waiting[b.ID] = true
 			}

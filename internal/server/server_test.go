@@ -960,7 +960,7 @@ func TestBoardMarksBlockedAndWaiting(t *testing.T) {
 	blockedHdr := strings.Index(body, `data-value="blocked"`)
 	blkCard := strings.Index(body, `data-id="demo-e1.blk"`)
 	closedHdr := strings.Index(body, `data-value="closed"`)
-	if !(blockedHdr >= 0 && blockedHdr < blkCard && blkCard < closedHdr) {
+	if blockedHdr < 0 || blockedHdr >= blkCard || blkCard >= closedHdr {
 		t.Errorf("blocked card not in the blocked column (blockedHdr=%d card=%d closedHdr=%d)", blockedHdr, blkCard, closedHdr)
 	}
 	// The gated card carries the ◆ badge and stays in the open column (before the
@@ -971,7 +971,7 @@ func TestBoardMarksBlockedAndWaiting(t *testing.T) {
 	openHdr := strings.Index(body, `data-value="open"`)
 	gatCard := strings.Index(body, `data-id="demo-e1.gat"`)
 	ipHdr := strings.Index(body, `data-value="in_progress"`)
-	if !(openHdr >= 0 && openHdr < gatCard && gatCard < ipHdr) {
+	if openHdr < 0 || openHdr >= gatCard || gatCard >= ipHdr {
 		t.Errorf("gated card left its open column (openHdr=%d card=%d ipHdr=%d)", openHdr, gatCard, ipHdr)
 	}
 }
