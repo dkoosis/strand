@@ -110,6 +110,7 @@ func TestClassify(t *testing.T) {
 		{ID: "ready", Status: bd.StatusOpen},
 		{ID: "stored", Status: bd.StatusBlocked},
 		{ID: "active", Status: bd.StatusInProgress},
+		{ID: "activegated", Status: bd.StatusInProgress},
 	}
 	issues := []bd.Issue{
 		{ID: "blocker", Status: bd.StatusOpen},
@@ -119,6 +120,7 @@ func TestClassify(t *testing.T) {
 		{ID: "ready", Status: bd.StatusOpen},
 		{ID: "stored", Status: bd.StatusBlocked},
 		{ID: "active", Status: bd.StatusInProgress},
+		{ID: "activegated", Status: bd.StatusInProgress, Labels: []string{"human"}},
 	}
 	deps := []bd.DepEdge{
 		{IssueID: "blocked", DependsOnID: "blocker", Type: "blocks"},
@@ -128,9 +130,11 @@ func TestClassify(t *testing.T) {
 
 	blocked, waiting := Classify(beads, issues, deps)
 
+	// gated and activegated wait (the in-progress one matches the masthead pulse, PR
+	// #62 codex); both is blocked, not waiting (blocker beats gate); active is neither.
 	wantBlocked := map[string]bool{"blocked": true, "both": true, "stored": true}
-	wantWaiting := map[string]bool{"gated": true}
-	for _, id := range []string{"blocker", "blocked", "gated", "both", "ready", "stored", "active"} {
+	wantWaiting := map[string]bool{"gated": true, "activegated": true}
+	for _, id := range []string{"blocker", "blocked", "gated", "both", "ready", "stored", "active", "activegated"} {
 		if blocked[id] != wantBlocked[id] {
 			t.Errorf("blocked[%q] = %v, want %v", id, blocked[id], wantBlocked[id])
 		}
