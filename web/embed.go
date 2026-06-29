@@ -40,7 +40,7 @@ var funcs = template.FuncMap{
 	"cleanName":   cleanName,
 	"epicLabel":   epicLabel,
 	"priorities":  priorities,
-	"beadTypes":   func() []string { return beadTypes },
+	"beadTypes":   beadTypes,
 	"metaVal":     metaVal,
 	"rankLabel":   rankLabel,
 	"labelPart":   labelPart,
@@ -120,8 +120,16 @@ func labelPart(label string) LabelPart {
 	return LabelPart{Raw: label, Key: label}
 }
 
-// beadTypes are the issue types the create form offers, matching bd's --type.
-var beadTypes = []string{"task", "bug", "feature", "epic"}
+// beadTypes lists the issue kinds the create form offers, sourced from
+// bd.IssueTypes (the closed set Valid scans) so the dropdown can never drift from
+// the clamp again. Stringified for the template, preserving bd's display order.
+func beadTypes() []string {
+	ts := make([]string, len(bd.IssueTypes))
+	for i, t := range bd.IssueTypes {
+		ts[i] = string(t)
+	}
+	return ts
+}
 
 // maxPri is the highest bd priority (P0 is most urgent). One source for both the
 // clamp and the dropdown so the range can't drift.
