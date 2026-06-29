@@ -1431,7 +1431,7 @@ func (s *Server) handleDepAdd(w http.ResponseWriter, r *http.Request) {
 // handleDepRemove drops a "blocks" dependency from the drawer's blocker list.
 func (s *Server) handleDepRemove(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	on := r.FormValue("depends_on")
+	on := strings.TrimSpace(r.FormValue("depends_on"))
 	s.writeAndRefresh(w, r, id, func(ctx context.Context, src IssueSource) (*bd.Issue, error) {
 		return nil, wrapWrite("dep remove", src.DepRemove(ctx, bd.ID(id), bd.ID(on)))
 	})
