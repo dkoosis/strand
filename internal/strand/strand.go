@@ -35,6 +35,14 @@ type Bead struct {
 	// an "(unresolved)" marker. The bare id is never the human's only signal.
 	JTBDID  string
 	JTBDJob string
+	// Blocked marks an open bead held by an unmet blocker; Waiting marks an open
+	// bead parked on a human (decision or review). The board reads Blocked for its
+	// effective-status bucket (it shows in the blocked column though bd still stores
+	// "open") and Waiting for the ◆ card badge. The server sets both from
+	// insight.Classify; NewBead leaves them false, since the deterministic
+	// projection has no dependency graph to read.
+	Blocked bool
+	Waiting bool
 }
 
 // defaultPriority is the render priority for a bead whose bd.Issue omitted the

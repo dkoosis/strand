@@ -891,6 +891,91 @@ func TestBoardScopedToStory(t *testing.T) {
 	}
 }
 
+// TestBoardBucketsEffectiveStatus pins the status pivot's effective-status sort: a
+// bead flagged Blocked shows in the blocked column though its stored status is open;
+// a bead flagged Waiting stays in its real (open) column — "waiting" is no bd status
+// and must not become a drop target.
+func TestBoardBucketsEffectiveStatus(t *testing.T) {
+	beads := []strand.Bead{
+		{ID: "blk", Status: bd.StatusOpen, Blocked: true},
+		{ID: "gat", Status: bd.StatusOpen, Waiting: true},
+		{ID: "rdy", Status: bd.StatusOpen},
+		{ID: "ip", Status: bd.StatusInProgress},
+	}
+	cols := boardColumns("status", beads)
+	in := func(key, id string) bool {
+		for i := range cols {
+			if cols[i].Key != key {
+				continue
+			}
+			for j := range cols[i].Beads {
+				if cols[i].Beads[j].ID == id {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if !in("blocked", "blk") {
+		t.Error("dependency-blocked bead did not land in the blocked column")
+	}
+	if in("open", "blk") {
+		t.Error("blocked bead also left in the open column")
+	}
+	if !in("open", "gat") {
+		t.Error("waiting bead should stay in the open column (no 'waiting' drop target)")
+	}
+	if in("blocked", "gat") {
+		t.Error("waiting bead leaked into the blocked column")
+	}
+	if !in("open", "rdy") || !in("in_progress", "ip") {
+		t.Error("unflagged beads misplaced from their real status columns")
+	}
+}
+
+// TestBoardMarksBlockedAndWaiting drives the whole board path: an open bead with an
+// open blocker renders in the blocked column (between the blocked and closed column
+// headers), and a human-gated bead carries the ◆ waiting badge while staying open.
+func TestBoardMarksBlockedAndWaiting(t *testing.T) {
+	stub := &stubBD{
+		issues: []bd.Issue{
+			{ID: "demo-root", Title: "DEMO", IssueType: "epic", Status: "open"},
+			{ID: "demo-e1", Parent: "demo-root", Title: "Story", IssueType: "epic", Status: "open", Priority: new(1)},
+			{ID: "demo-e1.blocker", Parent: "demo-e1", Title: "The blocker", Status: "open", Priority: new(2)},
+			{ID: "demo-e1.blk", Parent: "demo-e1", Title: "Blocked card", Status: "open", Priority: new(2)},
+			{ID: "demo-e1.gat", Parent: "demo-e1", Title: "Gated card", Status: "open", Priority: new(2), Labels: []string{"human"}},
+		},
+		deps: []bd.DepEdge{{IssueID: "demo-e1.blk", DependsOnID: "demo-e1.blocker", Type: bd.DepBlocks}},
+	}
+	srv := newTestServer(t, stub)
+	rec := do(t, srv, "/board?story=demo-e1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /board = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// The blocked card sits in the blocked column: its card markup falls between the
+	// blocked column header and the next (closed) header. Columns render in seed order
+	// open, in_progress, blocked, closed.
+	blockedHdr := strings.Index(body, `data-value="blocked"`)
+	blkCard := strings.Index(body, `data-id="demo-e1.blk"`)
+	closedHdr := strings.Index(body, `data-value="closed"`)
+	if !(blockedHdr >= 0 && blockedHdr < blkCard && blkCard < closedHdr) {
+		t.Errorf("blocked card not in the blocked column (blockedHdr=%d card=%d closedHdr=%d)", blockedHdr, blkCard, closedHdr)
+	}
+	// The gated card carries the ◆ badge and stays in the open column (before the
+	// in_progress header).
+	if !strings.Contains(body, `class="bc-wait"`) {
+		t.Errorf("gated card missing the ◆ waiting badge:\n%s", body)
+	}
+	openHdr := strings.Index(body, `data-value="open"`)
+	gatCard := strings.Index(body, `data-id="demo-e1.gat"`)
+	ipHdr := strings.Index(body, `data-value="in_progress"`)
+	if !(openHdr >= 0 && openHdr < gatCard && gatCard < ipHdr) {
+		t.Errorf("gated card left its open column (openHdr=%d card=%d ipHdr=%d)", openHdr, gatCard, ipHdr)
+	}
+}
+
 // TestBoardMoveUpdates: a column move issues the matching bd update and returns
 // the refreshed card showing bd's truth (spec Q0).
 func TestBoardMoveUpdates(t *testing.T) {

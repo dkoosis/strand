@@ -198,6 +198,47 @@ func Compute(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge, now time
 	return out
 }
 
+// Classify sorts a scope's beads into the board's two attention states — blocked
+// (held by an unmet blocker) and waiting (parked on a human) — applying the same
+// precedence as the triage counts: a blocker outranks the human gate, so an open
+// blocked-and-gated bead is reported blocked, not waiting. A stored-status "blocked"
+// bead is reported blocked too. Waiting tracks the masthead pulse's rule (any
+// non-closed, non-deferred human-gated bead), so an in-progress review-needed card
+// carries the ◆ on the board just as it counts in the pulse — the board/masthead
+// agreement this seam exists for (PR #62, codex). Closed and deferred beads, and
+// beads in no attention state, appear in neither map. issues is the full repo list
+// (the blocker and gate signals live on the bd.Issue, not the projected bead); deps
+// are the scope's dependency edges. Reuses the same blocker scan the dashboard runs.
+func Classify(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge) (blocked, waiting map[string]bool) {
+	idx := indexIssues(issues)
+	openBlockers := blockerCounts(deps, idx)
+	blocked = make(map[string]bool)
+	waiting = make(map[string]bool)
+	for i := range beads {
+		b := &beads[i]
+		switch b.Status {
+		case bd.StatusClosed, bd.StatusDeferred:
+			// Not live work — neither state. (The strand filter already drops these;
+			// listed so the status set stays exhaustive.)
+		case bd.StatusBlocked:
+			blocked[b.ID] = true
+		case bd.StatusOpen:
+			// Blocker beats the gate: only reach for the issue (a heavy copy) when the
+			// bead isn't already blocked (PR #62, gemini).
+			if openBlockers[b.ID] > 0 {
+				blocked[b.ID] = true
+			} else if iss, ok := idx[b.ID]; ok && isHumanGated(&iss) {
+				waiting[b.ID] = true
+			}
+		default: // in_progress: not bucketed to a column, but still ◆ when gated.
+			if iss, ok := idx[b.ID]; ok && isHumanGated(&iss) {
+				waiting[b.ID] = true
+			}
+		}
+	}
+	return blocked, waiting
+}
+
 // Actionable drops epic-type beads (containers) from a scope, leaving the real
 // work the dashboard reasons about. The caller narrows the scope before Compute
 // so the structural graph and triage run over tasks, not the epic shells.

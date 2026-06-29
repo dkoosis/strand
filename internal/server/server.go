@@ -642,7 +642,18 @@ type pivotField struct {
 // reports that aren't seeded (a named assignee) are appended. The assignee
 // "unassigned" column writes an empty value — dropping there clears the field.
 var pivotFields = []pivotField{
-	{"status", []boardColumn{{Key: string(bd.StatusOpen), Label: "open"}, {Key: string(bd.StatusInProgress), Label: "in progress"}, {Key: string(bd.StatusBlocked), Label: "blocked"}, {Key: string(bd.StatusClosed), Label: "closed"}}, func(b *strand.Bead) string { return string(b.Status) }},
+	{"status", []boardColumn{{Key: string(bd.StatusOpen), Label: "open"}, {Key: string(bd.StatusInProgress), Label: "in progress"}, {Key: string(bd.StatusBlocked), Label: "blocked"}, {Key: string(bd.StatusClosed), Label: "closed"}}, func(b *strand.Bead) string {
+		// Effective status: an open bead held by an unmet blocker shows in the blocked
+		// column though bd still stores it "open" (a dependency-blocked bead is never
+		// auto-promoted to status=blocked). Without this the blocked column only ever
+		// catches hand-set beads and reads as empty. Human-gated beads stay in their
+		// real column and carry a ◆ badge instead — "waiting" is no bd status, so it
+		// can't be a drop target that handleMove writes.
+		if b.Blocked {
+			return string(bd.StatusBlocked)
+		}
+		return string(b.Status)
+	}},
 	{"priority", []boardColumn{{Key: "0", Label: "P0"}, {Key: "1", Label: "P1"}, {Key: "2", Label: "P2"}, {Key: "3", Label: "P3"}, {Key: "4", Label: "P4"}}, func(b *strand.Bead) string { return strconv.Itoa(b.Priority) }},
 	{"assignee", []boardColumn{{Key: "", Label: "unassigned"}}, func(b *strand.Bead) string { return b.Assignee }},
 }
@@ -685,25 +696,60 @@ func (s *Server) handleBoard(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "board", boardView{Pivots: boardPivots, Pivot: boardPivots[0]})
 		return
 	}
-	f, err := s.buildStrand(ctx, src, repo)
+	// List once: strand.Build folds the issues into the scope, and the attention
+	// classifier reuses the same list for its blocker/gate index (a blocker can live
+	// outside the visible scope), so the board and the dashboard read one truth.
+	issues, err := src.List(ctx, allIssues...)
 	if err != nil {
+		s.renderError(w, fmt.Errorf("list issues: %w", err))
+		return
+	}
+	f := strand.Build(issues, s.synFor(repo))
+	q := r.URL.Query()
+	view := listViewFor(f, q.Get("story"), q.Get("epic"), q.Get("filter"))
+	scope := scopeBeads(&view)
+	if err := s.markAttention(ctx, src, scope, issues); err != nil {
 		s.renderError(w, err)
 		return
 	}
-	q := r.URL.Query()
-	view := listViewFor(f, q.Get("story"), q.Get("epic"), q.Get("filter"))
-	s.render(w, "board", buildBoard(&view, q.Get("pivot")))
+	s.render(w, "board", buildBoard(&view, q.Get("pivot"), scope))
 }
 
-// buildBoard pivots the scope's beads into columns. Both the whole-epic and
-// single-story scopes flow through here, so the board can't diverge from the table.
-func buildBoard(v *listView, pivot string) boardView {
+// markAttention flags each scope bead Blocked or Waiting for the board, fetching the
+// scope's dependency edges and classifying via insight (the precedence the dashboard
+// triage already uses). A deps-read error fails the render rather than degrading
+// silently — a blocked bead shown as plain open is exactly the bug this fixes. The
+// scope slice is mutated in place; it is the same backing the board buckets.
+func (s *Server) markAttention(ctx context.Context, src readSource, scope []strand.Bead, issues []bd.Issue) error {
+	if len(scope) == 0 {
+		return nil
+	}
+	ids := make([]string, len(scope))
+	for i := range scope {
+		ids[i] = scope[i].ID
+	}
+	deps, err := src.Deps(ctx, ids...)
+	if err != nil {
+		return fmt.Errorf("board deps: %w", err)
+	}
+	blocked, waiting := insight.Classify(scope, issues, deps)
+	for i := range scope {
+		scope[i].Blocked = blocked[scope[i].ID]
+		scope[i].Waiting = waiting[scope[i].ID]
+	}
+	return nil
+}
+
+// buildBoard pivots the scope's (attention-marked) beads into columns. Both the
+// whole-epic and single-story scopes flow through here, so the board can't diverge
+// from the table.
+func buildBoard(v *listView, pivot string, beads []strand.Bead) boardView {
 	pivot = pivotOrDefault(pivot)
 	return boardView{
 		listView: *v,
 		Pivot:    pivot,
 		Pivots:   boardPivots,
-		Columns:  boardColumns(pivot, scopeBeads(v)),
+		Columns:  boardColumns(pivot, beads),
 	}
 }
 

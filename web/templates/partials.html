@@ -148,6 +148,7 @@
     <span class="pchip {{pclass .Priority}}" title="Priority {{.Priority}}" aria-label="Priority {{.Priority}}">{{.Priority}}</span>
     <span class="bc-id mono">{{shortID .ID}}</span>
     <span class="status"><span class="dot {{.Status}}"></span>{{statusLabel .Status}}</span>
+    {{if .Waiting}}<span class="bc-wait" title="Waiting on you — decision or review" aria-label="Waiting on you">◆</span>{{end}}
     {{if .Assignee}}<span class="bc-asg">{{.Assignee}}</span>{{end}}
   </div>
 </div>
