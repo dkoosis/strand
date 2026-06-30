@@ -550,6 +550,9 @@ func (s *Server) pulseListView(ctx context.Context, src IssueSource, repo regist
 // the pane empty under a nonzero count (st-88o). deps are fetched repo-wide: a
 // blocker can sit outside any one scope, and the count is repo-wide too.
 func (s *Server) blockedBeads(ctx context.Context, src IssueSource, issues []bd.Issue) ([]strand.Bead, error) {
+	if len(issues) == 0 {
+		return nil, nil
+	}
 	all := make([]strand.Bead, len(issues))
 	ids := make([]string, len(issues))
 	for i := range issues {
