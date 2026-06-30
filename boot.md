@@ -20,10 +20,11 @@
 
 ## lane: SuperSandpiper
 
-→ next: backlog empty (0 open beads) — `bd ready` when dk files work.
+→ next: backlog empty (0 open) — `bd ready` when dk files work.
 
-✓ st-03i shipped: attention-flag recompute on post-drag single-card refresh (PR #63 merged, bots clean).
+✓ st-88o shipped: blocked ● cut classifies effective-blocked, not literal status (PR #65 merged, bots clean).
+✓ workspace golden: `make check` green; 3 stale refs pruned.
 
-‡ `make lint` red on main — 3 pre-existing (exhaustive insight.go:219 + 2× staticcheck), str-y1m tracks. #63 residual: dep-blocked card dragged to a non-blocked column needs a board refresh to relocate.
+‡ "blocked" = one effective meaning (insight.Classify lists/buckets, bd-stats counts) — agree by design, ✗ "refactor". Old lint-red note stale; #64 cleared it.
 
-~ dk fenced "yes" → clean autonomous ship; trust-the-loop held.
+~ dk fenced full autonomy ("you own it"); wants the why before a design call.
