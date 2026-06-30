@@ -17,3 +17,13 @@
 ‡ #29↔#30 collide in server.go / server_test.go stubBD / write.go — merge #30 first (pointer-sig, wider blast); #29 also vs merged #28 in partials.html drawer order. str-y1m lint bead open.
 
 ~ dk: verify-before-assert — RTFM beat trusting the survey agent.
+
+## lane: SuperSandpiper
+
+→ next: backlog empty (0 open beads) — `bd ready` when dk files work.
+
+✓ st-03i shipped: attention-flag recompute on post-drag single-card refresh (PR #63 merged, bots clean).
+
+‡ `make lint` red on main — 3 pre-existing (exhaustive insight.go:219 + 2× staticcheck), str-y1m tracks. #63 residual: dep-blocked card dragged to a non-blocked column needs a board refresh to relocate.
+
+~ dk fenced "yes" → clean autonomous ship; trust-the-loop held.
