@@ -976,6 +976,44 @@ func TestBoardMarksBlockedAndWaiting(t *testing.T) {
 	}
 }
 
+// TestBlockedPulseCutListsDerivedBlocks: the ● cut lists dependency-blocked beads
+// (open with an unmet blocker), not just stored-status "blocked" ones — so the
+// pane agrees with the masthead ● count, which counts bd stats' derived blocks.
+// Before st-88o a repo whose blocks were all dependency-derived showed ● N but an
+// empty "No beads in this status" pane.
+func TestBlockedPulseCutListsDerivedBlocks(t *testing.T) {
+	stub := &stubBD{
+		issues: []bd.Issue{
+			{ID: "demo-root", Title: "DEMO", IssueType: "epic", Status: "open"},
+			{ID: "demo-e1", Parent: "demo-root", Title: "Story", IssueType: "epic", Status: "open", Priority: new(1)},
+			{ID: "demo-e1.blocker", Parent: "demo-e1", Title: "The blocker", Status: "open", Priority: new(2)},
+			{ID: "demo-e1.blk", Parent: "demo-e1", Title: "Blocked card", Status: "open", Priority: new(2)},
+			{ID: "demo-e1.free", Parent: "demo-e1", Title: "Free card", Status: "open", Priority: new(2)},
+		},
+		deps: []bd.DepEdge{{IssueID: "demo-e1.blk", DependsOnID: "demo-e1.blocker", Type: bd.DepBlocks}},
+	}
+	srv := newTestServer(t, stub)
+	rec := do(t, srv, "/list?filter=blocked")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /list?filter=blocked = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-id="demo-e1.blk"`) {
+		t.Errorf("blocked cut omitted the dependency-blocked bead:\n%s", body)
+	}
+	if strings.Contains(body, "No beads in this status") {
+		t.Errorf("blocked cut rendered empty despite a derived block:\n%s", body)
+	}
+	// The unblocked open beads — the blocker itself, the free card — carry no unmet
+	// blocker, so neither belongs in the cut.
+	if strings.Contains(body, `data-id="demo-e1.free"`) {
+		t.Errorf("blocked cut wrongly listed an unblocked bead:\n%s", body)
+	}
+	if strings.Contains(body, `data-id="demo-e1.blocker"`) {
+		t.Errorf("blocked cut wrongly listed the blocker:\n%s", body)
+	}
+}
+
 // TestBoardMoveUpdates: a column move issues the matching bd update and returns
 // the refreshed card showing bd's truth (spec Q0).
 func TestBoardMoveUpdates(t *testing.T) {

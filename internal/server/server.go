@@ -463,7 +463,11 @@ type pulseCut struct {
 	title    string
 	status   bd.Status // the --status to fetch for an external cut; "" for live cuts
 	external bool
-	match    func(*bd.Issue) bool
+	// blockerAware marks the ● cut, whose set is derived (stored-blocked OR open
+	// with an unmet blocker), not a plain status match — pulseListView classifies
+	// it via insight so the list agrees with the masthead count (st-88o).
+	blockerAware bool
+	match        func(*bd.Issue) bool
 }
 
 // pulseCutFor maps a filter token to its cut, or reports false for any other
@@ -486,7 +490,10 @@ func pulseCutFor(filter string) (pulseCut, bool) {
 	case "in_progress":
 		return pulseCut{title: "In progress", match: statusIs(bd.StatusInProgress)}, true
 	case "blocked":
-		return pulseCut{title: "Blocked", match: statusIs(bd.StatusBlocked)}, true
+		// ● counts bd stats' blocked_issues, which includes dependency-derived
+		// blocks; a literal status match would miss those (they carry status
+		// "open"), so the cut classifies effective-blocked instead (st-88o).
+		return pulseCut{title: "Blocked", blockerAware: true, match: statusIs(bd.StatusBlocked)}, true
 	case "closed":
 		return pulseCut{title: "Closed", status: bd.StatusClosed, external: true, match: statusIs(bd.StatusClosed)}, true
 	case "deferred":
@@ -514,9 +521,15 @@ func (s *Server) pulseListView(ctx context.Context, src IssueSource, repo regist
 		return listView{}, err
 	}
 	var beads []strand.Bead
-	for i := range issues {
-		if cut.match(&issues[i]) {
-			beads = append(beads, strand.NewBead(&issues[i]))
+	if cut.blockerAware {
+		if beads, err = s.blockedBeads(ctx, src, issues); err != nil {
+			return listView{}, err
+		}
+	} else {
+		for i := range issues {
+			if cut.match(&issues[i]) {
+				beads = append(beads, strand.NewBead(&issues[i]))
+			}
 		}
 	}
 	slices.SortStableFunc(beads, func(a, b strand.Bead) int {
@@ -526,6 +539,38 @@ func (s *Server) pulseListView(ctx context.Context, src IssueSource, repo regist
 		return cmp.Compare(a.ID, b.ID)
 	})
 	return listView{Flat: true, FlatTitle: cut.title, Story: strand.Story{Beads: beads, Open: len(beads)}}, nil
+}
+
+// blockedBeads is the ● cut's bead set: every live bead the board would bucket
+// blocked — stored-status "blocked" OR open with an unmet blocker. It runs the
+// open snapshot through insight.Classify (the same truth the board column and
+// triage use, the same set bd stats' blocked_issues counts), so the masthead ●
+// count and this list can't diverge. A literal status match found none when the
+// blocks were all dependency-derived (those beads carry status "open"), leaving
+// the pane empty under a nonzero count (st-88o). deps are fetched repo-wide: a
+// blocker can sit outside any one scope, and the count is repo-wide too.
+func (s *Server) blockedBeads(ctx context.Context, src IssueSource, issues []bd.Issue) ([]strand.Bead, error) {
+	if len(issues) == 0 {
+		return nil, nil
+	}
+	all := make([]strand.Bead, len(issues))
+	ids := make([]string, len(issues))
+	for i := range issues {
+		all[i] = strand.NewBead(&issues[i])
+		ids[i] = issues[i].ID
+	}
+	deps, err := src.Deps(ctx, ids...)
+	if err != nil {
+		return nil, fmt.Errorf("blocked deps: %w", err)
+	}
+	blocked, _ := insight.Classify(all, issues, deps)
+	out := make([]strand.Bead, 0, len(blocked))
+	for i := range all {
+		if blocked[all[i].ID] {
+			out = append(out, all[i])
+		}
+	}
+	return out, nil
 }
 
 // listViewFor builds the bead-list pane from the strand. Scope precedence:
