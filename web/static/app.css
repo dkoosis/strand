@@ -332,7 +332,7 @@ tbody tr:hover td { background: var(--bg-2); }
 tbody tr:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .story-head:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .r-id { color: var(--ink-4); font-size: var(--fs-9); width: 92px; text-align: right; padding-right: var(--s-6) !important; }
-.r-pri { width: 26px; padding-left: var(--s-6) !important; }
+.r-pri { width: 44px; padding-left: var(--s-6) !important; }
 .pchip { display: inline-block; width: 20px; text-align: center; font-size: 10px; font-weight: 600;
   border-radius: 3px; color: var(--chip-ink); font-variant-numeric: tabular-nums; }
 .p0 { background: var(--p0); } .p1 { background: var(--p1); } .p2 { background: var(--p2); }
