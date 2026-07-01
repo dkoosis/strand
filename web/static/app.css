@@ -143,8 +143,9 @@ header {
   font-size: var(--fs-3); font-weight: 600; line-height: 1.25; letter-spacing: -.012em;
   max-width: 78ch; color: var(--ink); white-space: pre-line;
 }
-.ns-meta { margin-left: auto; display: flex; align-items: center; gap: var(--s-6); color: var(--ink-3); font-size: var(--fs-8); white-space: nowrap; }
-.ns-meta b { color: var(--ink); font-weight: 600; }
+.ns-meta { margin-left: auto; display: flex; align-items: center; gap: var(--s-5); color: var(--ink-3); font-size: var(--fs-8); white-space: nowrap; }
+.ns-count { color: var(--ink-3); font-weight: 500; }
+.ns-div { width: 1px; height: 16px; background: var(--line); }
 
 /* bead-status pulse — the status line's glyph spread, mirrored and clickable.
    Glyph colors track the board's status palette; counts use the ink ramp so the
@@ -330,15 +331,15 @@ tbody tr:hover td { background: var(--bg-2); }
 /* keyboard focus is visible on the now-focusable rows (role=button, str-6k0.5) */
 tbody tr:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .story-head:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-.r-id { color: var(--ink-4); font-size: var(--fs-9); width: 92px; padding-left: var(--s-6) !important; }
-.r-pri { width: 26px; }
+.r-id { color: var(--ink-4); font-size: var(--fs-9); width: 92px; text-align: right; padding-right: var(--s-6) !important; }
+.r-pri { width: 44px; padding-left: var(--s-6) !important; }
 .pchip { display: inline-block; width: 20px; text-align: center; font-size: 10px; font-weight: 600;
   border-radius: 3px; color: var(--chip-ink); font-variant-numeric: tabular-nums; }
 .p0 { background: var(--p0); } .p1 { background: var(--p1); } .p2 { background: var(--p2); }
 .p3 { background: var(--p3); color: #fff; } .p4 { background: var(--p4); color: #fff; }
 .r-title { color: var(--ink); font-size: var(--fs-2); font-weight: 500; max-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .r-type { width: 64px; color: var(--ink-3); font-size: var(--fs-8); }
-.r-stat { width: 116px; padding-right: var(--s-6) !important; }
+.r-stat { width: 116px; }
 .status { display: inline-flex; align-items: center; gap: var(--s-3); font-size: var(--fs-8); color: var(--ink-2); }
 .dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
 .dot.open { background: var(--st-open); } .dot.in_progress { background: var(--st-prog); }
