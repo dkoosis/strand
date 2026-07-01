@@ -102,8 +102,60 @@ function viewURL(view, story, epic, filter) {
   if (epic) return `${path}?epic=${encodeURIComponent(epic)}`;
   return path;
 }
+// pulseChip reads a live pulse cell so the active-cut readout reuses the server's
+// glyph, label, and color class for a status cut instead of duplicating them.
+function pulseChip(filter) {
+  const cell = document.querySelector(`.pcell[data-filter="${CSS.escape(filter)}"]`);
+  const glyph = cell?.querySelector(".pg")?.textContent || "";
+  const label = (cell?.getAttribute("title") || filter).split(":")[0].trim();
+  const cls = [...(cell?.classList || [])].find((c) => c.startsWith("pc-")) || "";
+  return { glyph, label, cls };
+}
+// renderActiveCuts is the ONE place the live narrowing shows: a pulse status cut,
+// the bugs type scope, or a minimap epic/story scope, each a chip you can clear
+// right here — replacing the old scope-hint span and the minimap-foot clear button.
+// The three cuts are mutually exclusive (each control clears the others), so at most
+// one chip renders today; the loop is written for the general case so a future
+// composed cut lights up without a rewrite.
+function renderActiveCuts(story, epic, filter) {
+  const el = document.getElementById("activeCuts");
+  if (!el) return;
+  const chips = [];
+  if (filter === "bugs") {
+    chips.push({ label: "bugs" });
+  } else if (PULSE_FILTERS.has(filter)) {
+    chips.push(pulseChip(filter));
+  }
+  if (story) {
+    const name = document.querySelector(`.story[data-story="${CSS.escape(story)}"]`)?.dataset.name || story;
+    chips.push({ label: name });
+  } else if (epic) {
+    const name = document.querySelector(`.epic[data-epic="${CSS.escape(epic)}"]`)?.dataset.name || epic;
+    chips.push({ label: name });
+  }
+  el.innerHTML = chips
+    .map((c) => {
+      const g = c.glyph ? `<span class="cut-g" aria-hidden="true">${mmEsc(c.glyph)}</span>` : "";
+      const cls = c.cls ? ` ${c.cls}` : "";
+      return `<span class="cut-chip${cls}">${g}<span class="cut-l">${mmEsc(c.label)}</span>` +
+        `<button class="cut-x" type="button" data-clear-cut aria-label="Clear ${mmEsc(c.label)} filter">×</button></span>`;
+    })
+    .join("");
+}
+// clearCuts drops every narrowing scope and reloads the active view whole — the
+// single clear path the readout chips and any programmatic reset route through.
+function clearCuts() {
+  viewport.dataset.story = "";
+  viewport.dataset.epic = "";
+  viewport.dataset.filter = "";
+  htmx.ajax("GET", viewURL(activeView(), "", "", ""), { target: "#listPane", swap: "innerHTML" });
+}
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-clear-cut]")) clearCuts();
+});
+
 // syncChrome reflects the active view+story into the chrome: the tab strip's pressed
-// state, the scope hint, and the minimap's "all" clear affordance.
+// state, the active-cut readout, and the pulse/scope highlights.
 function syncChrome() {
   const view = activeView();
   const story = activeStory();
@@ -122,15 +174,7 @@ function syncChrome() {
     tab.classList.toggle("active", on);
     tab.setAttribute("aria-pressed", on ? "true" : "false");
   });
-  const hint = document.getElementById("scopeHint");
-  if (hint) {
-    let name = "";
-    if (story) name = document.querySelector(`.story[data-story="${CSS.escape(story)}"]`)?.dataset.name || story;
-    else if (epic) name = document.querySelector(`.epic[data-epic="${CSS.escape(epic)}"]`)?.dataset.name || epic;
-    hint.textContent = name ? `Filtered · ${name}` : "";
-  }
-  const clear = document.getElementById("mmClear");
-  if (clear) clear.hidden = !story && !epic && !filter;
+  renderActiveCuts(story, epic, filter);
   // A pulse cell lights only while its cut is the live Table filter.
   const pulseOn = view === "list" && PULSE_FILTERS.has(filter);
   document.querySelectorAll(".pcell").forEach((c) => {
@@ -197,13 +241,6 @@ document.body.addEventListener("htmx:configRequest", (e) => {
     const base = viewURL("board", activeStory(), activeEpic(), activeFilter());
     e.detail.path = `${base}${base.includes("?") ? "&" : "?"}pivot=${encodeURIComponent(pivot.dataset.pivot)}`;
     return;
-  }
-  // The minimap's foot clear drops every scope and reloads the active view whole.
-  if (e.detail.elt.id === "mmClear") {
-    viewport.dataset.story = "";
-    viewport.dataset.epic = "";
-    viewport.dataset.filter = "";
-    e.detail.path = viewURL(activeView(), "", "", "");
   }
 });
 // A minimap epic/story click filters the ACTIVE view to that scope (spec §2). A

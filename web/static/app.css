@@ -192,11 +192,38 @@ header {
 .viewtab:hover { color: var(--ink); }
 .viewtab.active { color: var(--ink); border-bottom-color: var(--p2); }
 .viewbar-spacer { flex: 1; }
-.viewbar-hint {
-  align-self: center; font-size: var(--fs-8); color: var(--ink-3);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 24ch;
-  margin-right: var(--s-4);
+/* active-cut readout — the ONE place the live narrowing shows (a pulse status cut,
+   the bugs scope, or a minimap epic/story scope), each a chip you clear in place.
+   Sits between the view tabs and the scope pills so all three filter affordances
+   read as one family. */
+.active-cuts {
+  display: flex; align-items: center; gap: var(--s-2);
+  align-self: center; margin-right: var(--s-4); min-width: 0;
 }
+.cut-chip {
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3); border-radius: 999px;
+  background: var(--sel); border: 1px solid var(--line);
+  font-size: var(--fs-8); font-weight: 600; color: var(--ink);
+  max-width: 22ch;
+}
+.cut-chip .cut-g { font-size: var(--fs-2); line-height: 1; }
+.cut-chip .cut-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cut-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; padding: 0; border: 0; border-radius: 999px;
+  background: none; color: var(--ink-3); font: inherit; font-size: var(--fs-2);
+  line-height: 1; cursor: pointer;
+}
+.cut-x:hover { background: var(--bg-2); color: var(--ink); }
+.cut-x:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+/* the chip's glyph tints to its status color, mirroring the pulse cell it came from */
+.cut-chip.pc-wait     .cut-g { color: var(--st-wait); }
+.cut-chip.pc-open     .cut-g { color: var(--st-open); }
+.cut-chip.pc-prog     .cut-g { color: var(--st-prog); }
+.cut-chip.pc-blocked  .cut-g { color: var(--st-blocked); }
+.cut-chip.pc-closed   .cut-g { color: var(--st-closed); }
+.cut-chip.pc-deferred .cut-g { color: var(--st-deferred); }
 /* scope chips — a SECOND control axis (what you see), grouped on the right over the
    minimap. Same tab family as the view switcher, but the active state is a filled
    pill, not the tab underline, so a chosen filter never reads as a chosen view. */
@@ -219,15 +246,6 @@ header {
   border-left: 1px solid var(--line); display: flex; flex-direction: column;
   min-width: 0; min-height: 0; background: var(--bg);
 }
-/* clear-filter: full-width control at the rail foot, shown only when filtered */
-.mm-clear {
-  flex: 0 0 auto; margin: 0; font: inherit; font-size: var(--fs-9); font-weight: 600;
-  letter-spacing: .04em; text-transform: uppercase; padding: var(--s-3);
-  border: 0; border-top: 1px solid var(--line); background: var(--bg-2);
-  color: var(--ink-2); cursor: pointer;
-}
-.mm-clear:hover { background: var(--sel); color: var(--ink); }
-
 /* hovered epic name, pinned above the map (empty at rest) */
 .mm-title {
   flex: 0 0 auto; height: 28px; padding: var(--s-4) var(--s-5) 0;
