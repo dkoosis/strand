@@ -77,7 +77,7 @@
     <button class="viewtab" type="button" data-view="insights" aria-pressed="false"
             hx-get="/insights" hx-target="#listPane">Insights</button>
     <span class="viewbar-spacer"></span>
-    <span class="viewbar-hint" id="scopeHint"></span>
+    <div class="active-cuts" id="activeCuts" role="group" aria-label="Active filter" aria-live="polite"></div>
     <div class="scopebar" role="group" aria-label="Filter the strand">
       <button class="scopetab active" type="button" data-scope="all" aria-pressed="true"
               hx-get="/list" hx-target="#listPane">everything</button>
@@ -95,7 +95,6 @@
       <div class="mm-title" id="mmTitle" aria-live="polite"></div>
       <div class="tmwrap">{{template "map" .Strand}}</div>
       <div class="mm-readout idle" id="mmReadout"></div>
-      <button class="mm-clear" id="mmClear" type="button" hidden hx-get="/list" hx-target="#listPane" title="Clear filter">clear filter</button>
     </aside>
   </div>
 </div>
