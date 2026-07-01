@@ -17,7 +17,9 @@ document.getElementById("theme")?.addEventListener("click", () => {
 // hover unit, so you never have to land on a sliver of a story to read its name.
 const mmReadout = document.getElementById("mmReadout");
 const mmTitle = document.getElementById("mmTitle");
-const mmEsc = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+// Escapes for both text and double-quoted-attribute contexts: the active-cut
+// readout drops a (user-controlled) bead name into an aria-label, so " and > count.
+const mmEsc = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 function mmLegend() {
   if (!mmReadout) return;
   mmReadout.classList.add("idle");
@@ -145,6 +147,7 @@ function renderActiveCuts(story, epic, filter) {
 // clearCuts drops every narrowing scope and reloads the active view whole — the
 // single clear path the readout chips and any programmatic reset route through.
 function clearCuts() {
+  if (!viewport) return;
   viewport.dataset.story = "";
   viewport.dataset.epic = "";
   viewport.dataset.filter = "";
