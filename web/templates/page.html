@@ -55,7 +55,8 @@
   </div>
   {{end}}
   <div class="ns-meta">
-    <span><b class="tnum">{{len .Strand.Epics}}</b> epic{{if ne (len .Strand.Epics) 1}}s{{end}}</span>
+    <span class="ns-count">{{len .Strand.Epics}} epic{{if ne (len .Strand.Epics) 1}}s{{end}}</span>
+    <span class="ns-div" aria-hidden="true"></span>
     {{/* Bead-status pulse: the status line's spread, mirrored into the page. /pulse
          re-renders it on refreshList so an in-app edit keeps the counts honest
          without a full reload (str-ijy). */}}

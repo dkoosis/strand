@@ -343,11 +343,11 @@
     <tr data-id="{{.ID}}" role="button" tabindex="0"
         hx-get="/bead/{{.ID}}" hx-target="#drawer"
         hx-trigger="click,keyup[key=='Enter'],keyup[key==' ']">
-      <td class="r-id mono">{{shortID .ID}}</td>
       <td class="r-pri"><span class="pchip {{pclass .Priority}}" title="Priority {{.Priority}}" aria-label="Priority {{.Priority}}">{{.Priority}}</span></td>
       <td class="r-title">{{.Title}}{{template "jtbdTag" .}}</td>
       <td class="r-type">{{.Type}}</td>
       <td class="r-stat"><span class="status"><span class="dot {{.Status}}"></span>{{statusLabel .Status}}</span></td>
+      <td class="r-id mono">{{shortID .ID}}</td>
     </tr>
     {{end}}
     {{end}}
