@@ -599,6 +599,9 @@ func (s *Server) blockedBeads(ctx context.Context, src IssueSource, issues []bd.
 // cache falls back to bd stats for one render, and the background deps prefetch plus
 // the next /pulse render (on refreshList) bring the count in line with the cut.
 func (s *Server) cachedBlockedSet(src IssueSource, issues []bd.Issue) (map[string]bool, bool) {
+	if len(issues) == 0 {
+		return nil, true // nothing to classify — Blocked is exactly zero, no deps needed
+	}
 	peeker, ok := src.(interface {
 		CachedDeps() ([]bd.DepEdge, bool)
 	})
