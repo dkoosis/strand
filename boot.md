@@ -1,6 +1,6 @@
 ## lane: WildSandpiper
 
-→ next: rebuild `web/mockup/v1.html` as the **strand** — sized story-cards (size=open work, heat=child recency) + north-star masthead, real trixi epic roll-ups; flat table → drill-in. Final picture-review pending, then execute.
+✓ built the **strand** — sized story-cards (size=open work, heat=child recency) + north-star masthead, real epic roll-ups; flat table → drill-in. Static mockups (`web/mockup/`) removed once the live app landed.
 
 ✓ synthesis reframe → spec §1a (vault+repo synced); V1 table spike built then pivoted away from it.
 

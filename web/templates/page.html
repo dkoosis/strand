@@ -53,6 +53,11 @@
     <div class="ns-label">North star</div>
     <div class="northstar">{{.Strand.NorthStar}}</div>
   </div>
+  {{else if .Strand.NorthStarPath}}
+  <div class="ns-left">
+    <div class="ns-label">North star</div>
+    <div class="northstar northstar-empty">No north-star line — add <code>{{.Strand.NorthStarPath}}</code></div>
+  </div>
   {{end}}
   <div class="ns-meta">
     <span class="ns-count">{{len .Strand.Epics}} epic{{if ne (len .Strand.Epics) 1}}s{{end}}</span>

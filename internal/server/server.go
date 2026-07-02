@@ -1754,6 +1754,7 @@ func (s *Server) synFor(repo registry.Repo) strand.Synthesis {
 	syn := s.syn
 	syn.Project = repo.Name
 	syn.NorthStar = s.northStarFor(repo)
+	syn.NorthStarPath = filepath.Join(repo.Path, northStarMiniFile)
 	syn.JTBD = jtbd.Load(repo.Path)
 	return syn
 }
@@ -1764,6 +1765,9 @@ func (s *Server) synFor(repo registry.Repo) strand.Synthesis {
 // non-empty s.syn.NorthStar is the --northstar flag and wins; with no flag the
 // active repo's canonical north-star-mini.md is read (decision nug 952acad4aca2).
 // Missing/empty → "".
+// northStarMiniFile is the repo-root file strand reads the masthead line from.
+const northStarMiniFile = "north-star-mini.md"
+
 func (s *Server) northStarFor(repo registry.Repo) string {
 	if s.syn.NorthStar != "" {
 		return s.syn.NorthStar
@@ -1781,7 +1785,7 @@ func northStarMini(repoPath string) string {
 	if repoPath == "" {
 		return ""
 	}
-	b, err := os.ReadFile(filepath.Join(repoPath, "north-star-mini.md"))
+	b, err := os.ReadFile(filepath.Join(repoPath, northStarMiniFile))
 	if err != nil {
 		return ""
 	}
