@@ -143,7 +143,7 @@ header {
   font-size: var(--fs-3); font-weight: 600; line-height: 1.25; letter-spacing: -.012em;
   max-width: 78ch; color: var(--ink); white-space: pre-line;
 }
-.northstar-empty { font-weight: 400; color: var(--ink-3); }
+.northstar-empty { font-weight: 400; color: var(--ink-3); overflow-wrap: break-word; }
 .northstar-empty code { font-size: .9em; color: var(--ink-2); }
 .ns-meta { margin-left: auto; display: flex; align-items: center; gap: var(--s-5); color: var(--ink-3); font-size: var(--fs-8); white-space: nowrap; }
 .ns-count { color: var(--ink-3); font-weight: 500; }
