@@ -123,10 +123,14 @@ func (e *Epic) BeadID() string {
 
 // Model is the whole landing model the page template renders.
 type Model struct {
-	NorthStar  string
-	Epics      []Epic
-	Open       int
-	InProgress int
+	NorthStar string
+	// NorthStarPath is where strand looked for the north-star line when it found
+	// none — the masthead renders it as a de-emphasized hint so an empty star reads
+	// as "add this file here", not a broken render.
+	NorthStarPath string
+	Epics         []Epic
+	Open          int
+	InProgress    int
 }
 
 // Synthesis is the human-shaped layer bd does not yet provide (spec §1a): the
@@ -136,6 +140,9 @@ type Model struct {
 type Synthesis struct {
 	Project   string
 	NorthStar string
+	// NorthStarPath is the file strand read (or would have read) the north-star
+	// line from — surfaced as a hint when NorthStar is empty.
+	NorthStarPath string
 	// JTBD resolves a story's cited job-to-be-done id to its job title (str-r1q).
 	// The zero value resolves nothing — the safe state for a repo with no
 	// docs/jtbd.md.
@@ -190,7 +197,7 @@ func Build(issues []bd.Issue, syn Synthesis) Model {
 		epicOf[story] = epic
 	}
 
-	f := Model{NorthStar: syn.NorthStar, InProgress: inProgress}
+	f := Model{NorthStar: syn.NorthStar, NorthStarPath: syn.NorthStarPath, InProgress: inProgress}
 	if len(members) == 0 {
 		return f
 	}
