@@ -191,6 +191,14 @@ func (c *cachingSource) List(ctx context.Context, args ...string) ([]bd.Issue, e
 // "blocks" edges (blocksEdges / blockerIDs), so a superset is correct and lets all
 // structural views share one fetch. On a cold cache it fetches deps for the full
 // cached list's ids; if List hasn't run yet it falls back to the requested ids.
+// CachedDeps returns the repo-wide deps only if a live snapshot already holds them,
+// never fetching — the non-blocking peek computePulse needs so the masthead can use
+// the exact effective-blocked set when it's warm without paying a spawn when it
+// isn't (st-x66, honoring the str-47z no-deps-on-landing rule).
+func (c *cachingSource) CachedDeps() ([]bd.DepEdge, bool) {
+	return c.cache.liveDeps(c.repo)
+}
+
 func (c *cachingSource) Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, error) {
 	if deps, ok := c.cache.liveDeps(c.repo); ok {
 		return deps, nil
