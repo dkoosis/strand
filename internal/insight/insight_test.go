@@ -413,6 +413,10 @@ func TestHumanGate(t *testing.T) {
 		{"review bool true", bd.Issue{Metadata: map[string]any{"review_needed": true}}, false, true},
 		{"review false", bd.Issue{Metadata: map[string]any{"review_needed": "false"}}, false, false},
 		{"both decision wins", bd.Issue{Labels: []string{"human"}, Metadata: map[string]any{"review_needed": "true"}}, true, false},
+		{"needs-decision string true", bd.Issue{Metadata: map[string]any{"needs-decision": "true"}}, true, false},
+		{"needs-decision bool true", bd.Issue{Metadata: map[string]any{"needs-decision": true}}, true, false},
+		{"needs-decision false", bd.Issue{Metadata: map[string]any{"needs-decision": "false"}}, false, false},
+		{"needs-decision over review", bd.Issue{Metadata: map[string]any{"needs-decision": "true", "review_needed": "true"}}, true, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

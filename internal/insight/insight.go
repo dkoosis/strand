@@ -92,15 +92,24 @@ const humanLabel = "human"
 // bdx's REVIEW queue. bd emits it as the string "true"; bool is tolerated defensively.
 const reviewNeededKey = "review_needed"
 
+// needsDecisionKey is the bd metadata key marking a bead as parked on a human
+// DECISION — dk's convention for the blocked-vs-open problem (a bead awaiting a
+// call from the human reads as "open" to bd, which is deceptive). A base that
+// never sets this key simply produces no gated beads, so the affordance
+// self-collapses: no convention → no decision lane. It augments (does not
+// replace) the "human" label, which dk's dispatch toolchain still writes.
+const needsDecisionKey = "needs-decision"
+
 // humanGate classifies a bead's human-gate state from its full issue record: a
-// DECISION (carries the "human" label) or a REVIEW (review_needed=="true"). A bead
-// carrying both is a decision — the stronger "needs a human call" signal — so the
-// waiting lane never double-counts it. A bead with neither is neither (claimable).
+// DECISION (needs-decision metadata truthy, or the "human" label) or a REVIEW
+// (review_needed=="true"). Decision outranks review, so a bead carrying both is a
+// decision — the stronger "needs a human call" signal — and the waiting lane never
+// double-counts it. A bead with neither is neither (claimable).
 func humanGate(iss *bd.Issue) (decision, review bool) {
 	if iss == nil {
 		return false, false
 	}
-	if slices.Contains(iss.Labels, humanLabel) {
+	if needsDecision(iss.Metadata) || slices.Contains(iss.Labels, humanLabel) {
 		return true, false
 	}
 	if reviewNeeded(iss.Metadata) {
@@ -143,11 +152,23 @@ func WaitingCount(issues []bd.Issue) int {
 // a bool true is tolerated in case a future bd quotes it differently (mirrors the
 // defensive number/string handling in bd.Issue.Rank). Anything else is "not flagged".
 func reviewNeeded(m map[string]any) bool {
-	switch v := m[reviewNeededKey].(type) {
+	return flagTruthy(m[reviewNeededKey])
+}
+
+// needsDecision reads metadata.needs-decision — dk's decision-gate convention.
+// Same defensive truthy parse as reviewNeeded: bd emits "true", bool is tolerated.
+func needsDecision(m map[string]any) bool {
+	return flagTruthy(m[needsDecisionKey])
+}
+
+// flagTruthy reads a bd metadata flag emitted as the string "true" (bool true
+// tolerated defensively). Anything else — absent, "false", other types — is not set.
+func flagTruthy(v any) bool {
+	switch t := v.(type) {
 	case string:
-		return v == "true"
+		return t == "true"
 	case bool:
-		return v
+		return t
 	default:
 		return false
 	}
