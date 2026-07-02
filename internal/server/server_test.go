@@ -1014,6 +1014,48 @@ func TestBlockedPulseCutListsDerivedBlocks(t *testing.T) {
 	}
 }
 
+// TestPulseCountsMatchCutsForDerivedBlocks pins st-x66: the masthead lanes are a
+// partition, and each count clicks through to exactly its cut. An open bead held by
+// an unmet blocker is effective-blocked, so it counts under ● (not ○) and lists
+// under ● alone — the count taken from the same insight.Classify the ● cut uses, so
+// a nonzero ● can never render an empty pane. Deps are warmed by a prior view; the
+// pulse reads the cache (never spawning on the landing path, str-47z).
+func TestPulseCountsMatchCutsForDerivedBlocks(t *testing.T) {
+	stub := &stubBD{
+		issues: []bd.Issue{
+			{ID: "demo-root", Title: "DEMO", IssueType: "epic", Status: "open"},
+			{ID: "blocker", Parent: "demo-root", Title: "The blocker", Status: "open", Priority: new(2)},
+			{ID: "blk", Parent: "demo-root", Title: "Held task", Status: "open", Priority: new(2)},
+			{ID: "free", Parent: "demo-root", Title: "Free task", Status: "open", Priority: new(2)},
+		},
+		deps: []bd.DepEdge{{IssueID: "blk", DependsOnID: "blocker", Type: bd.DepBlocks}},
+	}
+	srv := newTestServer(t, stub)
+
+	// Warm the repo deps cache so the pulse reads the exact effective-blocked set
+	// (a cold cache would fall back to bd stats, which counts only stored blocks).
+	do(t, srv, "/board")
+
+	pulse := do(t, srv, "/pulse").Body.String()
+	// Four open-status beads (root, blocker, blk, free); blk is blocked, so it leaves
+	// ○ for ● — the two lanes stay disjoint.
+	if !strings.Contains(pulse, `title="Open: 3"`) {
+		t.Errorf("○ should drop the dependency-blocked bead (want Open: 3):\n%s", pulse)
+	}
+	if !strings.Contains(pulse, `title="Blocked: 1"`) {
+		t.Errorf("● count should derive from Classify (want Blocked: 1):\n%s", pulse)
+	}
+
+	// Parity: the ○ count clicks through to a pane that omits the blocked bead.
+	open := do(t, srv, "/list?filter=open").Body.String()
+	if strings.Contains(open, `data-id="blk"`) {
+		t.Errorf("○ cut leaked the blocked bead:\n%s", open)
+	}
+	if !strings.Contains(open, `data-id="free"`) || !strings.Contains(open, `data-id="blocker"`) {
+		t.Errorf("○ cut dropped an actionable-open bead:\n%s", open)
+	}
+}
+
 // TestBoardMoveUpdates: a column move issues the matching bd update and returns
 // the refreshed card showing bd's truth (spec Q0).
 func TestBoardMoveUpdates(t *testing.T) {
