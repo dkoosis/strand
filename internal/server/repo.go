@@ -49,24 +49,24 @@ func (s *Server) handleRepos(w http.ResponseWriter, _ *http.Request) {
 // every view re-scopes to the new repo's beads (spec R1). An unknown path
 // re-renders the menu with bd's error rather than scoping to nothing.
 func (s *Server) handleSwitchRepo(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.reg.Switch(r.FormValue("path")); err != nil {
-		// Every failure — a mistyped/unregistered path or unexpected persistence
-		// trouble — surfaces its message inline so the user keeps their typed path.
-		s.render(w, "repoMenu", s.repoMenu(err.Error()))
-		return
-	}
-	w.Header().Set("HX-Refresh", "true")
-	w.WriteHeader(http.StatusNoContent)
+	s.activateRepo(w, r, s.reg.Switch)
 }
 
 // handleAddRepo registers an explicitly-typed path (spec O6: scan + add) and
 // switches to it, reloading on success. A path with no .beads re-renders the menu
 // with the error and the empty state's guidance, never adding a bare directory.
 func (s *Server) handleAddRepo(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.reg.Add(r.FormValue("path")); err != nil {
-		// Every failure — a path with no .beads or unexpected resolve-abs/
-		// persistence trouble — surfaces its message inline, never adding a bare
-		// directory.
+	s.activateRepo(w, r, s.reg.Add)
+}
+
+// activateRepo runs a registry mutation that makes the posted path the active repo
+// (Switch or Add) and, on success, tells htmx to reload so every view re-scopes. Any
+// failure — a mistyped/unregistered path, a path with no .beads, or unexpected
+// resolve-abs/persistence trouble — surfaces its message inline so the user keeps
+// their typed path, never scoping to nothing or adding a bare directory. Switch and
+// Add differ only in the registry call, so both handlers share this shape.
+func (s *Server) activateRepo(w http.ResponseWriter, r *http.Request, activate func(string) (registry.Repo, error)) {
+	if _, err := activate(r.FormValue("path")); err != nil {
 		s.render(w, "repoMenu", s.repoMenu(err.Error()))
 		return
 	}

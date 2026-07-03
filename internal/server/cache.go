@@ -54,11 +54,13 @@ type snapshotCache struct {
 // it's about to write deps into (see putDeps). It is clock-independent, so the
 // fixed-clock tests still distinguish versions even when every `at` is equal.
 type snapshot struct {
-	at     time.Time
-	gen    uint64
-	list   []bd.Issue
-	deps   []bd.DepEdge
-	depsOK bool
+	at      time.Time
+	gen     uint64
+	list    []bd.Issue
+	deps    []bd.DepEdge
+	depsOK  bool
+	stats   bd.Stats
+	statsOK bool
 }
 
 func newSnapshotCache(now func() time.Time) *snapshotCache {
@@ -114,6 +116,18 @@ func (c *snapshotCache) liveDeps(repo string) ([]bd.DepEdge, bool) {
 	return nil, false
 }
 
+// liveStats returns the repo-wide status counts and true only when a live snapshot
+// already holds them (statsOK). Read under the lock putStats writes under, so the
+// stats/statsOK fields never race.
+func (c *snapshotCache) liveStats(repo string) (bd.Stats, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e := c.entryLocked(repo); e != nil && e.statsOK {
+		return e.stats, true
+	}
+	return bd.Stats{}, false
+}
+
 // Shared-view contract (matches registry.Registry.Repos): a snapshot's list and
 // deps slices are published once and never mutated in place. liveList/liveDeps
 // hand the same backing array to every concurrent handler, which read it without
@@ -144,6 +158,20 @@ func (c *snapshotCache) putDeps(repo string, gen uint64, deps []bd.DepEdge) {
 	}
 }
 
+// putStats records the repo-wide Stats result into the snapshot it was fetched for,
+// identified by gen, mirroring putDeps: it writes only when the current snapshot is
+// still that one, so an invalidate or a fresh putList between the read and here drops
+// the stale counts rather than stapling them onto a newer list. gen 0 (a Stats before
+// any List) never matches a live snapshot, so the counts simply aren't cached until a
+// list is warm.
+func (c *snapshotCache) putStats(repo string, gen uint64, stats bd.Stats) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.entries[repo]; ok && e.gen == gen {
+		e.stats, e.statsOK = stats, true
+	}
+}
+
 // invalidate drops a repo's snapshot. Every successful write calls this so the
 // next read re-fetches bd's truth.
 func (c *snapshotCache) invalidate(repo string) {
@@ -166,10 +194,11 @@ type cachingSource struct {
 // allIssues (`list --limit 0`), fetching once on a miss. A filtered read (any args
 // other than allIssues) bypasses the snapshot entirely: it passes straight through
 // to bd and neither serves from nor writes to the cache, so a filter can never
-// silently return the full list (LSP guard, st-4g0). The views all read unfiltered
+// silently return the full list (LSP guard, st-4g0). Most views read unfiltered
 // through this source; the one filtered read path (pulseListView's external cut)
-// already routes around the cache via the raw source, so the guard is insurance
-// against a future caller wiring a filtered read through here by mistake.
+// relies on this very pass-through, so its status slice never serves from nor writes
+// to the open snapshot — the guard both carries that path and insures against a
+// future caller wiring a filtered read through here by mistake.
 func (c *cachingSource) List(ctx context.Context, args ...string) ([]bd.Issue, error) {
 	if !slices.Equal(args, allIssues) {
 		return c.IssueSource.List(ctx, args...)
@@ -191,12 +220,28 @@ func (c *cachingSource) List(ctx context.Context, args ...string) ([]bd.Issue, e
 // "blocks" edges (blocksEdges / blockerIDs), so a superset is correct and lets all
 // structural views share one fetch. On a cold cache it fetches deps for the full
 // cached list's ids; if List hasn't run yet it falls back to the requested ids.
-// CachedDeps returns the repo-wide deps only if a live snapshot already holds them,
-// never fetching — the non-blocking peek computePulse needs so the masthead can use
-// the exact effective-blocked set when it's warm without paying a spawn when it
-// isn't (st-x66, honoring the str-47z no-deps-on-landing rule).
-func (c *cachingSource) CachedDeps() ([]bd.DepEdge, bool) {
-	return c.cache.liveDeps(c.repo)
+// computePulse reads the warm deps for the masthead straight from the snapshot cache
+// (snapshotCache.liveDeps), never fetching — the non-blocking peek that lets the
+// masthead use the exact effective-blocked set when it's warm without paying a spawn
+// when it isn't (st-x66, honoring the str-47z no-deps-on-landing rule).
+
+// Stats serves the repo-wide status counts from the snapshot, fetching once on a
+// miss and binding the result to the current snapshot's gen (like Deps). The counts
+// live in the same entry as the list and drop on the same invalidate, so a write
+// re-fetches bd's truth. computePulse reads Stats before List, so on a cold cache the
+// first fetch can't bind yet (gen 0, no live entry) and pays the spawn; once a list is
+// warm the next render caches the counts and every render after hits memory.
+func (c *cachingSource) Stats(ctx context.Context) (bd.Stats, error) {
+	if stats, ok := c.cache.liveStats(c.repo); ok {
+		return stats, nil
+	}
+	_, gen, _ := c.cache.liveList(c.repo)
+	stats, err := c.IssueSource.Stats(ctx)
+	if err != nil {
+		return bd.Stats{}, err
+	}
+	c.cache.putStats(c.repo, gen, stats)
+	return stats, nil
 }
 
 func (c *cachingSource) Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, error) {
@@ -233,98 +278,66 @@ func (c *cachingSource) repoIDs(reqIDs []string) ([]string, uint64) {
 // the next read reflects the change (strand is the sole writer — invalidate exactly
 // on a successful write). A failed write leaves the snapshot, since nothing changed.
 
-func (c *cachingSource) Update(ctx context.Context, id, field, value string) (*bd.Issue, error) {
-	iss, err := c.IssueSource.Update(ctx, id, field, value)
+// done drops the repo's snapshot when a write succeeded and returns the write's
+// error unchanged, so every wrapper is one line and the invalidate-on-success rule
+// lives in one place.
+func (c *cachingSource) done(err error) error {
 	if err == nil {
 		c.cache.invalidate(c.repo)
 	}
-	return iss, err
+	return err
+}
+
+func (c *cachingSource) Update(ctx context.Context, id, field, value string) (*bd.Issue, error) {
+	iss, err := c.IssueSource.Update(ctx, id, field, value)
+	return iss, c.done(err)
 }
 
 func (c *cachingSource) Claim(ctx context.Context, id string) (*bd.Issue, error) {
 	iss, err := c.IssueSource.Claim(ctx, id)
-	if err == nil {
-		c.cache.invalidate(c.repo)
-	}
-	return iss, err
+	return iss, c.done(err)
 }
 
 func (c *cachingSource) Close(ctx context.Context, id, reason string) (*bd.Issue, error) {
 	iss, err := c.IssueSource.Close(ctx, id, reason)
-	if err == nil {
-		c.cache.invalidate(c.repo)
-	}
-	return iss, err
+	return iss, c.done(err)
 }
 
 func (c *cachingSource) SetRank(ctx context.Context, id string, rank float64) (*bd.Issue, error) {
 	iss, err := c.IssueSource.SetRank(ctx, id, rank)
-	if err == nil {
-		c.cache.invalidate(c.repo)
-	}
-	return iss, err
+	return iss, c.done(err)
 }
 
 func (c *cachingSource) SetParent(ctx context.Context, id, parent bd.ID) (*bd.Issue, error) {
 	iss, err := c.IssueSource.SetParent(ctx, id, parent)
-	if err == nil {
-		c.cache.invalidate(c.repo)
-	}
-	return iss, err
+	return iss, c.done(err)
 }
 
 func (c *cachingSource) Comment(ctx context.Context, id, text string) error {
-	err := c.IssueSource.Comment(ctx, id, text)
-	if err == nil {
-		c.cache.invalidate(c.repo)
-	}
-	return err
+	return c.done(c.IssueSource.Comment(ctx, id, text))
 }
 
 func (c *cachingSource) DepAdd(ctx context.Context, id, dependsOn bd.ID) error {
-	err := c.IssueSource.DepAdd(ctx, id, dependsOn)
-	if err == nil {
-		c.cache.invalidate(c.repo)
-	}
-	return err
+	return c.done(c.IssueSource.DepAdd(ctx, id, dependsOn))
 }
 
 func (c *cachingSource) DepRemove(ctx context.Context, id, dependsOn bd.ID) error {
-	err := c.IssueSource.DepRemove(ctx, id, dependsOn)
-	if err == nil {
-		c.cache.invalidate(c.repo)
-	}
-	return err
+	return c.done(c.IssueSource.DepRemove(ctx, id, dependsOn))
 }
 
 func (c *cachingSource) LabelAdd(ctx context.Context, id, label string) error {
-	err := c.IssueSource.LabelAdd(ctx, id, label)
-	if err == nil {
-		c.cache.invalidate(c.repo)
-	}
-	return err
+	return c.done(c.IssueSource.LabelAdd(ctx, id, label))
 }
 
 func (c *cachingSource) LabelRemove(ctx context.Context, id, label string) error {
-	err := c.IssueSource.LabelRemove(ctx, id, label)
-	if err == nil {
-		c.cache.invalidate(c.repo)
-	}
-	return err
+	return c.done(c.IssueSource.LabelRemove(ctx, id, label))
 }
 
 func (c *cachingSource) Create(ctx context.Context, opts *bd.CreateOpts) (*bd.Issue, error) {
 	iss, err := c.IssueSource.Create(ctx, opts)
-	if err == nil {
-		c.cache.invalidate(c.repo)
-	}
-	return iss, err
+	return iss, c.done(err)
 }
 
 func (c *cachingSource) Delete(ctx context.Context, id string) error {
-	err := c.IssueSource.Delete(ctx, id)
-	if err == nil {
-		c.cache.invalidate(c.repo)
-	}
-	return err
+	return c.done(c.IssueSource.Delete(ctx, id))
 }
