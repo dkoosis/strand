@@ -541,26 +541,9 @@ func (s *Server) pulseListView(ctx context.Context, src IssueSource, repo regist
 	if err != nil {
 		return listView{}, err
 	}
-	var beads []strand.Bead
-	if cut.blockerAware {
-		if beads, err = s.blockedBeads(ctx, src, issues); err != nil {
-			return listView{}, err
-		}
-	} else {
-		// The ○ cut drops beads the ● cut would claim, so an open-but-blocked bead
-		// lists under ● alone (st-x66). Only fetched when the cut asks — a nil map
-		// leaves every match in place.
-		var blocked map[string]bool
-		if cut.excludeBlocked {
-			if blocked, err = s.blockedSet(ctx, src, issues); err != nil {
-				return listView{}, err
-			}
-		}
-		for i := range issues {
-			if cut.match(&issues[i]) && !blocked[issues[i].ID] {
-				beads = append(beads, strand.NewBead(&issues[i]))
-			}
-		}
+	beads, err := s.pulseBeads(ctx, src, cut, issues)
+	if err != nil {
+		return listView{}, err
 	}
 	slices.SortStableFunc(beads, func(a, b strand.Bead) int {
 		if a.Priority != b.Priority {
@@ -569,6 +552,34 @@ func (s *Server) pulseListView(ctx context.Context, src IssueSource, repo regist
 		return cmp.Compare(a.ID, b.ID)
 	})
 	return listView{Flat: true, FlatTitle: cut.title, Story: strand.Story{Beads: beads, Open: len(beads)}}, nil
+}
+
+// pulseBeads selects a cut's matching beads from the snapshot. The ● cut
+// (blockerAware) lists the effective-blocked set straight from blockedBeads;
+// every other cut runs the match predicate, dropping ●-claimed beads when the
+// cut asks (excludeBlocked) so the lanes stay disjoint and match the ○ count
+// (st-x66).
+func (s *Server) pulseBeads(ctx context.Context, src IssueSource, cut pulseCut, issues []bd.Issue) ([]strand.Bead, error) {
+	if cut.blockerAware {
+		return s.blockedBeads(ctx, src, issues)
+	}
+	// The ○ cut drops beads the ● cut would claim, so an open-but-blocked bead
+	// lists under ● alone (st-x66). Only fetched when the cut asks — a nil map
+	// leaves every match in place.
+	var blocked map[string]bool
+	if cut.excludeBlocked {
+		var err error
+		if blocked, err = s.blockedSet(ctx, src, issues); err != nil {
+			return nil, err
+		}
+	}
+	var beads []strand.Bead
+	for i := range issues {
+		if cut.match(&issues[i]) && !blocked[issues[i].ID] {
+			beads = append(beads, strand.NewBead(&issues[i]))
+		}
+	}
+	return beads, nil
 }
 
 // blockedBeads is the ● cut's bead set: every live bead the board would bucket
@@ -628,7 +639,7 @@ func (s *Server) cachedBlockedSet(src IssueSource, issues []bd.Issue) (map[strin
 // map for an empty snapshot; an error only when the deps fetch itself fails.
 func (s *Server) blockedSet(ctx context.Context, src IssueSource, issues []bd.Issue) (map[string]bool, error) {
 	if len(issues) == 0 {
-		return nil, nil
+		return map[string]bool{}, nil
 	}
 	all := make([]strand.Bead, len(issues))
 	ids := make([]string, len(issues))
