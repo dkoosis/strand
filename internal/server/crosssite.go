@@ -2,7 +2,6 @@ package server
 
 import (
 	"errors"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -38,7 +37,9 @@ const (
 func (s *Server) guardCrossSite(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !sameSite(r) {
-			s.renderForbidden(w)
+			// renderError maps errCrossSite to 403 (statusForError), so a rejected write
+			// gets the same legible error fragment the read errors use.
+			s.renderError(w, errCrossSite)
 			return
 		}
 		next(w, r)
@@ -65,14 +66,4 @@ func originMatchesHost(origin, host string) bool {
 		return false
 	}
 	return strings.EqualFold(u.Host, host)
-}
-
-// renderForbidden answers a rejected cross-site write with the same error
-// fragment the read errors use, at 403 — so htmx and a plain browser both show
-// something legible rather than a bare status.
-func (s *Server) renderForbidden(w http.ResponseWriter) {
-	if rerr := s.renderStatus(w, "error", errCrossSite.Error(), http.StatusForbidden); rerr != nil {
-		log.Printf("strand: render forbidden page: %v", rerr)
-		http.Error(w, errCrossSite.Error(), http.StatusForbidden)
-	}
 }

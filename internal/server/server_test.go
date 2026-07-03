@@ -384,7 +384,7 @@ func TestReadHelpersTakeReadSource(t *testing.T) {
 	src := &readOnlyStub{inner: &stubBD{issues: sampleIssues, deps: sampleDeps}}
 	ctx := context.Background()
 
-	f, err := srv.buildStrand(ctx, src, demoRepo)
+	f, _, err := srv.buildStrand(ctx, src, demoRepo)
 	if err != nil {
 		t.Fatalf("buildStrand: %v", err)
 	}

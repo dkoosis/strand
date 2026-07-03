@@ -43,6 +43,10 @@ var (
 	errNoParent = errors.New("pick a parent, choose no epic, or create a new parent")
 	// errNoParentTitle rejects the inline new-parent path with an empty title.
 	errNoParentTitle = errors.New("new parent needs a title")
+	// errEpicMint covers a Create that returns neither an epic nor an error (a
+	// bd-contract violation): the inline mint produced nothing to hang the child or
+	// story under. Shared by the create and attach inline-new-epic paths.
+	errEpicMint = errors.New("could not create the new epic")
 )
 
 // IssueSource is the slice of bd.Client the server needs: reads plus the V1
@@ -328,7 +332,7 @@ type Pulse struct {
 // list`); Waiting is read off the cached open snapshot so it costs no extra
 // spawn. A failed stats read degrades to zero status counts rather than failing
 // the whole page — the pulse is ambient, not load-bearing.
-func (s *Server) computePulse(ctx context.Context, src IssueSource) Pulse {
+func (s *Server) computePulse(ctx context.Context, src IssueSource, repo registry.Repo) Pulse {
 	var p Pulse
 	if st, err := src.Stats(ctx); err == nil {
 		p.Open, p.InProgress, p.Blocked = st.Open, st.InProgress, st.Blocked
@@ -345,7 +349,7 @@ func (s *Server) computePulse(ctx context.Context, src IssueSource) Pulse {
 		// masthead never pays a deps spawn on the landing path (str-47z). On a cold
 		// first paint we keep the bd-stats figures for one render; the background
 		// prefetch warms deps and the next /pulse render (refreshList) is exact.
-		blocked, exact := s.cachedBlockedSet(src, issues)
+		blocked, exact := s.cachedBlockedSet(repo, issues)
 		// ○ is actionable-now: open, not parked on dk (◆), not blocked (●). Subtract
 		// both diversions so a bead sits in one lane, not two — mirroring how ◆ and ○
 		// were already made disjoint. Only open-status beads leave ○: an in-progress
@@ -377,11 +381,17 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "page", pageData{Empty: true, Repos: s.repoMenu("")})
 		return
 	}
-	f, err := s.buildStrand(ctx, src, repo)
+	f, _, err := s.buildStrand(ctx, src, repo)
 	if err != nil {
 		s.renderError(w, err)
 		return
 	}
+	// computePulse runs before the deps prefetch launches: its Stats call is a bd
+	// spawn that serializes on package bd's execMu, so kicking off the background
+	// `dep list` first would queue the masthead's stats read behind it and stall the
+	// landing. Compute the pulse (List is already warm from buildStrand, so this is
+	// one Stats spawn), then warm deps in the background.
+	pulse := s.computePulse(ctx, src, repo)
 	// Open warms every view, not just this one: buildStrand warmed the List
 	// snapshot, so prefetch the repo-wide Deps too — that makes the first Insights
 	// click (the one view needing edges) hit memory instead of paying a cold `dep
@@ -397,7 +407,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "page", pageData{
 		Strand: f,
 		List:   listViewFor(f, "", "", ""),
-		Pulse:  s.computePulse(ctx, src),
+		Pulse:  pulse,
 		Repos:  s.repoMenu(""),
 		AsOf:   s.asOf(repo),
 	})
@@ -409,11 +419,11 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePulse(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, _, ok := s.source()
+	src, repo, ok := s.source()
 	if !ok {
 		return
 	}
-	s.render(w, "pulse", s.computePulse(ctx, src))
+	s.render(w, "pulse", s.computePulse(ctx, src, repo))
 }
 
 // handleRefresh drops the active repo's snapshot and tells htmx to reload the
@@ -454,7 +464,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	// strand is built.
 	q := r.URL.Query()
 	if cut, ok := pulseCutFor(q.Get("filter")); ok {
-		view, err := s.pulseListView(ctx, src, repo, cut)
+		view, err := s.pulseListView(ctx, src, cut)
 		if err != nil {
 			s.renderError(w, err)
 			return
@@ -462,7 +472,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "list", view)
 		return
 	}
-	f, err := s.buildStrand(ctx, src, repo)
+	f, _, err := s.buildStrand(ctx, src, repo)
 	if err != nil {
 		s.renderError(w, err)
 		return
@@ -525,16 +535,17 @@ func pulseCutFor(filter string) (pulseCut, bool) {
 
 // pulseListView gathers a status cut's beads into a flat list scope. Live cuts
 // (and waiting) read the cached open snapshot; an external cut fetches its status
-// straight from bd, bypassing the cache (which serves only the open list). The
-// match predicate is applied in both cases, so the cut is correct even when the
-// source returns an unfiltered list.
-func (s *Server) pulseListView(ctx context.Context, src IssueSource, repo registry.Repo, cut pulseCut) (listView, error) {
+// through the same source — the caching wrapper passes a filtered read (any args
+// other than allIssues) straight through to bd uncached, so the status slice never
+// serves or poisons the open snapshot. The match predicate is applied in both cases,
+// so the cut is correct even when the source returns an unfiltered list.
+func (s *Server) pulseListView(ctx context.Context, src IssueSource, cut pulseCut) (listView, error) {
 	var (
 		issues []bd.Issue
 		err    error
 	)
 	if cut.external {
-		issues, err = s.srcFor(repo).List(ctx, "--status", string(cut.status), "--limit", "0")
+		issues, err = src.List(ctx, "--status", string(cut.status), "--limit", "0")
 	} else {
 		issues, err = src.List(ctx, allIssues...)
 	}
@@ -609,26 +620,32 @@ func (s *Server) blockedBeads(ctx context.Context, src IssueSource, issues []bd.
 // so the masthead never triggers a deps spawn on the landing path (str-47z): a cold
 // cache falls back to bd stats for one render, and the background deps prefetch plus
 // the next /pulse render (on refreshList) bring the count in line with the cut.
-func (s *Server) cachedBlockedSet(src IssueSource, issues []bd.Issue) (map[string]bool, bool) {
+func (s *Server) cachedBlockedSet(repo registry.Repo, issues []bd.Issue) (map[string]bool, bool) {
 	if len(issues) == 0 {
 		return nil, true // nothing to classify — Blocked is exactly zero, no deps needed
 	}
-	peeker, ok := src.(interface {
-		CachedDeps() ([]bd.DepEdge, bool)
-	})
-	if !ok {
-		return nil, false
-	}
-	deps, warm := peeker.CachedDeps()
+	// Read the repo's warm deps straight from the snapshot cache (never fetching),
+	// so the masthead classifies from cached edges when they're warm and falls back
+	// to bd stats when they aren't — no deps spawn on the landing path (str-47z).
+	deps, warm := s.cache.liveDeps(repo.Path)
 	if !warm {
 		return nil, false
 	}
+	return classifyBlocked(issues, deps), true
+}
+
+// classifyBlocked projects the snapshot issues into beads and returns
+// insight.Classify's effective-blocked map (stored "blocked" OR open with an unmet
+// blocker) — the one truth the ● cut lists and the ● count reports. cachedBlockedSet
+// (warm-deps peek) and blockedSet (fetching path) share it, differing only in how
+// they acquire deps.
+func classifyBlocked(issues []bd.Issue, deps []bd.DepEdge) map[string]bool {
 	all := make([]strand.Bead, len(issues))
 	for i := range issues {
 		all[i] = strand.NewBead(&issues[i])
 	}
 	blocked, _ := insight.Classify(all, issues, deps)
-	return blocked, true
+	return blocked
 }
 
 // blockedSet classifies the snapshot's effective-blocked beads (stored "blocked"
@@ -641,18 +658,15 @@ func (s *Server) blockedSet(ctx context.Context, src IssueSource, issues []bd.Is
 	if len(issues) == 0 {
 		return map[string]bool{}, nil
 	}
-	all := make([]strand.Bead, len(issues))
 	ids := make([]string, len(issues))
 	for i := range issues {
-		all[i] = strand.NewBead(&issues[i])
 		ids[i] = issues[i].ID
 	}
 	deps, err := src.Deps(ctx, ids...)
 	if err != nil {
 		return nil, fmt.Errorf("blocked deps: %w", err)
 	}
-	blocked, _ := insight.Classify(all, issues, deps)
-	return blocked, nil
+	return classifyBlocked(issues, deps), nil
 }
 
 // listViewFor builds the bead-list pane from the strand. Scope precedence:
@@ -826,12 +840,11 @@ func (s *Server) handleBoard(w http.ResponseWriter, r *http.Request) {
 	// List once: strand.Build folds the issues into the scope, and the attention
 	// classifier reuses the same list for its blocker/gate index (a blocker can live
 	// outside the visible scope), so the board and the dashboard read one truth.
-	issues, err := src.List(ctx, allIssues...)
+	f, issues, err := s.buildStrand(ctx, src, repo)
 	if err != nil {
-		s.renderError(w, fmt.Errorf("list issues: %w", err))
+		s.renderError(w, err)
 		return
 	}
-	f := strand.Build(issues, s.synFor(repo))
 	q := r.URL.Query()
 	view := listViewFor(f, q.Get("story"), q.Get("epic"), q.Get("filter"))
 	scope := scopeBeads(&view)
@@ -1012,34 +1025,32 @@ func (s *Server) handleRank(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	f, err := s.buildStrand(ctx, src, repo)
+	f, _, err := s.buildStrand(ctx, src, repo)
 	if err != nil {
 		s.renderError(w, err)
 		return
 	}
 	ranks, present, allRanked := groupRanks(f, order)
 
-	if !allRanked {
-		if err := seedRanks(ctx, src, order, present); err != nil {
-			s.renderError(w, err) // seedRanks already wraps with wrapWrite
+	// A wholly-ranked group with a representable gap moves the one dragged bead with a
+	// single SetRank and returns. Every other case — an unseeded group, or a move that
+	// exhausts the midpoint gap (renorm) — falls through to the shared seed-and-204
+	// tail, which reseeds dense ranks 1..M over the live ids.
+	if allRanked {
+		moved := movedID(order, ranks)
+		newRank, renorm := rankFor(order, ranks, moved)
+		if !renorm {
+			if _, err := src.SetRank(ctx, moved, newRank); err != nil {
+				s.renderError(w, wrapWrite("rank", err))
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
-		return
 	}
 
-	moved := movedID(order, ranks)
-	newRank, renorm := rankFor(order, ranks, moved)
-	if renorm {
-		if err := seedRanks(ctx, src, order, present); err != nil {
-			s.renderError(w, err) // seedRanks already wraps with wrapWrite
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	if _, err := src.SetRank(ctx, moved, newRank); err != nil {
-		s.renderError(w, wrapWrite("rank", err))
+	if err := seedRanks(ctx, src, order, present); err != nil {
+		s.renderError(w, err) // seedRanks already wraps with wrapWrite
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1065,12 +1076,11 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "insights", insightsView{})
 		return
 	}
-	issues, err := src.List(ctx, allIssues...)
+	f, issues, err := s.buildStrand(ctx, src, repo)
 	if err != nil {
-		s.renderError(w, fmt.Errorf("list issues: %w", err))
+		s.renderError(w, err)
 		return
 	}
-	f := strand.Build(issues, s.synFor(repo))
 	q := r.URL.Query()
 	view := listViewFor(f, q.Get("story"), q.Get("epic"), q.Get("filter"))
 	model, err := s.insightsModel(ctx, src, &view, issues)
@@ -1250,10 +1260,19 @@ func (s *Server) tier2Title(ctx context.Context, src IssueSource, repo registry.
 
 // parentTitle returns the parent bead's title, or "" on no parent or a read miss.
 // Best-effort graph context: Suggest stays advisory and must not fail on a thin
-// parent link.
+// parent link. The parent is almost always in the repo snapshot List already serves
+// from memory, so it reads there first (like childTitles) and pays a bd show spawn
+// only on a miss — a parent outside the list.
 func parentTitle(ctx context.Context, src IssueSource, parentID string) string {
 	if parentID == "" {
 		return ""
+	}
+	if issues, err := src.List(ctx, allIssues...); err == nil {
+		for i := range issues {
+			if issues[i].ID == parentID {
+				return issues[i].Title
+			}
+		}
 	}
 	if p, err := src.Show(ctx, parentID); err == nil && p != nil {
 		return p.Title
@@ -1478,7 +1497,10 @@ func labelFromForm(r *http.Request) string {
 // for near-zero cost).
 const (
 	parentOffEpic = "__off_epic__" // deliberate "no parent" choice
-	parentNew     = "__new__"      // mint a new parent inline from parentNewTitle
+	// sentinelNew is the picker value that means "mint a fresh epic inline" — the
+	// create form's new-parent path (from ParentNewTitle) and the attach form's
+	// new-epic path (from EpicTitle) both post it, so one const serves both.
+	sentinelNew = "__new__"
 )
 
 // parentOpt is one selectable parent in the create form's picker: the bead id to
@@ -1528,8 +1550,8 @@ type createForm struct {
 	Type           string
 	Priority       string
 	Description    string
-	Parent         string      // the picked value: a bead id, parentOffEpic, or parentNew
-	ParentNewTitle string      // title for the inline new-parent path (Parent == parentNew)
+	Parent         string      // the picked value: a bead id, parentOffEpic, or sentinelNew
+	ParentNewTitle string      // title for the inline new-parent path (Parent == sentinelNew)
 	Parents        []parentOpt // candidate existing parents for the picker
 	Err            string
 }
@@ -1595,21 +1617,35 @@ func (s *Server) resolveParent(ctx context.Context, src IssueSource, form *creat
 		return "", nil, errNoParent
 	case parentOffEpic:
 		return "", nil, nil
-	case parentNew:
+	case sentinelNew:
 		if form.ParentNewTitle == "" {
 			return "", nil, errNoParentTitle
 		}
-		epic, err := src.Create(ctx, &bd.CreateOpts{Title: form.ParentNewTitle, Type: "epic"})
+		epic, err := mintEpic(ctx, src, form.ParentNewTitle)
 		if err != nil {
 			return "", nil, err
-		}
-		if epic == nil {
-			return "", nil, errNoParent
 		}
 		return epic.ID, epic, nil
 	default:
 		return form.Parent, nil, nil
 	}
+}
+
+// mintEpic creates a fresh epic with the given title — the inline new-parent path on
+// create and the inline new-epic path on attach both call it. It returns the epic so
+// the caller can bind it and compensate it away if a later write fails: bd has no
+// transaction, so a mint that succeeds before a failed child create or story reparent
+// would otherwise orphan the epic (str-qig). A nil issue with no error is a bd-contract
+// violation, surfaced as errEpicMint rather than a silent success.
+func mintEpic(ctx context.Context, src IssueSource, title string) (*bd.Issue, error) {
+	epic, err := src.Create(ctx, &bd.CreateOpts{Title: title, Type: "epic"})
+	if err != nil {
+		return nil, err
+	}
+	if epic == nil {
+		return nil, errEpicMint
+	}
+	return epic, nil
 }
 
 // compensateOrphan cleans up a parent epic that was just minted for a create /
@@ -1635,19 +1671,15 @@ func compensateOrphan(src IssueSource, minted *bd.Issue, cause error) error {
 
 // attachForm is the "No epic" → attach-to-epic drawer's state: the orphan story
 // being laddered up, the candidate epics to pick from, the sticky choice (an epic
-// id or attachNew with a title), and a bd error to show inline on a failed submit.
+// id or sentinelNew with a title), and a bd error to show inline on a failed submit.
 type attachForm struct {
 	StoryID    string
 	StoryTitle string
 	Epics      []parentOpt // candidate existing epics for the picker
-	Epic       string      // picked value: an epic id or attachNew
-	EpicTitle  string      // title for the inline new-epic path (Epic == attachNew)
+	Epic       string      // picked value: an epic id or sentinelNew
+	EpicTitle  string      // title for the inline new-epic path (Epic == sentinelNew)
 	Err        string
 }
-
-// attachNew is the picker sentinel for minting a fresh epic to attach the story
-// to, mirroring parentNew on the create form.
-const attachNew = "__new__"
 
 // errNoAttachStory rejects an attach with no story to reparent.
 var errNoAttachStory = errors.New("no story to attach")
@@ -1749,16 +1781,13 @@ func (s *Server) handleAttachEpic(w http.ResponseWriter, r *http.Request) {
 // mint-then-failed-SetParent would otherwise orphan the epic (str-qig).
 func (s *Server) resolveAttachEpic(ctx context.Context, src IssueSource, form *attachForm) (epicID string, minted *bd.Issue, err error) {
 	switch form.Epic {
-	case attachNew:
+	case sentinelNew:
 		if form.EpicTitle == "" {
 			return "", nil, errNoEpicChoice
 		}
-		epic, err := src.Create(ctx, &bd.CreateOpts{Title: form.EpicTitle, Type: "epic"})
+		epic, err := mintEpic(ctx, src, form.EpicTitle)
 		if err != nil {
 			return "", nil, err
-		}
-		if epic == nil {
-			return "", nil, errNoEpicChoice
 		}
 		return epic.ID, epic, nil
 	case "":
@@ -1814,13 +1843,16 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 // buildStrand pulls the active repo's live issue list once and folds it into the
 // landing model, labeling the catch-all epic with the active repo's name (the
-// synthesis project follows the active repo, so a switch re-labels every view).
-func (s *Server) buildStrand(ctx context.Context, src readSource, repo registry.Repo) (strand.Model, error) {
+// synthesis project follows the active repo, so a switch re-labels every view). The
+// raw list is returned alongside the model so a caller needing both — the board and
+// insights reuse the issues for their attention/metric index — lists once through
+// here rather than re-spelling the List + Build inline.
+func (s *Server) buildStrand(ctx context.Context, src readSource, repo registry.Repo) (strand.Model, []bd.Issue, error) {
 	issues, err := src.List(ctx, allIssues...)
 	if err != nil {
-		return strand.Model{}, fmt.Errorf("list issues: %w", err)
+		return strand.Model{}, nil, fmt.Errorf("list issues: %w", err)
 	}
-	return strand.Build(issues, s.synFor(repo)), nil
+	return strand.Build(issues, s.synFor(repo)), issues, nil
 }
 
 // allIssues lifts bd list's default 50-row cap. The strand folds each issue into
@@ -1830,8 +1862,8 @@ func (s *Server) buildStrand(ctx context.Context, src readSource, repo registry.
 var allIssues = []string{"--limit", "0"}
 
 // synFor labels the synthesis with the active repo's name; the project follows the
-// active repo, so a switch re-labels every view. Shared by buildStrand and the
-// insights handler (which lists issues itself, so can't go through buildStrand).
+// active repo, so a switch re-labels every view. buildStrand calls it, so every view
+// built through there (landing, board, insights) shares one label.
 func (s *Server) synFor(repo registry.Repo) strand.Synthesis {
 	syn := s.syn
 	syn.Project = repo.Name
@@ -1925,10 +1957,13 @@ func (s *Server) renderError(w http.ResponseWriter, err error) {
 }
 
 // statusForError maps a bd error to an HTTP status so the UI can tell a missing
-// issue (404) from bad input (400) from a real upstream failure (502). An error
-// from no bd sentinel (e.g. a template failure) is ours: 500.
+// issue (404) from bad input (400) from a real upstream failure (502). A blocked
+// cross-site write is 403. An error from no known sentinel (e.g. a template failure)
+// is ours: 500.
 func statusForError(err error) int {
 	switch {
+	case errors.Is(err, errCrossSite):
+		return http.StatusForbidden
 	case errors.Is(err, bd.ErrNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, bd.ErrInvalidArg):
