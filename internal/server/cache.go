@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"slices"
 	"sync"
 	"time"
 
@@ -190,23 +189,24 @@ type cachingSource struct {
 	repo  string
 }
 
-// List serves the repo's cached snapshot for the unfiltered full read only —
-// allIssues (`list --limit 0`), fetching once on a miss. A filtered read (any args
-// other than allIssues) bypasses the snapshot entirely: it passes straight through
-// to bd and neither serves from nor writes to the cache, so a filter can never
-// silently return the full list (LSP guard, st-4g0). Most views read unfiltered
-// through this source; the one filtered read path (pulseListView's external cut)
-// relies on this very pass-through, so its status slice never serves from nor writes
-// to the open snapshot — the guard both carries that path and insures against a
-// future caller wiring a filtered read through here by mistake.
-func (c *cachingSource) List(ctx context.Context, args ...string) ([]bd.Issue, error) {
-	if !slices.Equal(args, allIssues) {
-		return c.IssueSource.List(ctx, args...)
+// List serves the repo's cached snapshot for the unfiltered full read only — the
+// zero-value ListOpts (`list --limit 0`), fetching once on a miss. Any non-zero opts
+// (a filter) bypasses the snapshot entirely: it passes straight through to bd and
+// neither serves from nor writes to the cache, so a filter can never silently return
+// the full list. The discriminator keys on the whole opts, not one field, so it stays
+// the invariant ("only the full read is cacheable") even if ListOpts grows another
+// filter — no future field can drift a filtered read onto the open snapshot (st-4g0,
+// st-57y). Most views read unfiltered through this source; the one filtered read path
+// (pulseListView's external cut) relies on this pass-through, so its status slice never
+// serves from nor poisons the open snapshot.
+func (c *cachingSource) List(ctx context.Context, opts bd.ListOpts) ([]bd.Issue, error) {
+	if opts != (bd.ListOpts{}) {
+		return c.IssueSource.List(ctx, opts)
 	}
 	if list, _, ok := c.cache.liveList(c.repo); ok {
 		return list, nil
 	}
-	list, err := c.IssueSource.List(ctx, args...)
+	list, err := c.IssueSource.List(ctx, opts)
 	if err != nil {
 		return nil, err
 	}

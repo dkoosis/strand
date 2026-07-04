@@ -47,7 +47,7 @@ func TestShowMissingIssueIsNotFound(t *testing.T) {
 // emits a JSON error on stdout. decodeIssues must classify it as ErrInvalidArg.
 func TestListBadStatusIsInvalidArg(t *testing.T) {
 	c, _ := fakeBD(t, `echo '{"error":"invalid status \"bogus\" (valid: open)","schema_version":1}'`)
-	_, err := c.List(context.Background(), "--status", "bogus")
+	_, err := c.List(context.Background(), ListOpts{Status: "bogus"})
 	if !errors.Is(err, ErrInvalidArg) {
 		t.Fatalf("List bad status = %v, want ErrInvalidArg", err)
 	}
