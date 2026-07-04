@@ -111,6 +111,7 @@ func TestClassify(t *testing.T) {
 		{ID: "stored", Status: bd.StatusBlocked},
 		{ID: "active", Status: bd.StatusInProgress},
 		{ID: "activegated", Status: bd.StatusInProgress},
+		{ID: "ghost", Status: bd.StatusOpen}, // absent from issues (idx-miss) → not gated
 	}
 	issues := []bd.Issue{
 		{ID: "blocker", Status: bd.StatusOpen},
@@ -121,6 +122,8 @@ func TestClassify(t *testing.T) {
 		{ID: "stored", Status: bd.StatusBlocked},
 		{ID: "active", Status: bd.StatusInProgress},
 		{ID: "activegated", Status: bd.StatusInProgress, Labels: []string{"human"}},
+		// "ghost" deliberately absent — an idx-miss must classify by the bead's own
+		// status (open, no blocker → neither), never a zero-value flip.
 	}
 	deps := []bd.DepEdge{
 		{IssueID: "blocked", DependsOnID: "blocker", Type: "blocks"},
@@ -131,15 +134,82 @@ func TestClassify(t *testing.T) {
 	blocked, waiting := Classify(beads, issues, deps)
 
 	// gated and activegated wait (the in-progress one matches the masthead pulse, PR
-	// #62 codex); both is blocked, not waiting (blocker beats gate); active is neither.
+	// #62 codex); both is blocked, not waiting (blocker beats gate); active is neither;
+	// ghost (idx-miss) is open/neither.
 	wantBlocked := map[string]bool{"blocked": true, "both": true, "stored": true}
 	wantWaiting := map[string]bool{"gated": true, "activegated": true}
-	for _, id := range []string{"blocker", "blocked", "gated", "both", "ready", "stored", "active", "activegated"} {
+	for _, id := range []string{"blocker", "blocked", "gated", "both", "ready", "stored", "active", "activegated", "ghost"} {
 		if blocked[id] != wantBlocked[id] {
 			t.Errorf("blocked[%q] = %v, want %v", id, blocked[id], wantBlocked[id])
 		}
 		if waiting[id] != wantWaiting[id] {
 			t.Errorf("waiting[%q] = %v, want %v", id, waiting[id], wantWaiting[id])
+		}
+	}
+}
+
+// TestLanes proves the disjoint pulse partition: one lane per bead, with
+// blocker > gate > open precedence, and the cold path (nil deps) leaving only
+// dependency-derived blocks unresolved while stored-blocked stays ●.
+func TestLanes(t *testing.T) {
+	issues := []bd.Issue{
+		{ID: "open", Status: bd.StatusOpen},
+		{ID: "gated", Status: bd.StatusOpen, Labels: []string{"human"}},
+		{ID: "depblocked", Status: bd.StatusOpen},
+		{ID: "depblockedgated", Status: bd.StatusOpen, Labels: []string{"human"}}, // ● not ◆
+		{ID: "storedblocked", Status: bd.StatusBlocked},
+		{ID: "storedblockedgated", Status: bd.StatusBlocked, Labels: []string{"human"}}, // ● not ◆
+		{ID: "blocker", Status: bd.StatusOpen},
+		{ID: "activegated", Status: bd.StatusInProgress, Labels: []string{"human"}}, // ◆
+		{ID: "active", Status: bd.StatusInProgress},                                 // ◐ → None
+		{ID: "closed", Status: bd.StatusClosed},
+		{ID: "deferred", Status: bd.StatusDeferred},
+	}
+	deps := []bd.DepEdge{
+		{IssueID: "depblocked", DependsOnID: "blocker", Type: "blocks"},
+		{IssueID: "depblockedgated", DependsOnID: "blocker", Type: "blocks"},
+	}
+
+	t.Run("warm deps", func(t *testing.T) {
+		got := Lanes(issues, deps)
+		want := map[string]Lane{
+			"open":               LaneOpen,
+			"blocker":            LaneOpen,
+			"gated":              LaneWaiting,
+			"activegated":        LaneWaiting,
+			"depblocked":         LaneBlocked,
+			"depblockedgated":    LaneBlocked, // blocker beats gate
+			"storedblocked":      LaneBlocked,
+			"storedblockedgated": LaneBlocked, // blocker beats gate
+			// active, closed, deferred → LaneNone, omitted from the map
+		}
+		assertLanes(t, got, want, issues)
+		// disjointness is structural: each id maps to exactly one Lane, so no
+		// separate cross-lane check is needed — a double-count is unrepresentable.
+	})
+
+	t.Run("cold deps (nil) — only dependency blocks resolve to open", func(t *testing.T) {
+		got := Lanes(issues, nil)
+		want := map[string]Lane{
+			"open":               LaneOpen,
+			"blocker":            LaneOpen,
+			"gated":              LaneWaiting,
+			"activegated":        LaneWaiting,
+			"depblocked":         LaneOpen,    // no deps → not dep-blocked
+			"depblockedgated":    LaneWaiting, // no deps → gate now wins
+			"storedblocked":      LaneBlocked, // stored status needs no deps
+			"storedblockedgated": LaneBlocked, // stored status still beats gate cold
+		}
+		assertLanes(t, got, want, issues)
+	})
+}
+
+func assertLanes(t *testing.T, got, want map[string]Lane, issues []bd.Issue) {
+	t.Helper()
+	for i := range issues {
+		id := issues[i].ID
+		if got[id] != want[id] {
+			t.Errorf("Lanes[%q] = %d, want %d", id, got[id], want[id])
 		}
 	}
 }
@@ -512,24 +582,5 @@ func TestActionableDropsEpics(t *testing.T) {
 		if b.Type == "epic" {
 			t.Errorf("Actionable leaked an epic: %s", b.ID)
 		}
-	}
-}
-
-// TestWaitingCount checks the masthead pulse's ◆ count: open/in-progress beads
-// gated by the "human" label or the review_needed flag, with closed and deferred
-// excluded even when they carry the gate.
-func TestWaitingCount(t *testing.T) {
-	issues := []bd.Issue{
-		{ID: "a", Status: bd.StatusOpen, Labels: []string{"human"}},                               // decision
-		{ID: "b", Status: bd.StatusInProgress, Metadata: map[string]any{"review_needed": "true"}}, // review
-		{ID: "c", Status: bd.StatusOpen},                                                          // claimable
-		{ID: "d", Status: bd.StatusClosed, Labels: []string{"human"}},                             // done — excluded
-		{ID: "e", Status: bd.StatusDeferred, Metadata: map[string]any{"review_needed": "true"}},   // parked — excluded
-	}
-	if got := WaitingCount(issues); got != 2 {
-		t.Errorf("WaitingCount = %d, want 2 (a + b; closed/deferred excluded)", got)
-	}
-	if WaitingCount(nil) != 0 {
-		t.Error("WaitingCount(nil) should be 0")
 	}
 }

@@ -339,38 +339,36 @@ func (s *Server) computePulse(ctx context.Context, src IssueSource, repo registr
 		p.Closed, p.Deferred = st.Closed, st.Deferred
 	}
 	if issues, err := src.List(ctx, bd.ListOpts{}); err == nil {
-		p.Waiting = insight.WaitingCount(issues)
-		// The masthead counts must agree with the cuts they click through to, so the
-		// live lanes derive from insight.Classify — the same truth the ● cut, the ○
-		// cut, and the board share. bd stats' blocked_issues counts an in-progress
-		// bead with an unmet blocker as blocked, but Classify (and so the ● cut) keeps
-		// it in ◐, not ●; taking the count from stats made ● click through to fewer
-		// beads, or none (st-x66). Deps are read from the warm cache only — the
-		// masthead never pays a deps spawn on the landing path (str-47z). On a cold
-		// first paint we keep the bd-stats figures for one render; the background
+		// Every masthead count must agree with the cut it clicks through to, so all three
+		// derived lanes come from the ONE insight.Lanes partition — the same truth the ●,
+		// ○, and ◆ cuts (and the board's Classify) share. Count and list can't drift: both
+		// derive from Lanes over the same issues+deps (st-88o, st-x66). Deps are read from
+		// the warm cache only — the masthead never pays a deps spawn on the landing path
+		// (str-47z). Cold, no bead is dependency-blocked, so ○ and ◆ show their best-effort
+		// (list-path exact) and ● keeps the bd-stats figure for one render; the background
 		// prefetch warms deps and the next /pulse render (refreshList) is exact.
-		blocked, exact := s.cachedBlockedSet(repo, issues)
-		// ○ is actionable-now: open, not parked on dk (◆), not blocked (●). Subtract
-		// both diversions so a bead sits in one lane, not two — mirroring how ◆ and ○
-		// were already made disjoint. Only open-status beads leave ○: an in-progress
-		// review or a stored-blocked bead never entered the open count.
-		open := 0
-		for i := range issues {
-			iss := &issues[i]
-			if iss.Status != bd.StatusOpen || insight.IsHumanGated(iss) {
-				continue
-			}
-			if blocked[iss.ID] { // nil map on a cold cache → parked-only subtraction
-				continue
-			}
-			open++
-		}
-		p.Open = open
-		if exact {
-			p.Blocked = len(blocked)
+		deps, warm := s.cache.liveDeps(repo.Path)
+		lanes := insight.Lanes(issues, deps)
+		p.Open = countLane(lanes, insight.LaneOpen)
+		p.Waiting = countLane(lanes, insight.LaneWaiting)
+		if warm {
+			p.Blocked = countLane(lanes, insight.LaneBlocked)
 		}
 	}
 	return p
+}
+
+// countLane tallies the beads insight.Lanes put in one lane — the masthead's count
+// for that glyph. The matching cut lists the same lane's members (pulseBeads), so
+// count == len(list) by construction.
+func countLane(lanes map[string]insight.Lane, l insight.Lane) int {
+	n := 0
+	for _, v := range lanes {
+		if v == l {
+			n++
+		}
+	}
+	return n
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -489,42 +487,30 @@ type pulseCut struct {
 	title    string
 	status   bd.Status // the --status to fetch for an external cut; "" for live cuts
 	external bool
-	// blockerAware marks the ● cut, whose set is derived (stored-blocked OR open
-	// with an unmet blocker), not a plain status match — pulseListView classifies
-	// it via insight so the list agrees with the masthead count (st-88o).
-	blockerAware bool
-	// excludeBlocked marks the ○ cut: after the match predicate, pulseListView drops
-	// any bead the ● cut would claim, so an open-but-blocked bead sits in ● alone —
-	// the disjoint-lane rule the count now enforces too (st-x66).
-	excludeBlocked bool
-	match          func(*bd.Issue) bool
+	// lane marks a derived-trio cut (○/●/◆): pulseBeads lists exactly the beads
+	// insight.Lanes puts in this lane, so the list agrees with the masthead count by
+	// construction (st-88o, st-x66). LaneNone means a plain status cut (in_progress /
+	// closed / deferred), which lists by match.
+	lane  insight.Lane
+	match func(*bd.Issue) bool
 }
 
 // pulseCutFor maps a filter token to its cut, or reports false for any other
-// filter (so "bugs" and the empty/scope filters fall through to listViewFor).
+// filter (so "bugs" and the empty/scope filters fall through to listViewFor). The
+// three derived lanes carry a Lane and no match; the raw status cuts carry a match.
 func pulseCutFor(filter string) (pulseCut, bool) {
 	statusIs := func(st bd.Status) func(*bd.Issue) bool {
 		return func(i *bd.Issue) bool { return i.Status == st }
 	}
 	switch filter {
 	case "waiting":
-		return pulseCut{title: "Waiting on you", match: func(i *bd.Issue) bool {
-			return i.Status != bd.StatusClosed && i.Status != bd.StatusDeferred && insight.IsHumanGated(i)
-		}}, true
+		return pulseCut{title: "Waiting on you", lane: insight.LaneWaiting}, true
 	case "open":
-		// ○ lists open work the agent can act on — open beads parked on dk live in
-		// the ◆ cut, and open-but-blocked beads in the ● cut, not here. Both are
-		// excluded so the lanes stay disjoint and the list matches the ○ count.
-		return pulseCut{title: "Open", excludeBlocked: true, match: func(i *bd.Issue) bool {
-			return i.Status == bd.StatusOpen && !insight.IsHumanGated(i)
-		}}, true
+		return pulseCut{title: "Open", lane: insight.LaneOpen}, true
 	case "in_progress":
 		return pulseCut{title: "In progress", match: statusIs(bd.StatusInProgress)}, true
 	case "blocked":
-		// ● counts bd stats' blocked_issues, which includes dependency-derived
-		// blocks; a literal status match would miss those (they carry status
-		// "open"), so the cut classifies effective-blocked instead (st-88o).
-		return pulseCut{title: "Blocked", blockerAware: true, match: statusIs(bd.StatusBlocked)}, true
+		return pulseCut{title: "Blocked", lane: insight.LaneBlocked}, true
 	case "closed":
 		return pulseCut{title: "Closed", status: bd.StatusClosed, external: true, match: statusIs(bd.StatusClosed)}, true
 	case "deferred":
@@ -565,98 +551,42 @@ func (s *Server) pulseListView(ctx context.Context, src IssueSource, cut pulseCu
 	return listView{Flat: true, FlatTitle: cut.title, Story: strand.Story{Beads: beads, Open: len(beads)}}, nil
 }
 
-// pulseBeads selects a cut's matching beads from the snapshot. The ● cut
-// (blockerAware) lists the effective-blocked set straight from blockedBeads;
-// every other cut runs the match predicate, dropping ●-claimed beads when the
-// cut asks (excludeBlocked) so the lanes stay disjoint and match the ○ count
-// (st-x66).
+// pulseBeads selects a cut's beads from the snapshot. A derived-lane cut (○/●/◆)
+// lists exactly the beads insight.Lanes assigns to cut.lane — fetching the repo-wide
+// deps the partition classifies over — so the list is the same set the masthead count
+// tallied (count == len(list)); st-88o and st-x66 were this list/count drift, now
+// unrepresentable. A raw status cut (in_progress/closed/deferred) lists by its match.
 func (s *Server) pulseBeads(ctx context.Context, src IssueSource, cut pulseCut, issues []bd.Issue) ([]strand.Bead, error) {
-	if cut.blockerAware {
-		return s.blockedBeads(ctx, src, issues)
-	}
-	// The ○ cut drops beads the ● cut would claim, so an open-but-blocked bead
-	// lists under ● alone (st-x66). Only fetched when the cut asks — a nil map
-	// leaves every match in place.
-	var blocked map[string]bool
-	if cut.excludeBlocked {
-		var err error
-		if blocked, err = s.blockedSet(ctx, src, issues); err != nil {
+	if cut.lane != insight.LaneNone {
+		deps, err := s.pulseDeps(ctx, src, issues)
+		if err != nil {
 			return nil, err
 		}
+		lanes := insight.Lanes(issues, deps)
+		var beads []strand.Bead
+		for i := range issues {
+			if lanes[issues[i].ID] == cut.lane {
+				beads = append(beads, strand.NewBead(&issues[i]))
+			}
+		}
+		return beads, nil
 	}
 	var beads []strand.Bead
 	for i := range issues {
-		if cut.match(&issues[i]) && !blocked[issues[i].ID] {
+		if cut.match(&issues[i]) {
 			beads = append(beads, strand.NewBead(&issues[i]))
 		}
 	}
 	return beads, nil
 }
 
-// blockedBeads is the ● cut's bead set: every live bead the board would bucket
-// blocked — stored-status "blocked" OR open with an unmet blocker. It runs the
-// open snapshot through insight.Classify (the same truth the board column and
-// triage use, the same set bd stats' blocked_issues counts), so the masthead ●
-// count and this list can't diverge. A literal status match found none when the
-// blocks were all dependency-derived (those beads carry status "open"), leaving
-// the pane empty under a nonzero count (st-88o). deps are fetched repo-wide: a
-// blocker can sit outside any one scope, and the count is repo-wide too.
-func (s *Server) blockedBeads(ctx context.Context, src IssueSource, issues []bd.Issue) ([]strand.Bead, error) {
-	blocked, err := s.blockedSet(ctx, src, issues)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]strand.Bead, 0, len(blocked))
-	for i := range issues {
-		if blocked[issues[i].ID] {
-			out = append(out, strand.NewBead(&issues[i]))
-		}
-	}
-	return out, nil
-}
-
-// cachedBlockedSet classifies the effective-blocked set from ALREADY-WARM deps,
-// reporting ok=false when the repo's deps aren't cached yet. computePulse uses it
-// so the masthead never triggers a deps spawn on the landing path (str-47z): a cold
-// cache falls back to bd stats for one render, and the background deps prefetch plus
-// the next /pulse render (on refreshList) bring the count in line with the cut.
-func (s *Server) cachedBlockedSet(repo registry.Repo, issues []bd.Issue) (map[string]bool, bool) {
+// pulseDeps fetches the repo-wide dependency edges the pulse lanes classify over. The
+// list path (unlike the masthead render) may pay this spawn — str-47z governs only the
+// landing render's cache-only read. A blocker can sit outside any one scope, so deps are
+// fetched over the whole snapshot; an empty snapshot needs none.
+func (s *Server) pulseDeps(ctx context.Context, src IssueSource, issues []bd.Issue) ([]bd.DepEdge, error) {
 	if len(issues) == 0 {
-		return nil, true // nothing to classify — Blocked is exactly zero, no deps needed
-	}
-	// Read the repo's warm deps straight from the snapshot cache (never fetching),
-	// so the masthead classifies from cached edges when they're warm and falls back
-	// to bd stats when they aren't — no deps spawn on the landing path (str-47z).
-	deps, warm := s.cache.liveDeps(repo.Path)
-	if !warm {
-		return nil, false
-	}
-	return classifyBlocked(issues, deps), true
-}
-
-// classifyBlocked projects the snapshot issues into beads and returns
-// insight.Classify's effective-blocked map (stored "blocked" OR open with an unmet
-// blocker) — the one truth the ● cut lists and the ● count reports. cachedBlockedSet
-// (warm-deps peek) and blockedSet (fetching path) share it, differing only in how
-// they acquire deps.
-func classifyBlocked(issues []bd.Issue, deps []bd.DepEdge) map[string]bool {
-	all := make([]strand.Bead, len(issues))
-	for i := range issues {
-		all[i] = strand.NewBead(&issues[i])
-	}
-	blocked, _ := insight.Classify(all, issues, deps)
-	return blocked
-}
-
-// blockedSet classifies the snapshot's effective-blocked beads (stored "blocked"
-// OR open with an unmet blocker) — insight.Classify's blocked map. It is the one
-// truth the ● cut lists, the ● count reports (len), and the ○ cut/count subtract,
-// so the masthead count can never click through to a different set (st-x66). Shares
-// the repo-wide deps fetch, warm after the first structural view. Returns an empty
-// map for an empty snapshot; an error only when the deps fetch itself fails.
-func (s *Server) blockedSet(ctx context.Context, src IssueSource, issues []bd.Issue) (map[string]bool, error) {
-	if len(issues) == 0 {
-		return map[string]bool{}, nil
+		return nil, nil
 	}
 	ids := make([]string, len(issues))
 	for i := range issues {
@@ -664,9 +594,9 @@ func (s *Server) blockedSet(ctx context.Context, src IssueSource, issues []bd.Is
 	}
 	deps, err := src.Deps(ctx, ids...)
 	if err != nil {
-		return nil, fmt.Errorf("blocked deps: %w", err)
+		return nil, fmt.Errorf("pulse deps: %w", err)
 	}
-	return classifyBlocked(issues, deps), nil
+	return deps, nil
 }
 
 // listViewFor builds the bead-list pane from the strand. Scope precedence:

@@ -110,33 +110,11 @@ func humanGate(iss *bd.Issue) (decision, review bool) {
 }
 
 // isHumanGated reports whether a bead is parked on a human (decision or review) —
-// the test that keeps it out of the ready queue and triage's Ready count.
+// the test that keeps it out of the ready queue and triage's Ready count, and the
+// gate arm of laneOf (the masthead ◆ and the board's waiting column both route here).
 func isHumanGated(iss *bd.Issue) bool {
 	d, r := humanGate(iss)
 	return d || r
-}
-
-// IsHumanGated reports whether an issue is parked on a human (a decision or a
-// review). Exported for the masthead pulse's "waiting on you" drill-down, which
-// lists the same beads the per-scope waiting lane surfaces.
-func IsHumanGated(iss *bd.Issue) bool { return isHumanGated(iss) }
-
-// WaitingCount reports how many of the given issues are parked on a human — the
-// masthead pulse's ◆ (and the status line's human segment): a decision (label
-// "human") or a review (review_needed). Closed and deferred issues are excluded;
-// the pulse counts what is in motion.
-func WaitingCount(issues []bd.Issue) int {
-	n := 0
-	for i := range issues {
-		s := issues[i].Status
-		if s == bd.StatusClosed || s == bd.StatusDeferred {
-			continue
-		}
-		if isHumanGated(&issues[i]) {
-			n++
-		}
-	}
-	return n
 }
 
 // reviewNeeded reads metadata.review_needed. bd emits the flag as the string "true";
@@ -198,17 +176,75 @@ func Compute(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge, now time
 	return out
 }
 
+// Lane is a bead's disjoint pulse lane — the masthead trio the human reads to
+// orient (○ Open / ● Blocked / ◆ Waiting). Exactly one lane per live bead;
+// LaneNone means the bead is in none of the derived trio (closed/deferred, or an
+// in-progress bead that isn't human-gated — ◐ is a raw status count, not derived).
+type Lane uint8
+
+const (
+	LaneNone    Lane = iota
+	LaneOpen         // ○ actionable now
+	LaneBlocked      // ● held by an unmet blocker (or stored "blocked")
+	LaneWaiting      // ◆ parked on a human
+)
+
+// laneOf is the single precedence kernel shared by the board view (Classify) and
+// the masthead view (Lanes): a blocker outranks the human gate outranks plain open.
+// A stored-status "blocked" bead is blocked regardless of gate; an in-progress bead
+// is ◆ only when gated (matching the board), else it's a raw ◐ (LaneNone here).
+func laneOf(status bd.Status, gated, hasBlocker bool) Lane {
+	switch status {
+	case bd.StatusClosed, bd.StatusDeferred:
+		return LaneNone // not live work
+	case bd.StatusBlocked:
+		return LaneBlocked
+	case bd.StatusInProgress:
+		if gated {
+			return LaneWaiting // ◆ overlays ◐, matching the board
+		}
+		return LaneNone // a raw ◐ count, not a derived lane
+	case bd.StatusOpen:
+		switch {
+		case hasBlocker:
+			return LaneBlocked
+		case gated:
+			return LaneWaiting
+		default:
+			return LaneOpen
+		}
+	}
+	return LaneNone // unknown/future status — defensive
+}
+
+// Lanes assigns every issue to its disjoint pulse lane, repo-wide, from the one
+// laneOf precedence. deps carry the blocker signal; nil deps ⇒ no bead is
+// dependency-blocked (the masthead's cold-cache path — the caller keeps a bd-stats
+// fallback for ● until deps warm). LaneNone beads are omitted, so a missing key
+// reads back as LaneNone (its zero value). Exactly one lane per included issue, so
+// a count of a lane and a list of that lane's members agree by construction.
+func Lanes(issues []bd.Issue, deps []bd.DepEdge) map[string]Lane {
+	idx := indexIssues(issues)
+	openBlockers := blockerCounts(deps, idx)
+	lanes := make(map[string]Lane, len(issues))
+	for i := range issues {
+		iss := &issues[i]
+		if l := laneOf(iss.Status, isHumanGated(iss), openBlockers[iss.ID] > 0); l != LaneNone {
+			lanes[iss.ID] = l
+		}
+	}
+	return lanes
+}
+
 // Classify sorts a scope's beads into the board's two attention states — blocked
-// (held by an unmet blocker) and waiting (parked on a human) — applying the same
-// precedence as the triage counts: a blocker outranks the human gate, so an open
-// blocked-and-gated bead is reported blocked, not waiting. A stored-status "blocked"
-// bead is reported blocked too. Waiting tracks the masthead pulse's rule (any
-// non-closed, non-deferred human-gated bead), so an in-progress review-needed card
-// carries the ◆ on the board just as it counts in the pulse — the board/masthead
-// agreement this seam exists for (PR #62, codex). Closed and deferred beads, and
-// beads in no attention state, appear in neither map. issues is the full repo list
-// (the blocker and gate signals live on the bd.Issue, not the projected bead); deps
-// are the scope's dependency edges. Reuses the same blocker scan the dashboard runs.
+// (held by an unmet blocker) and waiting (parked on a human) — via the shared laneOf
+// precedence: a blocker outranks the human gate, so an open blocked-and-gated bead is
+// reported blocked, not waiting; a stored-status "blocked" bead is blocked too; an
+// in-progress review-needed card carries ◆ just as it counts in the masthead (the
+// board/masthead agreement this seam exists for, PR #62, codex). Closed and deferred
+// beads, and beads in no attention state, appear in neither map. issues is the full
+// repo list (the gate signal lives on the bd.Issue, not the projected bead); deps are
+// the scope's dependency edges. Reuses the same blocker scan the dashboard runs.
 func Classify(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge) (blocked, waiting map[string]bool) {
 	idx := indexIssues(issues)
 	openBlockers := blockerCounts(deps, idx)
@@ -216,24 +252,21 @@ func Classify(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge) (blocke
 	waiting = make(map[string]bool)
 	for i := range beads {
 		b := &beads[i]
-		switch b.Status {
-		case bd.StatusClosed, bd.StatusDeferred:
-			// Not live work — neither state. (The strand filter already drops these;
-			// listed so the status set stays exhaustive.)
-		case bd.StatusBlocked:
+		// The gate signal lives on the issue; the status is authoritative from the bead
+		// (a scope bead absent from issues still classifies by its own status). An
+		// idx-miss just means "not gated", never flips the status-derived lane.
+		gated := false
+		if iss, ok := idx[b.ID]; ok {
+			gated = isHumanGated(&iss)
+		}
+		switch laneOf(b.Status, gated, openBlockers[b.ID] > 0) {
+		case LaneBlocked:
 			blocked[b.ID] = true
-		case bd.StatusOpen:
-			// Blocker beats the gate: only reach for the issue (a heavy copy) when the
-			// bead isn't already blocked (PR #62, gemini).
-			if openBlockers[b.ID] > 0 {
-				blocked[b.ID] = true
-			} else if iss, ok := idx[b.ID]; ok && isHumanGated(&iss) {
-				waiting[b.ID] = true
-			}
-		case bd.StatusInProgress: // not bucketed to a column, but still ◆ when gated.
-			if iss, ok := idx[b.ID]; ok && isHumanGated(&iss) {
-				waiting[b.ID] = true
-			}
+		case LaneWaiting:
+			waiting[b.ID] = true
+		case LaneNone, LaneOpen:
+			// Neither board attention state — ○ (actionable) and out-of-lane beads
+			// aren't board columns. Listed so the Lane set stays exhaustive.
 		}
 	}
 	return blocked, waiting
