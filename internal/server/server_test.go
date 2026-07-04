@@ -1056,6 +1056,55 @@ func TestPulseCountsMatchCutsForDerivedBlocks(t *testing.T) {
 	}
 }
 
+// TestPulseWaitingExcludesBlockedGated pins st-612's KEY DECISION: the ○/●/◆ lanes
+// are ONE partition, so a bead that is both blocked and human-gated sits in exactly
+// one lane — ● (blocker beats gate, matching the board), not both ● and ◆ as the old
+// WaitingCount spelling double-counted it. Count and list agree by construction: the
+// ◆ count drops the blocked-gated bead and the ◆ cut's list omits it, while ● claims
+// it in both count and list.
+func TestPulseWaitingExcludesBlockedGated(t *testing.T) {
+	stub := &stubBD{
+		issues: []bd.Issue{
+			{ID: "demo-root", Title: "DEMO", IssueType: "epic", Status: "open"},
+			{ID: "blocker", Parent: "demo-root", Title: "The blocker", Status: "open", Priority: new(2)},
+			// open + unmet blocker + human-gated: blocker beats gate → ● only (was ● AND ◆).
+			{ID: "blkgated", Parent: "demo-root", Title: "Held + gated", Status: "open", Priority: new(2), Labels: []string{"human"}},
+			// open + human-gated, no blocker → ◆.
+			{ID: "gated", Parent: "demo-root", Title: "Parked on you", Status: "open", Priority: new(2), Labels: []string{"human"}},
+		},
+		deps: []bd.DepEdge{{IssueID: "blkgated", DependsOnID: "blocker", Type: bd.DepBlocks}},
+	}
+	srv := newTestServer(t, stub)
+	do(t, srv, "/board") // warm the deps cache so ● and ◆ read the exact partition
+
+	pulse := do(t, srv, "/pulse").Body.String()
+	// ◆ counts the gated bead alone; the blocked-gated bead moved to ●. The old
+	// double-counting spelling would have rendered "reviews: 2".
+	if !strings.Contains(pulse, "reviews: 1") {
+		t.Errorf("◆ should count only the un-blocked gated bead (want reviews: 1):\n%s", pulse)
+	}
+	if strings.Contains(pulse, "reviews: 2") {
+		t.Errorf("◆ double-counted the blocked-and-gated bead (st-612 regression):\n%s", pulse)
+	}
+	if !strings.Contains(pulse, `title="Blocked: 1"`) {
+		t.Errorf("● should claim the blocked-and-gated bead (want Blocked: 1):\n%s", pulse)
+	}
+
+	// Parity: the ◆ cut lists the gated bead and omits the blocked-gated one.
+	waiting := do(t, srv, "/list?filter=waiting").Body.String()
+	if !strings.Contains(waiting, `data-id="gated"`) {
+		t.Errorf("◆ cut dropped the gated bead:\n%s", waiting)
+	}
+	if strings.Contains(waiting, `data-id="blkgated"`) {
+		t.Errorf("◆ cut leaked the blocked-and-gated bead (belongs in ●):\n%s", waiting)
+	}
+	// Parity: the ● cut claims the blocked-gated bead.
+	blocked := do(t, srv, "/list?filter=blocked").Body.String()
+	if !strings.Contains(blocked, `data-id="blkgated"`) {
+		t.Errorf("● cut dropped the blocked-and-gated bead:\n%s", blocked)
+	}
+}
+
 // TestBoardMoveUpdates: a column move issues the matching bd update and returns
 // the refreshed card showing bd's truth (spec Q0).
 func TestBoardMoveUpdates(t *testing.T) {
