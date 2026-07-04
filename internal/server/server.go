@@ -55,7 +55,7 @@ var (
 // bare-`bd update` footgun stays impossible. It is exported because the active
 // repo is resolved per request through a SourceFunc the command wires.
 type IssueSource interface {
-	List(ctx context.Context, args ...string) ([]bd.Issue, error)
+	List(ctx context.Context, opts bd.ListOpts) ([]bd.Issue, error)
 	Stats(ctx context.Context) (bd.Stats, error)
 	Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, error)
 	Show(ctx context.Context, id string) (*bd.Issue, error)
@@ -82,7 +82,7 @@ type IssueSource interface {
 // only reads happen, so a read helper can't grow a stray write. Any IssueSource —
 // the real *bd.Client, the caching wrapper, a test stub — satisfies it for free.
 type readSource interface {
-	List(ctx context.Context, args ...string) ([]bd.Issue, error)
+	List(ctx context.Context, opts bd.ListOpts) ([]bd.Issue, error)
 	Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, error)
 	Comments(ctx context.Context, id string) ([]bd.Comment, error)
 }
@@ -338,7 +338,7 @@ func (s *Server) computePulse(ctx context.Context, src IssueSource, repo registr
 		p.Open, p.InProgress, p.Blocked = st.Open, st.InProgress, st.Blocked
 		p.Closed, p.Deferred = st.Closed, st.Deferred
 	}
-	if issues, err := src.List(ctx, allIssues...); err == nil {
+	if issues, err := src.List(ctx, bd.ListOpts{}); err == nil {
 		p.Waiting = insight.WaitingCount(issues)
 		// The masthead counts must agree with the cuts they click through to, so the
 		// live lanes derive from insight.Classify — the same truth the ● cut, the ○
@@ -535,9 +535,9 @@ func pulseCutFor(filter string) (pulseCut, bool) {
 
 // pulseListView gathers a status cut's beads into a flat list scope. Live cuts
 // (and waiting) read the cached open snapshot; an external cut fetches its status
-// through the same source — the caching wrapper passes a filtered read (any args
-// other than allIssues) straight through to bd uncached, so the status slice never
-// serves or poisons the open snapshot. The match predicate is applied in both cases,
+// through the same source — the caching wrapper passes a filtered read (opts.Status
+// set) straight through to bd uncached, so the status slice never serves or poisons
+// the open snapshot. The match predicate is applied in both cases,
 // so the cut is correct even when the source returns an unfiltered list.
 func (s *Server) pulseListView(ctx context.Context, src IssueSource, cut pulseCut) (listView, error) {
 	var (
@@ -545,9 +545,9 @@ func (s *Server) pulseListView(ctx context.Context, src IssueSource, cut pulseCu
 		err    error
 	)
 	if cut.external {
-		issues, err = src.List(ctx, "--status", string(cut.status), "--limit", "0")
+		issues, err = src.List(ctx, bd.ListOpts{Status: cut.status})
 	} else {
-		issues, err = src.List(ctx, allIssues...)
+		issues, err = src.List(ctx, bd.ListOpts{})
 	}
 	if err != nil {
 		return listView{}, err
@@ -986,7 +986,7 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 	// read error degrades to the unflagged card rather than failing the move — the
 	// write already landed, and a non-2xx here would wrongly tell the client to revert
 	// a change bd has already stored.
-	if issues, lerr := src.List(ctx, allIssues...); lerr != nil {
+	if issues, lerr := src.List(ctx, bd.ListOpts{}); lerr != nil {
 		log.Printf("strand: move %s attention recompute skipped: %v", id, lerr)
 	} else {
 		scope := []strand.Bead{b}
@@ -1267,7 +1267,7 @@ func parentTitle(ctx context.Context, src IssueSource, parentID string) string {
 	if parentID == "" {
 		return ""
 	}
-	if issues, err := src.List(ctx, allIssues...); err == nil {
+	if issues, err := src.List(ctx, bd.ListOpts{}); err == nil {
 		for i := range issues {
 			if issues[i].ID == parentID {
 				return issues[i].Title
@@ -1283,7 +1283,7 @@ func parentTitle(ctx context.Context, src IssueSource, parentID string) string {
 // childTitles returns the titles of the bead's direct children, read from the
 // (cached) repo list. A list error yields no children rather than failing Suggest.
 func childTitles(ctx context.Context, src IssueSource, id string) []string {
-	issues, err := src.List(ctx, allIssues...)
+	issues, err := src.List(ctx, bd.ListOpts{})
 	if err != nil {
 		return nil
 	}
@@ -1531,7 +1531,7 @@ func (s *Server) handleNewForm(w http.ResponseWriter, r *http.Request) {
 // picker. A List error yields no candidates (the off-epic / new-inline paths
 // still let the user proceed) rather than blocking the form.
 func candidateParents(ctx context.Context, src readSource) []parentOpt {
-	issues, err := src.List(ctx, allIssues...)
+	issues, err := src.List(ctx, bd.ListOpts{})
 	if err != nil {
 		return nil
 	}
@@ -1709,7 +1709,7 @@ func (s *Server) handleAttachForm(w http.ResponseWriter, r *http.Request) {
 // for the picker. A List error yields no candidates (the new-epic path still
 // lets the user proceed) rather than blocking the form.
 func candidateEpics(ctx context.Context, src readSource) []parentOpt {
-	issues, err := src.List(ctx, allIssues...)
+	issues, err := src.List(ctx, bd.ListOpts{})
 	if err != nil {
 		return nil
 	}
@@ -1848,18 +1848,12 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 // insights reuse the issues for their attention/metric index — lists once through
 // here rather than re-spelling the List + Build inline.
 func (s *Server) buildStrand(ctx context.Context, src readSource, repo registry.Repo) (strand.Model, []bd.Issue, error) {
-	issues, err := src.List(ctx, allIssues...)
+	issues, err := src.List(ctx, bd.ListOpts{})
 	if err != nil {
 		return strand.Model{}, nil, fmt.Errorf("list issues: %w", err)
 	}
 	return strand.Build(issues, s.synFor(repo)), issues, nil
 }
-
-// allIssues lifts bd list's default 50-row cap. The strand folds each issue into
-// its top-level epic by walking the parent chain, so a truncated list breaks the
-// laddering — a story lands off-epic the moment one ancestor row is missing.
-// Fetch them all.
-var allIssues = []string{"--limit", "0"}
 
 // synFor labels the synthesis with the active repo's name; the project follows the
 // active repo, so a switch re-labels every view. buildStrand calls it, so every view

@@ -184,10 +184,23 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// List returns issues matching the given bd list flags (e.g. "--status", "open").
-// With no extra args it lists everything bd's default `list` would show.
-func (c *Client) List(ctx context.Context, args ...string) ([]Issue, error) {
-	out, err := c.run(ctx, append([]string{"list", "--json"}, args...)...)
+// ListOpts is the typed read filter for List. The zero value is the full
+// unfiltered read — every issue, bd's default row cap lifted — which is strand's
+// common path. A non-empty Status narrows the read to that one status.
+type ListOpts struct {
+	Status Status // when non-empty, filter to this status; empty = no filter
+}
+
+// List returns the repo's issues. It is the one place that knows bd's list-flag
+// vocabulary: it always lifts bd's default row cap (--limit 0, since strand folds
+// the whole set) and adds --status only when opts.Status is set. Callers speak
+// intent through ListOpts, never CLI flags.
+func (c *Client) List(ctx context.Context, opts ListOpts) ([]Issue, error) {
+	args := []string{"list", "--json", "--limit", "0"}
+	if opts.Status != "" {
+		args = append(args, "--status", string(opts.Status))
+	}
+	out, err := c.run(ctx, args...)
 	if err != nil {
 		return nil, err
 	}
