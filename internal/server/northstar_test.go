@@ -20,42 +20,9 @@ func writeMini(t *testing.T, body string) string {
 	return dir
 }
 
-// TestNorthStarMiniReadsLine: the masthead source is the first content line of
-// north-star-mini.md, tolerating frontmatter and a heading marker, and blank when
-// the file is absent or empty (str-d2s acceptance).
-func TestNorthStarMiniReadsLine(t *testing.T) {
-	tests := []struct {
-		name string
-		body string
-		want string
-	}{
-		{"bare line", "Make the invisible legible.\n", "Make the invisible legible."},
-		{"heading", "# Make the invisible legible.\n", "Make the invisible legible."},
-		{"frontmatter nug", "---\nid: abc\ntype: reference.decision\n---\nMake the invisible legible.\n", "Make the invisible legible."},
-		{"leading blanks", "\n\n  spaced line  \n", "spaced line"},
-		{"few lines preserved", "First line.\nSecond line.\nThird line.\n", "First line.\nSecond line.\nThird line."},
-		{"few lines under frontmatter", "---\nid: abc\n---\nA reminder.\nAnother.\n", "A reminder.\nAnother."},
-		{"empty file", "", ""},
-		{"frontmatter only", "---\nid: abc\n---\n", ""},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := northStarMini(writeMini(t, tc.body)); got != tc.want {
-				t.Errorf("northStarMini = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-// TestNorthStarMiniMissingFile: no file → blank, no crash.
-func TestNorthStarMiniMissingFile(t *testing.T) {
-	if got := northStarMini(t.TempDir()); got != "" {
-		t.Errorf("northStarMini(no file) = %q, want blank", got)
-	}
-	if got := northStarMini(""); got != "" {
-		t.Errorf("northStarMini(empty path) = %q, want blank", got)
-	}
-}
+// The north-star-mini.md parse tests moved to internal/strandmd (st-w39) — the
+// format rules now live in the file-format package. This file keeps only the
+// server-level flag-wins-over-file precedence test below.
 
 // TestMastheadReadsFileThenFlagOverrides: synFor reads the repo's mini when no
 // --northstar flag is set, and the flag (a non-empty seeded NorthStar) wins.

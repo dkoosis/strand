@@ -1792,7 +1792,7 @@ func (s *Server) synFor(repo registry.Repo) strand.Synthesis {
 	syn := s.syn
 	syn.Project = repo.Name
 	syn.NorthStar = s.northStarFor(repo)
-	syn.NorthStarPath = filepath.Join(repo.Path, northStarMiniFile)
+	syn.NorthStarPath = filepath.Join(repo.Path, strandmd.NorthStarMiniFile)
 	syn.JTBD = jtbd.Load(repo.Path)
 	return syn
 }
@@ -1803,49 +1803,11 @@ func (s *Server) synFor(repo registry.Repo) strand.Synthesis {
 // non-empty s.syn.NorthStar is the --northstar flag and wins; with no flag the
 // active repo's canonical north-star-mini.md is read (decision nug 952acad4aca2).
 // Missing/empty → "".
-// northStarMiniFile is the repo-root file strand reads the masthead line from.
-const northStarMiniFile = "north-star-mini.md"
-
 func (s *Server) northStarFor(repo registry.Repo) string {
 	if s.syn.NorthStar != "" {
 		return s.syn.NorthStar
 	}
-	return northStarMini(repo.Path)
-}
-
-// northStarMini returns the North Star reminder for a repo, read from
-// north-star-mini.md at the repo root (decision nug 952acad4aca2). The file is a
-// few curated lines; the masthead renders them verbatim (newlines preserved). It
-// tolerates a leading YAML frontmatter block (the file may be a vault nug) and a
-// Markdown heading marker on the first line. A missing or empty file yields "" so
-// the masthead renders blank instead of crashing (str-d2s).
-func northStarMini(repoPath string) string {
-	if repoPath == "" {
-		return ""
-	}
-	b, err := os.ReadFile(filepath.Join(repoPath, northStarMiniFile))
-	if err != nil {
-		return ""
-	}
-	return northStarBody(string(b))
-}
-
-// northStarBody skips a leading --- frontmatter block and returns the remaining
-// body trimmed, with any Markdown heading marker stripped from the first line.
-// Internal newlines are preserved so a few-line reminder renders as a few lines.
-func northStarBody(s string) string {
-	lines := strings.Split(s, "\n")
-	i := 0
-	if len(lines) > 0 && strings.TrimSpace(lines[0]) == "---" {
-		for i = 1; i < len(lines) && strings.TrimSpace(lines[i]) != "---"; i++ {
-		}
-		i++ // skip the closing ---
-	}
-	for i < len(lines) && strings.TrimSpace(lines[i]) == "" { // drop leading blanks
-		i++
-	}
-	body := strings.TrimRight(strings.Join(lines[i:], "\n"), " \t\n")
-	return strings.TrimSpace(strings.TrimLeft(body, "#")) // strip a leading heading marker
+	return strandmd.NorthStarMini(repo.Path)
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {
