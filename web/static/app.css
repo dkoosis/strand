@@ -226,6 +226,18 @@ header {
 .cut-chip.pc-blocked  .cut-g { color: var(--st-blocked); }
 .cut-chip.pc-closed   .cut-g { color: var(--st-closed); }
 .cut-chip.pc-deferred .cut-g { color: var(--st-deferred); }
+/* free-text search — its own whole-strand cut (server.go searchListView), styled
+   as a plain field rather than a tab/chip since it carries typed text, not a fixed
+   label. */
+.searchbar { align-self: center; margin-right: var(--s-4); }
+.search-input {
+  font: inherit; font-size: var(--fs-8); width: 22ch;
+  padding: var(--s-2) var(--s-3); border: 1px solid var(--line); border-radius: 999px;
+  background: var(--bg-1); color: var(--ink);
+}
+.search-input::placeholder { color: var(--ink-3); }
+.search-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
 /* scope chips — a SECOND control axis (what you see), grouped on the right over the
    minimap. Same tab family as the view switcher, but the active state is a filled
    pill, not the tab underline, so a chosen filter never reads as a chosen view. */

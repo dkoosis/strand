@@ -460,6 +460,18 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	// deferred beads the strand drops, so it renders from its own fetch, before the
 	// strand is built.
 	q := r.URL.Query()
+	// A text search (q=) is a whole-strand cut like a pulse filter — it wins over
+	// story/epic scope and over filter=, since typing a query is the more specific
+	// ask. It renders from its own fetch, same as a pulse cut.
+	if query := strings.TrimSpace(q.Get("q")); query != "" {
+		view, err := s.searchListView(ctx, src, query)
+		if err != nil {
+			s.renderError(w, err)
+			return
+		}
+		s.render(w, "list", view)
+		return
+	}
 	if cut, ok := pulseCutFor(q.Get("filter")); ok {
 		view, err := s.pulseListView(ctx, src, cut)
 		if err != nil {
@@ -476,6 +488,31 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 	// story=<id> narrows the pane to a single story; absent means the whole epic.
 	s.render(w, "list", listViewFor(f, q.Get("story"), q.Get("epic"), q.Get("filter")))
+}
+
+// searchListView gathers every open bead whose title or description contains
+// query (case-insensitive) into a flat list scope, mirroring pulseListView. It
+// reads the same cached open snapshot bd search itself defaults to — closed/
+// deferred beads are out of scope, same as bd's own default. Comments aren't
+// searched: bd has no bulk comment-search primitive, and fetching every bead's
+// comments per keystroke would serialize behind execMu (client.go) on a
+// snapshot this size.
+func (s *Server) searchListView(ctx context.Context, src IssueSource, query string) (listView, error) {
+	issues, err := src.List(ctx, bd.ListOpts{})
+	if err != nil {
+		return listView{}, err
+	}
+	needle := strings.ToLower(query)
+	var beads []strand.Bead
+	for i := range issues {
+		if strings.Contains(strings.ToLower(issues[i].Title), needle) ||
+			strings.Contains(strings.ToLower(issues[i].Description), needle) {
+			beads = append(beads, strand.NewBead(&issues[i]))
+		}
+	}
+	strand.SortBeads(beads)
+	title := fmt.Sprintf("Search: %q (%d)", query, len(beads))
+	return listView{Flat: true, FlatTitle: title, Story: strand.Story{Beads: beads, Open: len(beads)}}, nil
 }
 
 // pulseCut is one masthead-pulse drill-down: the pane title and the predicate
