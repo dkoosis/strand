@@ -55,7 +55,7 @@ func walkBeads(f strand.Model, fn func(strand.Bead)) {
 // groupRanks reads the current rank of every id in order from the strand and
 // reports which ids the strand actually yielded (present) and whether the whole
 // group is already manually ranked. A group that is not wholly ranked must be
-// seeded, not midpoint-inserted (the sortBeads invariant). An id the strand never
+// seeded, not midpoint-inserted (the SortBeads invariant). An id the strand never
 // yielded (closed mid-drag, say) reads as not-ranked and not-present, so a partial
 // group seeds over only its live members rather than mis-inserting.
 func groupRanks(f strand.Model, order []string) (ranks map[string]float64, present map[string]bool, allRanked bool) {

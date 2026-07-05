@@ -5,7 +5,6 @@ package server
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -542,12 +541,7 @@ func (s *Server) pulseListView(ctx context.Context, src IssueSource, cut pulseCu
 	if err != nil {
 		return listView{}, err
 	}
-	slices.SortStableFunc(beads, func(a, b strand.Bead) int {
-		if a.Priority != b.Priority {
-			return cmp.Compare(a.Priority, b.Priority)
-		}
-		return cmp.Compare(a.ID, b.ID)
-	})
+	strand.SortBeads(beads)
 	return listView{Flat: true, FlatTitle: cut.title, Story: strand.Story{Beads: beads, Open: len(beads)}}, nil
 }
 
@@ -936,7 +930,7 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 // success the response is 204 (no swap, no Sortable re-init churn); a write error
 // renders the error fragment at a non-2xx status, the client's revert signal.
 //
-// Two write paths preserve the pure-rank-after-seed invariant (strand.sortBeads):
+// Two write paths preserve the pure-rank-after-seed invariant (strand.SortBeads):
 // a group with no manual rank yet is seeded with dense ranks 1..N over the new
 // order; an already-ranked group moves one bead to the midpoint of its new
 // neighbors (or just past an edge), renormalizing the whole group only when float

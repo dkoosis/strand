@@ -103,6 +103,33 @@ func TestPulseCutsListBeads(t *testing.T) {
 	}
 }
 
+// TestPulseCutRespectsManualRank pins pulse-cut ordering on strand.SortBeads
+// (st-zm6): a cut containing manually-ranked beads lists them rank-asc — a P3
+// ranked ahead of a P0 leads — and unranked beads sink below the ranked ones.
+func TestPulseCutRespectsManualRank(t *testing.T) {
+	issues := []bd.Issue{
+		{ID: "r-root", Title: "RANKED", IssueType: "epic", Status: "open"},
+		{ID: "r-1", Parent: "r-root", Title: "Ranked low prio", Status: "open", Priority: new(3), Metadata: map[string]any{"rank": 1.0}},
+		{ID: "r-2", Parent: "r-root", Title: "Ranked high prio", Status: "open", Priority: new(0), Metadata: map[string]any{"rank": 2.0}},
+		{ID: "r-3", Parent: "r-root", Title: "Unranked urgent", Status: "open", Priority: new(0)},
+	}
+	srv := newTestServer(t, &stubBD{issues: issues})
+	body := do(t, srv, "/list?filter=open").Body.String()
+
+	lowPrio := strings.Index(body, "Ranked low prio")
+	highPrio := strings.Index(body, "Ranked high prio")
+	unranked := strings.Index(body, "Unranked urgent")
+	if lowPrio < 0 || highPrio < 0 || unranked < 0 {
+		t.Fatalf("open cut missing a bead (positions %d/%d/%d):\n%s", lowPrio, highPrio, unranked, body)
+	}
+	if lowPrio >= highPrio {
+		t.Errorf("rank should override priority: %q (rank 1) must precede %q (rank 2)", "Ranked low prio", "Ranked high prio")
+	}
+	if highPrio >= unranked {
+		t.Errorf("unranked bead should sink below ranked ones: %q must trail %q", "Unranked urgent", "Ranked high prio")
+	}
+}
+
 // TestPulseFragment checks the /pulse fragment re-renders just the cells (the
 // refreshList swap target), with no surrounding page chrome.
 func TestPulseFragment(t *testing.T) {
