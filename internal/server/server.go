@@ -490,10 +490,11 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "list", listViewFor(f, q.Get("story"), q.Get("epic"), q.Get("filter")))
 }
 
-// searchListView gathers every open bead whose title or description contains
+// searchListView gathers every live bead whose title or description contains
 // query (case-insensitive) into a flat list scope, mirroring pulseListView. It
-// reads the same cached open snapshot bd search itself defaults to — closed/
-// deferred beads are out of scope, same as bd's own default. Comments aren't
+// reads the snapshot bd list defaults to (closed already dropped) and filters
+// deferred the way the strand does, so search scope matches the live view rather
+// than leaking parked work. Comments aren't
 // searched: bd has no bulk comment-search primitive, and fetching every bead's
 // comments per keystroke would serialize behind execMu (client.go) on a
 // snapshot this size.
@@ -505,6 +506,11 @@ func (s *Server) searchListView(ctx context.Context, src IssueSource, query stri
 	needle := strings.ToLower(query)
 	var beads []strand.Bead
 	for i := range issues {
+		// bd list drops closed on its own but still hands back deferred, which the
+		// strand treats as out of motion — filter it the same way buildStrand does.
+		if !strand.Openish(issues[i].Status) {
+			continue
+		}
 		if strings.Contains(strings.ToLower(issues[i].Title), needle) ||
 			strings.Contains(strings.ToLower(issues[i].Description), needle) {
 			beads = append(beads, strand.NewBead(&issues[i]))

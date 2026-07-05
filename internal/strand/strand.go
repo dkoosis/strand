@@ -149,9 +149,9 @@ type Synthesis struct {
 	JTBD jtbd.Registry
 }
 
-// openish reports whether a status counts as live work. Closed and deferred
+// Openish reports whether a status counts as live work. Closed and deferred
 // issues are not part of the strand — it shows what's in motion.
-func openish(status bd.Status) bool {
+func Openish(status bd.Status) bool {
 	return status != bd.StatusClosed && status != bd.StatusDeferred
 }
 
@@ -186,7 +186,7 @@ func Build(issues []bd.Issue, syn Synthesis) Model {
 	epicOf := make(map[string]string)
 	inProgress := 0
 	for i := range issues {
-		if !openish(issues[i].Status) || isEpic(&issues[i]) {
+		if !Openish(issues[i].Status) || isEpic(&issues[i]) {
 			continue
 		}
 		if issues[i].Status == bd.StatusInProgress {
