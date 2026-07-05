@@ -9,6 +9,8 @@
 /bin/
 # built CLI binary at repo root
 /strand
+# per-worktree golangci-lint cache (Makefile lint target, st-afw)
+/.golangci-cache/
 
 # bv (beads viewer) local config and caches
 .bv/

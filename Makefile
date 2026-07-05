@@ -3,6 +3,14 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 STRAND_ADDR ?= 127.0.0.1:7777
 
+# Per-worktree golangci-lint cache. Concurrent worktrees (dispatch/team runs)
+# otherwise share one cache (~/.cache/golangci-lint); one worktree's cached
+# analysis leaks stale file paths into another's run, so a clean worktree goes
+# false-RED citing a sibling's files (st-afw). Keying off $(CURDIR) gives each
+# worktree its own cache, so contention can't happen. (GOCACHE stays shared —
+# it's content-addressed and doesn't leak paths.)
+GOLANGCI_LINT_CACHE := $(CURDIR)/.golangci-cache
+
 build:
 	go build -o bin/strand ./cmd/strand
 
@@ -17,8 +25,11 @@ race:
 	go test -race -count=1 ./...
 
 # lint runs the strict golangci-lint set (.golangci.yml).
+# --allow-parallel-runners: golangci-lint's global single-instance lock exists to
+# stop concurrent runs corrupting a shared cache. With per-worktree caches (above)
+# that risk is gone, so we let dispatch/team waves lint concurrently.
 lint:
-	golangci-lint run ./...
+	GOLANGCI_LINT_CACHE="$(GOLANGCI_LINT_CACHE)" golangci-lint run --allow-parallel-runners ./...
 
 vet:
 	go vet ./...
@@ -67,4 +78,4 @@ uninstall:
 	@bash "$(CURDIR)/deploy/launchd/uninstall.sh"
 
 clean:
-	rm -rf bin
+	rm -rf bin .golangci-cache
