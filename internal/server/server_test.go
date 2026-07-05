@@ -1189,7 +1189,7 @@ func rankOf(writes []rankWrite, id string) float64 {
 
 // TestRankSeedsUntouchedGroup: the first drag on a story with no manual rank yet
 // seeds dense ranks 1..N over the post-drop order, turning the whole group ranked
-// in one pass (the sortBeads invariant). Success is 204 — the client keeps its
+// in one pass (the SortBeads invariant). Success is 204 — the client keeps its
 // optimistic DOM.
 func TestRankSeedsUntouchedGroup(t *testing.T) {
 	stub := &stubBD{issues: append([]bd.Issue(nil), sampleIssues...)}

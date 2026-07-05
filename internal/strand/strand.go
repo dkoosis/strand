@@ -375,16 +375,19 @@ func buildStory(rootID string, members []bd.Issue, byID map[string]bd.Issue, reg
 		}
 		st.Beads = append(st.Beads, b)
 	}
-	sortBeads(st.Beads)
+	SortBeads(st.Beads)
 	return st
 }
 
-// sortBeads orders a story's beads. An untouched story (no bead manually ranked)
+// SortBeads orders a group of beads. An untouched group (no bead manually ranked)
 // keeps the default priority-asc, id tiebreak — unchanged behavior. The first
-// manual reorder seeds a rank onto every bead in the group (server handleRank),
-// so a ranked group is wholly rank-ordered; mixing the two states never happens,
-// which keeps the key space monotonic and drag inserts collision-safe.
-func sortBeads(beads []Bead) {
+// manual reorder seeds a rank onto every bead in the story (server handleRank),
+// so a ranked story is wholly rank-ordered; mixing the two states never happens
+// within one story, which keeps the key space monotonic and drag inserts
+// collision-safe. Pulse cuts reuse this sort over beads drawn from many stories,
+// where ranked and unranked beads do mix — the ranked branch sinks unranked
+// beads below ranked ones there too.
+func SortBeads(beads []Bead) {
 	ranked := false
 	for i := range beads {
 		if beads[i].HasRank {
