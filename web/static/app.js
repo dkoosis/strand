@@ -246,6 +246,33 @@ document.body.addEventListener("htmx:configRequest", (e) => {
     return;
   }
 });
+// #beadSearch debounces (hx-trigger="input changed delay:300ms"). Two hazards when
+// the user types, then clicks a view/scope/minimap/pulse control that reloads
+// #listPane before the timer fires:
+//   1. the box keeps showing a query the pane no longer reflects — clear it;
+//   2. the queued search still fires ~300ms later, now with an empty value, and an
+//      empty q renders the whole strand (handleList) — clobbering the pane the nav
+//      just loaded. Drop that stale request.
+// navCleared distinguishes a nav-driven clear (drop the trailing empty search) from
+// the user emptying the box themselves (let it fire, restoring the full list). Any
+// real keystroke resets it, so a lingering flag can't swallow a later search.
+let navCleared = false;
+document.body.addEventListener("htmx:beforeRequest", (e) => {
+  const box = document.getElementById("beadSearch");
+  if (e.detail.elt.id === "beadSearch") {
+    if (navCleared && !box.value.trim()) {
+      navCleared = false;
+      e.preventDefault();
+    }
+    return;
+  }
+  if (e.detail.target?.id !== "listPane" || !box || !box.value) return;
+  box.value = "";
+  navCleared = true;
+});
+document.getElementById("beadSearch")?.addEventListener("input", () => {
+  navCleared = false;
+});
 // A minimap epic/story click filters the ACTIVE view to that scope (spec §2). A
 // story cell scopes to its id; an epic head clears the story scope (the whole epic
 // is the strand's first epic). Routes through htmx.ajax so the active view's
