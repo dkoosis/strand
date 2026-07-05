@@ -260,9 +260,18 @@ func northStarBody(s string) string {
 	lines := strings.Split(s, "\n")
 	i := 0
 	if len(lines) > 0 && strings.TrimSpace(lines[0]) == "---" {
-		for i = 1; i < len(lines) && strings.TrimSpace(lines[i]) != "---"; i++ {
+		closed := false
+		for i = 1; i < len(lines); i++ {
+			if strings.TrimSpace(lines[i]) == "---" {
+				closed = true
+				break
+			}
 		}
-		i++ // skip the closing ---
+		if closed {
+			i++ // skip the closing ---
+		} else {
+			i = 0 // no closing --- → treat the whole file as body, don't slice past the end (would panic)
+		}
 	}
 	for i < len(lines) && strings.TrimSpace(lines[i]) == "" { // drop leading blanks
 		i++

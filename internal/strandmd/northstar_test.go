@@ -33,6 +33,7 @@ func TestNorthStarMiniReadsLine(t *testing.T) {
 		{"few lines under frontmatter", "---\nid: abc\n---\nA reminder.\nAnother.\n", "A reminder.\nAnother."},
 		{"empty file", "", ""},
 		{"frontmatter only", "---\nid: abc\n---\n", ""},
+		{"unclosed frontmatter", "---\nid: abc\nMake the invisible legible.\n", "---\nid: abc\nMake the invisible legible."},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
