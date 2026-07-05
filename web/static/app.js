@@ -246,6 +246,15 @@ document.body.addEventListener("htmx:configRequest", (e) => {
     return;
   }
 });
+// Any non-search navigation that reloads #listPane (a view/scope switch, a minimap
+// or pulse cut, a refreshList) leaves the search box showing a query the pane no
+// longer reflects — clear it so the input never claims a filter the list isn't.
+document.body.addEventListener("htmx:beforeRequest", (e) => {
+  if (e.detail.elt.id === "beadSearch") return;
+  if (e.detail.target?.id !== "listPane") return;
+  const box = document.getElementById("beadSearch");
+  if (box) box.value = "";
+});
 // A minimap epic/story click filters the ACTIVE view to that scope (spec §2). A
 // story cell scopes to its id; an epic head clears the story scope (the whole epic
 // is the strand's first epic). Routes through htmx.ajax so the active view's
