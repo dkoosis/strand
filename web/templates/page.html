@@ -64,10 +64,15 @@
     <span class="ns-div" aria-hidden="true"></span>
     {{/* Bead-status pulse: the status line's spread, mirrored into the page. /pulse
          re-renders it on refreshList so an in-app edit keeps the counts honest
-         without a full reload (str-ijy). */}}
+         without a full reload (str-ijy). The one-shot `load` re-fetch heals the cold
+         ● (st-01z): the landing render reads deps from the warm cache only (str-47z),
+         so a repo whose only blocked work is open-held beads renders ● cold as 0 until
+         the background deps prefetch warms. This re-fetch lands after that prefetch —
+         its Stats spawn queues behind the prefetch's Deps on bd's execMu, so by the
+         time it computes lanes the cache is warm and ● is exact. */}}
     <div class="pulse" id="pulseBar" role="group"
          aria-label="Bead status — click a count to list those beads"
-         hx-get="/pulse" hx-trigger="refreshList from:body" hx-swap="innerHTML">
+         hx-get="/pulse" hx-trigger="refreshList from:body, load delay:300ms" hx-swap="innerHTML">
       {{template "pulse" .Pulse}}
     </div>
   </div>

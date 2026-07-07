@@ -351,9 +351,10 @@ func (s *Server) computePulse(ctx context.Context, src IssueSource, repo registr
 		// the warm cache only — the masthead never pays a deps spawn on the landing path
 		// (str-47z). Cold, no bead is dependency-blocked, so all three lanes show their
 		// best-effort: ○ and ◆ are list-path exact, and ● counts stored-blocked beads (which
-		// laneOf classifies without deps) but not yet the open-held ones — a self-healing
-		// undercount, never an overcount into an empty cut. The background prefetch warms
-		// deps and the next /pulse render (refreshList) is exact.
+		// laneOf classifies without deps) but not yet the open-held ones — a cold undercount,
+		// never an overcount into an empty cut. It does NOT self-heal on its own: the deps
+		// prefetch fires no event. The masthead's one-shot `load` re-fetch of /pulse (page.html,
+		// st-01z) closes the gap — it lands after the prefetch warms deps, so ● comes back exact.
 		deps, _ := s.cache.liveDeps(repo.Path)
 		lanes := insight.Lanes(issues, deps)
 		p.Open = countLane(lanes, insight.LaneOpen)
