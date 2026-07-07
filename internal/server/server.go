@@ -334,7 +334,13 @@ type Pulse struct {
 func (s *Server) computePulse(ctx context.Context, src IssueSource, repo registry.Repo) Pulse {
 	var p Pulse
 	if st, err := src.Stats(ctx); err == nil {
-		p.Open, p.InProgress, p.Blocked = st.Open, st.InProgress, st.Blocked
+		// bd stats seeds the degraded (List-failed) baseline for the raw status counts.
+		// ● is deliberately NOT seeded here: bd's blocked_issues is a DIFFERENT metric than
+		// the ● lane — bd counts an in-progress bead with an unmet blocker as blocked (and
+		// again as in_progress), but the ● cut lists only LaneBlocked (stored-blocked +
+		// open-held). Seeding ● from bd stats renders a nonzero ● that clicks through to an
+		// empty pane, so ● is derived from the lane partition below and nowhere else.
+		p.Open, p.InProgress = st.Open, st.InProgress
 		p.Closed, p.Deferred = st.Closed, st.Deferred
 	}
 	if issues, err := src.List(ctx, bd.ListOpts{}); err == nil {
@@ -343,16 +349,17 @@ func (s *Server) computePulse(ctx context.Context, src IssueSource, repo registr
 		// ○, and ◆ cuts (and the board's Classify) share. Count and list can't drift: both
 		// derive from Lanes over the same issues+deps (st-88o, st-x66). Deps are read from
 		// the warm cache only — the masthead never pays a deps spawn on the landing path
-		// (str-47z). Cold, no bead is dependency-blocked, so ○ and ◆ show their best-effort
-		// (list-path exact) and ● keeps the bd-stats figure for one render; the background
-		// prefetch warms deps and the next /pulse render (refreshList) is exact.
-		deps, warm := s.cache.liveDeps(repo.Path)
+		// (str-47z). Cold, no bead is dependency-blocked, so all three lanes show their
+		// best-effort: ○ and ◆ are list-path exact, and ● counts stored-blocked beads (which
+		// laneOf classifies without deps) but not yet the open-held ones — a cold undercount,
+		// never an overcount into an empty cut. It does NOT self-heal on its own: the deps
+		// prefetch fires no event. The masthead's one-shot `load` re-fetch of /pulse (page.html,
+		// st-01z) closes the gap — it lands after the prefetch warms deps, so ● comes back exact.
+		deps, _ := s.cache.liveDeps(repo.Path)
 		lanes := insight.Lanes(issues, deps)
 		p.Open = countLane(lanes, insight.LaneOpen)
 		p.Waiting = countLane(lanes, insight.LaneWaiting)
-		if warm {
-			p.Blocked = countLane(lanes, insight.LaneBlocked)
-		}
+		p.Blocked = countLane(lanes, insight.LaneBlocked)
 	}
 	return p
 }

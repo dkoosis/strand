@@ -45,8 +45,13 @@ type stubBD struct {
 	show     map[string]*bd.Issue
 	comments map[string][]bd.Comment
 	listErr  error
-	showErr  error
-	writeErr error // when set, every write fails with it; the show map stays put
+
+	// statsBlocked, when non-nil, overrides the derived Stats.Blocked. Real bd counts an
+	// in-progress/open bead with an unmet blocker as blocked; the naive per-status
+	// derivation below can't see deps, so a test injects bd's figure directly.
+	statsBlocked *int
+	showErr      error
+	writeErr     error // when set, every write fails with it; the show map stays put
 
 	createCalls  int      // count of Create calls so far (incl. failed) — drives createFailAt.
 	createFailAt int      // 1-based index of the Create call that fails (0 = never); models a child create failing after the parent minted (str-qig).
@@ -121,6 +126,9 @@ func (s *stubBD) Stats(context.Context) (bd.Stats, error) {
 		case bd.StatusDeferred:
 			st.Deferred++
 		}
+	}
+	if s.statsBlocked != nil {
+		st.Blocked = *s.statsBlocked
 	}
 	return st, nil
 }
@@ -1053,6 +1061,44 @@ func TestPulseCountsMatchCutsForDerivedBlocks(t *testing.T) {
 	}
 	if !strings.Contains(open, `data-id="free"`) || !strings.Contains(open, `data-id="blocker"`) {
 		t.Errorf("○ cut dropped an actionable-open bead:\n%s", open)
+	}
+}
+
+// TestPulseBlockedNeverSeedsFromBdStats pins the cold-pulse bug: bd's blocked_issues
+// counts an in-progress bead with an unmet blocker as blocked, but that bead is NOT
+// LaneBlocked (laneOf sends in_progress to LaneNone), so the ● cut lists nothing. The
+// masthead ● must derive from the lane partition, never from bd stats — otherwise the
+// cold render shows ● 1 clicking through to an empty "No beads in this status" pane.
+// Read on a COLD cache (no prior /board warm) so the pre-fix bd-stats seed would fire.
+func TestPulseBlockedNeverSeedsFromBdStats(t *testing.T) {
+	one := 1
+	stub := &stubBD{
+		issues: []bd.Issue{
+			{ID: "demo-root", Title: "DEMO", IssueType: "epic", Status: "open"},
+			{ID: "blocker", Parent: "demo-root", Title: "The blocker", Status: "open", Priority: new(2)},
+			// in_progress + unmet blocker: bd stats calls this blocked, laneOf calls it ◐ (LaneNone).
+			{ID: "wip", Parent: "demo-root", Title: "Held WIP bug", IssueType: "bug", Status: "in_progress", Priority: new(2)},
+		},
+		deps: []bd.DepEdge{{IssueID: "wip", DependsOnID: "blocker", Type: bd.DepBlocks}},
+		// bd reports 1 blocked (the in-progress-with-blocker bead); the ● must not echo it.
+		statsBlocked: &one,
+	}
+	srv := newTestServer(t, stub)
+
+	// Cold: hit /pulse first, before any view warms the deps cache. Pre-fix this rendered
+	// the bd-stats figure (Blocked: 1); the ● cut, listing LaneBlocked, would be empty.
+	pulse := do(t, srv, "/pulse").Body.String()
+	if !strings.Contains(pulse, `title="Blocked: 0"`) {
+		t.Errorf("● must derive from the lane partition, not bd stats (want Blocked: 0):\n%s", pulse)
+	}
+
+	// The ● count agrees with its cut: a zero ● clicks through to an empty pane.
+	blocked := do(t, srv, "/list?filter=blocked").Body.String()
+	if strings.Contains(blocked, `data-id="wip"`) {
+		t.Errorf("● cut leaked the in-progress bead (belongs in ◐, not ●):\n%s", blocked)
+	}
+	if !strings.Contains(blocked, "No beads in this status") {
+		t.Errorf("● cut should be empty to match the zero count:\n%s", blocked)
 	}
 }
 
