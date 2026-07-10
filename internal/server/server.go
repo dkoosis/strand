@@ -513,12 +513,17 @@ func (s *Server) searchListView(ctx context.Context, src IssueSource, query stri
 	needle := strings.ToLower(query)
 	var beads []strand.Bead
 	for i := range issues {
+		id := strings.ToLower(issues[i].ID)
+		// An id match is a jump-to-bead: honour it even for a deferred bead the strand
+		// otherwise drops, so `tx-kbrv` lands its target rather than silently emptying.
+		idHit := needle != "" && strings.Contains(id, needle)
 		// bd list drops closed on its own but still hands back deferred, which the
 		// strand treats as out of motion — filter it the same way buildStrand does.
-		if !strand.Openish(issues[i].Status) {
+		if !idHit && !strand.Openish(issues[i].Status) {
 			continue
 		}
-		if strings.Contains(strings.ToLower(issues[i].Title), needle) ||
+		if idHit ||
+			strings.Contains(strings.ToLower(issues[i].Title), needle) ||
 			strings.Contains(strings.ToLower(issues[i].Description), needle) {
 			beads = append(beads, strand.NewBead(&issues[i]))
 		}
