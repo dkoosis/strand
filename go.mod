@@ -2,6 +2,8 @@ module github.com/dkoosis/strand
 
 go 1.26.4
 
+toolchain go1.26.5
+
 require (
 	github.com/anthropics/anthropic-sdk-go v1.52.0
 	gonum.org/v1/gonum v0.17.0
