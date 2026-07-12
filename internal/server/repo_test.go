@@ -80,6 +80,49 @@ func TestSwitchRepoReScopes(t *testing.T) {
 	}
 }
 
+// TestHomeRepoDeepLinkScopes: a `/?repo=<path>` deep-link (the status line's OSC 8
+// link carrying its own repo) switches the active repo before rendering, so the
+// landing — and every follow-on fragment — scopes to the named repo, not whatever
+// was last active (st-vai). A combined `?repo=&filter=` still applies the pulse cut.
+func TestHomeRepoDeepLinkScopes(t *testing.T) {
+	reg := registry.InMemory(
+		registry.Repo{Name: "alpha", Path: "/a"},
+		registry.Repo{Name: "beta", Path: "/b"},
+	)
+	stubA := &stubBD{issues: []bd.Issue{{ID: "a-1", Title: "Alpha work", Status: "open"}}}
+	stubB := &stubBD{issues: []bd.Issue{{ID: "b-1", Title: "Beta work", Status: "open"}}}
+	srv := serverFor(t, reg, map[string]IssueSource{"/a": stubA, "/b": stubB})
+
+	// alpha is active by default (ties broken by name); the deep-link names beta.
+	body := do(t, srv, "/?repo=/b").Body.String()
+	if !strings.Contains(body, "Beta work") {
+		t.Errorf("deep-link did not scope the landing to beta:\n%s", body)
+	}
+	if strings.Contains(body, "Alpha work") {
+		t.Error("deep-link landing still shows the old active repo's beads")
+	}
+
+	// The switch is sticky: a follow-on fragment reads the now-active repo.
+	if lb := do(t, srv, "/list").Body.String(); !strings.Contains(lb, "Beta work") || strings.Contains(lb, "Alpha work") {
+		t.Errorf("fragment after deep-link not scoped to beta:\n%s", lb)
+	}
+
+	// An unknown path is ignored — the landing keeps the active repo, no error.
+	if eb := do(t, srv, "/?repo=/nope").Body.String(); !strings.Contains(eb, "Beta work") {
+		t.Errorf("unknown ?repo should fall back to the active repo, got:\n%s", eb)
+	}
+
+	// A combined ?repo=&filter= applies both: switch repo, then the pulse cut. A
+	// trailing slash still resolves (filepath.Clean) — a hand-typed/bookmarked link.
+	cb := do(t, srv, "/?repo=/a/&filter=open").Body.String()
+	if !strings.Contains(cb, "Alpha work") || strings.Contains(cb, "Beta work") {
+		t.Errorf("combined repo+filter deep-link (trailing slash) not scoped to alpha:\n%s", cb)
+	}
+	if !strings.Contains(cb, `data-filter="open"`) {
+		t.Errorf("combined deep-link did not apply the pulse cut:\n%s", cb)
+	}
+}
+
 // TestEmptyStateWhenNoRepo: with no registered repo the landing renders the
 // actionable empty state, not an error dump (R1: no repos / empty).
 func TestEmptyStateWhenNoRepo(t *testing.T) {
