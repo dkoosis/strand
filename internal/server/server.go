@@ -386,6 +386,18 @@ func countLane(lanes map[string]insight.Lane, l insight.Lane) int {
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
+	// A deep-link may name the repo it wants shown (`/?repo=<path>`): the status
+	// line's OSC 8 links carry the line's own repo path so a click lands on THAT
+	// repo, not whatever was last active (st-vai). Switch before resolving the
+	// source so buildStrand, the pulse, and every follow-on htmx fragment (which all
+	// read the active repo) scope to the named repo. An unknown or unregistered path
+	// is ignored — the landing falls back to the active repo rather than erroring on
+	// a stale bookmark. This is the one GET that re-points the active repo; that is
+	// the point of a deep-link (a localhost navigation), not the cross-site write the
+	// mutate guard defends against.
+	if p := r.URL.Query().Get("repo"); p != "" {
+		_, _ = s.reg.Switch(p)
+	}
 	src, repo, ok := s.source()
 	if !ok {
 		s.render(w, "page", pageData{Empty: true, Repos: s.repoMenu("")})
