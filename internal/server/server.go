@@ -314,6 +314,12 @@ type pageData struct {
 	Repos  repoMenu
 	Empty  bool
 	AsOf   string // "data as of HH:MM" for the refresh readout; empty when no snapshot
+	// ActiveFilter is the pulse cut the landing opened with — the token from a
+	// deep-link `/?filter=<token>` (the status line's OSC 8 links land here). It
+	// renders onto #viewport's data-filter so the client's syncChrome() lights the
+	// matching pulse cell and active-cut chip on cold load, and the List pane below
+	// is already the cut's list. "" for a plain landing (no filter, or an unknown one).
+	ActiveFilter string
 }
 
 // Pulse is the masthead's repo-wide bead-status spread — the bead half of the
@@ -408,12 +414,25 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	s.goBackground(10*time.Second, func(ctx context.Context) {
 		_, _ = src.Deps(ctx)
 	})
+	// A deep-link `/?filter=<token>` (the status line's OSC 8 links) opens the
+	// landing with a masthead-pulse cut already applied to the List pane — the same
+	// cut a click on that pulse cell would swap in, but resolved server-side so the
+	// pane is right on first paint and works without JS. An unknown filter falls
+	// through to the whole-strand list, exactly as the empty landing renders.
+	list := listViewFor(f, "", "", "")
+	active := ""
+	if cut, ok := pulseCutFor(r.URL.Query().Get("filter")); ok {
+		if v, err := s.pulseListView(ctx, src, cut); err == nil {
+			list, active = v, r.URL.Query().Get("filter")
+		}
+	}
 	s.render(w, "page", pageData{
-		Strand: f,
-		List:   listViewFor(f, "", "", ""),
-		Pulse:  pulse,
-		Repos:  s.repoMenu(""),
-		AsOf:   s.asOf(repo),
+		Strand:       f,
+		List:         list,
+		Pulse:        pulse,
+		Repos:        s.repoMenu(""),
+		AsOf:         s.asOf(repo),
+		ActiveFilter: active,
 	})
 }
 

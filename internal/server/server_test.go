@@ -513,6 +513,36 @@ var sampleIssues = []bd.Issue{
 	{ID: "demo-e2", Parent: "demo-root", Title: "Lone task", IssueType: "task", Status: "open", Priority: new(3)},
 }
 
+// TestHomeFilterDeepLink pins the status-line OSC 8 deep-link: GET /?filter=<token>
+// opens the landing with that pulse cut already applied to the List pane (resolved
+// server-side, so the pane is right on first paint and works without JS) and marks
+// #viewport's data-filter so the client's syncChrome lights the matching pulse cell
+// on cold load. An unknown filter is inert — the whole-strand landing.
+func TestHomeFilterDeepLink(t *testing.T) {
+	srv := newTestServer(t, &stubBD{issues: sampleIssues})
+
+	rec := do(t, srv, "/?filter=in_progress")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /?filter=in_progress = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-filter="in_progress"`) {
+		t.Errorf("viewport should carry the deep-linked filter (data-filter=%q):\n%s", "in_progress", body)
+	}
+	// The in-progress cut lists demo-e1.b (the sole in_progress bead) and drops the open ones.
+	if !strings.Contains(body, `data-id="demo-e1.b"`) {
+		t.Errorf("in_progress deep-link dropped the in-progress bead demo-e1.b:\n%s", body)
+	}
+	if strings.Contains(body, `data-id="demo-e1.a"`) {
+		t.Errorf("in_progress deep-link leaked the open bead demo-e1.a:\n%s", body)
+	}
+
+	// An unknown filter falls through to the whole strand: empty data-filter.
+	if body := do(t, srv, "/?filter=bogus").Body.String(); !strings.Contains(body, `data-filter=""`) {
+		t.Errorf("unknown filter should render an empty data-filter (whole-strand landing):\n%s", body)
+	}
+}
+
 // TestStrandPageRenders pins the view-centric landing: the page renders the north
 // star, the loud primary view-switcher (Table/Board/Insights tabs), the minimap
 // map with a story per epic carrying its filter identity (data-story, routed to

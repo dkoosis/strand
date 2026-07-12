@@ -1,3 +1,15 @@
+## lane: CalmMarten
+
+→ next: backlog empty. Only open bead = st-zm6 (human decision — should pulse cuts respect manual rank? export strand.sortBeads). `bd ready` when dk files work.
+
+✓ st-afw shipped: per-worktree golangci-lint cache kills concurrent false-RED (PR #75 merged). gemini quoting fix accepted.
+✓ /simplify epic on server.go fully landed — #71–#75 (st-57y ListOpts, st-612 lanes, st-w39 north-star-mini→strandmd, st-afw lint cache).
+✓ workspace golden: `make check` green; st-afw + dispatch/st-w39 worktree/branches/remote refs pruned.
+
+‡ golangci false-RED now fixed at source (#75 per-worktree cache) — the `golangci-lint cache clean` workaround is retired. codex out of review credits → merge w/o waiting per SOP.
+
+~ dk: if boot.md is stale, FIX it — don't ask. Trust-the-loop when fenced; cost-conscious.
+
 ## lane: WildSandpiper
 
 ✓ built the **strand** — sized story-cards (size=open work, heat=child recency) + north-star masthead, real epic roll-ups; flat table → drill-in. Static mockups (`web/mockup/`) removed once the live app landed.
@@ -17,6 +29,16 @@
 ‡ #29↔#30 collide in server.go / server_test.go stubBD / write.go — merge #30 first (pointer-sig, wider blast); #29 also vs merged #28 in partials.html drawer order. str-y1m lint bead open.
 
 ~ dk: verify-before-assert — RTFM beat trusting the survey agent.
+
+## lane: EvenFisher
+
+→ next: backlog empty; only st-zm6 open (human — should pulse cuts respect manual rank?). `bd ready` when dk files work.
+
+✓ st-01z shipped: ● derives from lane partition + masthead self-heals cold ● via one-shot `/pulse` load re-fetch (PR #79 merged; Codex P2 accepted, gemini/coderabbit clean).
+
+‡ cold ● undercount fixed by `load delay:300ms` on #pulseBar — deps prefetch warms cache but fires no event, so refreshList alone left it stale.
+
+~ dk: assess bots critically; merge on net-improvement, reply accept/reject + why.
 
 ## lane: SuperSandpiper
 

@@ -24,3 +24,6 @@
 # bd worktrees (nested siblings: strand-4fj/, st-suggest.1/, …)
 /strand-*/
 /st-*/
+
+# fo (SARIF/test-json) local cache
+.fo/
