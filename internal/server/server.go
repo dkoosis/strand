@@ -394,9 +394,15 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	// is ignored — the landing falls back to the active repo rather than erroring on
 	// a stale bookmark. This is the one GET that re-points the active repo; that is
 	// the point of a deep-link (a localhost navigation), not the cross-site write the
-	// mutate guard defends against.
+	// mutate guard defends against. filepath.Clean so a trailing slash or redundant
+	// segment still matches the registry's canonical absolute paths; skip the switch
+	// (and Switch's disk write) when the link already names the active repo — a
+	// re-click of the same status-line link is the common case.
 	if p := r.URL.Query().Get("repo"); p != "" {
-		_, _ = s.reg.Switch(p)
+		p = filepath.Clean(p)
+		if active, ok := s.reg.Active(); !ok || active.Path != p {
+			_, _ = s.reg.Switch(p)
+		}
 	}
 	src, repo, ok := s.source()
 	if !ok {

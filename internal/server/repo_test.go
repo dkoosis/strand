@@ -111,6 +111,16 @@ func TestHomeRepoDeepLinkScopes(t *testing.T) {
 	if eb := do(t, srv, "/?repo=/nope").Body.String(); !strings.Contains(eb, "Beta work") {
 		t.Errorf("unknown ?repo should fall back to the active repo, got:\n%s", eb)
 	}
+
+	// A combined ?repo=&filter= applies both: switch repo, then the pulse cut. A
+	// trailing slash still resolves (filepath.Clean) — a hand-typed/bookmarked link.
+	cb := do(t, srv, "/?repo=/a/&filter=open").Body.String()
+	if !strings.Contains(cb, "Alpha work") || strings.Contains(cb, "Beta work") {
+		t.Errorf("combined repo+filter deep-link (trailing slash) not scoped to alpha:\n%s", cb)
+	}
+	if !strings.Contains(cb, `data-filter="open"`) {
+		t.Errorf("combined deep-link did not apply the pulse cut:\n%s", cb)
+	}
 }
 
 // TestEmptyStateWhenNoRepo: with no registered repo the landing renders the
