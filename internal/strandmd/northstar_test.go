@@ -6,50 +6,61 @@ import (
 	"testing"
 )
 
-// writeMini drops a north-star-mini.md into a fresh repo dir and returns the dir.
-func writeMini(t *testing.T, body string) string {
+// writeNorthStar drops a NORTH_STAR.md into a fresh repo dir and returns the dir.
+func writeNorthStar(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, NorthStarMiniFile), []byte(body), 0o644); err != nil {
-		t.Fatalf("write mini: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, NorthStarFile), []byte(body), 0o644); err != nil {
+		t.Fatalf("write north star: %v", err)
 	}
 	return dir
 }
 
-// TestNorthStarMiniReadsLine: the masthead source is the first content line of
-// north-star-mini.md, tolerating frontmatter and a heading marker, and blank when
-// the file is absent or empty (str-d2s acceptance).
-func TestNorthStarMiniReadsLine(t *testing.T) {
+// TestNorthStarReadsStarBlock: the masthead source is the first ★-marked line of
+// NORTH_STAR.md (marker stripped) plus contiguous following lines up to a blank
+// or heading, and blank when the file or ★ line is absent (st-y0a acceptance).
+func TestNorthStarReadsStarBlock(t *testing.T) {
 	tests := []struct {
 		name string
 		body string
 		want string
 	}{
-		{"bare line", "Make the invisible legible.\n", "Make the invisible legible."},
-		{"heading", "# Make the invisible legible.\n", "Make the invisible legible."},
-		{"frontmatter nug", "---\nid: abc\ntype: reference.decision\n---\nMake the invisible legible.\n", "Make the invisible legible."},
-		{"leading blanks", "\n\n  spaced line  \n", "spaced line"},
-		{"few lines preserved", "First line.\nSecond line.\nThird line.\n", "First line.\nSecond line.\nThird line."},
-		{"few lines under frontmatter", "---\nid: abc\n---\nA reminder.\nAnother.\n", "A reminder.\nAnother."},
+		{
+			"real doc shape",
+			"# north star — repo\n\n★ the one-liner destination\n\n*Seeded 2026-07-19.*\n\nProse body.\n\n## section\n",
+			"the one-liner destination",
+		},
+		{"bare star line", "★ make the invisible legible\n", "make the invisible legible"},
+		{"no marker space", "★make the invisible legible\n", "make the invisible legible"},
+		{
+			"multi-line block",
+			"★ first line\nsecond line\nthird line\n\nnot this\n",
+			"first line\nsecond line\nthird line",
+		},
+		{
+			"block stops at heading",
+			"★ first line\nsecond line\n## section\nnot this\n",
+			"first line\nsecond line",
+		},
+		{"indented star", "  ★ spaced line  \n", "spaced line"},
+		{"no star line", "# heading\n\nProse only, no marker.\n", ""},
 		{"empty file", "", ""},
-		{"frontmatter only", "---\nid: abc\n---\n", ""},
-		{"unclosed frontmatter", "---\nid: abc\nMake the invisible legible.\n", "---\nid: abc\nMake the invisible legible."},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := NorthStarMini(writeMini(t, tc.body)); got != tc.want {
-				t.Errorf("NorthStarMini = %q, want %q", got, tc.want)
+			if got := NorthStar(writeNorthStar(t, tc.body)); got != tc.want {
+				t.Errorf("NorthStar = %q, want %q", got, tc.want)
 			}
 		})
 	}
 }
 
-// TestNorthStarMiniMissingFile: no file → blank, no crash.
-func TestNorthStarMiniMissingFile(t *testing.T) {
-	if got := NorthStarMini(t.TempDir()); got != "" {
-		t.Errorf("NorthStarMini(no file) = %q, want blank", got)
+// TestNorthStarMissingFile: no file → blank, no crash.
+func TestNorthStarMissingFile(t *testing.T) {
+	if got := NorthStar(t.TempDir()); got != "" {
+		t.Errorf("NorthStar(no file) = %q, want blank", got)
 	}
-	if got := NorthStarMini(""); got != "" {
-		t.Errorf("NorthStarMini(empty path) = %q, want blank", got)
+	if got := NorthStar(""); got != "" {
+		t.Errorf("NorthStar(empty path) = %q, want blank", got)
 	}
 }

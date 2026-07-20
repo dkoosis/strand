@@ -4,6 +4,10 @@ User-managed grounding for `strand` Tier-2 suggestions, modeled on `~/.claude/CL
 strand ships this default once, then leaves it to you — edit freely. A repo-local
 `./.strand/STRAND.md` overlays this file: your real `## Actors` and project direction win.
 
+This is NOT the north star — the destination doc is `NORTH_STAR.md` at the repo
+root (its `★` line is the masthead one-liner). This file is suggestion grounding:
+rubric + actors.
+
 ## Bead Quality Rubric
 
 Work is **epic > story > task**. Each type has a job; a suggestion must match the bead's type.

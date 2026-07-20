@@ -10,24 +10,25 @@ import (
 	"github.com/dkoosis/strand/web"
 )
 
-// writeMini drops a north-star-mini.md into a fresh repo dir and returns the dir.
-func writeMini(t *testing.T, body string) string {
+// writeNorthStar drops a NORTH_STAR.md into a fresh repo dir and returns the dir.
+func writeNorthStar(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "north-star-mini.md"), []byte(body), 0o644); err != nil {
-		t.Fatalf("write mini: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, "NORTH_STAR.md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write north star: %v", err)
 	}
 	return dir
 }
 
-// The north-star-mini.md parse tests moved to internal/strandmd (st-w39) — the
+// The NORTH_STAR.md parse tests live in internal/strandmd (st-w39, st-y0a) — the
 // format rules now live in the file-format package. This file keeps only the
 // server-level flag-wins-over-file precedence test below.
 
-// TestMastheadReadsFileThenFlagOverrides: synFor reads the repo's mini when no
-// --northstar flag is set, and the flag (a non-empty seeded NorthStar) wins.
+// TestMastheadReadsFileThenFlagOverrides: synFor reads the repo's NORTH_STAR.md
+// ★ line when no --northstar flag is set, and the flag (a non-empty seeded
+// NorthStar) wins.
 func TestMastheadReadsFileThenFlagOverrides(t *testing.T) {
-	dir := writeMini(t, "from the file\n")
+	dir := writeNorthStar(t, "★ from the file\n")
 	repo := registry.Repo{Name: "x", Path: dir}
 	tmpl, err := web.Templates()
 	if err != nil {

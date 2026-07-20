@@ -183,9 +183,9 @@ func TestImportExpandsOneLevel(t *testing.T) {
 	home := t.TempDir()
 	repo := t.TempDir()
 	writeStrand(t, home, "## Actors\n- G\n")
-	writeStrand(t, repo, "## North Star\n@north-star-mini.md\n")
+	writeStrand(t, repo, "## North Star\n@notes.md\n")
 	// import resolves relative to the STRAND.md that holds the @-line (repo/.strand).
-	writeAt(t, filepath.Join(repo, ".strand", "north-star-mini.md"), "NORTH-STAR-LINE\n")
+	writeAt(t, filepath.Join(repo, ".strand", "notes.md"), "NORTH-STAR-LINE\n")
 
 	ctx, err := Load(home, repo)
 	if err != nil {
@@ -194,7 +194,7 @@ func TestImportExpandsOneLevel(t *testing.T) {
 	if !strings.Contains(ctx.Text, "NORTH-STAR-LINE") {
 		t.Errorf("@-import not inlined:\n%s", ctx.Text)
 	}
-	if strings.Contains(ctx.Text, "@north-star-mini.md") {
+	if strings.Contains(ctx.Text, "@notes.md") {
 		t.Errorf("literal @-line survived expansion:\n%s", ctx.Text)
 	}
 }
