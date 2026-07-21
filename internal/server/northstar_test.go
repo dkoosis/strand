@@ -7,6 +7,7 @@ import (
 
 	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/internal/strand"
+	"github.com/dkoosis/strand/internal/strandmd"
 	"github.com/dkoosis/strand/web"
 )
 
@@ -14,7 +15,7 @@ import (
 func writeNorthStar(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "NORTH_STAR.md"), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, strandmd.NorthStarFile), []byte(body), 0o644); err != nil {
 		t.Fatalf("write north star: %v", err)
 	}
 	return dir
