@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
+	"github.com/dkoosis/strand/internal/bdcounts"
 	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/internal/strand"
 	"github.com/dkoosis/strand/internal/suggest"
@@ -467,6 +468,12 @@ func newTestServer(t *testing.T, src IssueSource) *Server {
 	// deterministic and offline regardless of ANTHROPIC_API_KEY in the env; the
 	// Tier-2 tests swap in a stub completer (st-suggest.3.3).
 	srv.suggestLLM = func() (suggest.Completer, bool) { return nil, false }
+	// Point the counts cache at a path that does not exist so the pulse tests
+	// exercise the bd-derived fallback deterministically, independent of any real
+	// ~/.cache/cc-dashboard/counts.json on the machine running the suite (st-p1f).
+	// The counts.json path is asserted directly in bdcounts_test.go and via the
+	// override in the pulse-source tests.
+	srv.counts = bdcounts.NewReaderAt(filepath.Join(t.TempDir(), "counts.json"))
 	return srv
 }
 

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
+	"github.com/dkoosis/strand/internal/bdcounts"
 	"github.com/dkoosis/strand/internal/insight"
 	"github.com/dkoosis/strand/internal/jtbd"
 	"github.com/dkoosis/strand/internal/llm"
@@ -116,6 +117,10 @@ type Server struct {
 	shutdown func()           // raised by POST /shutdown; a test seam over the interrupt hook
 	now      func() time.Time // clock for the stale cutoff; a test seam (default time.Now)
 	cache    *snapshotCache   // per-repo in-process read cache (strand-9s6)
+	// counts reads the shared bead-count cache the off-render agent writes, so the
+	// masthead pulse and the Claude Code status line report one number (st-p1f). A
+	// repo the agent hasn't recorded falls back to strand's own bd-derived spread.
+	counts *bdcounts.Reader
 
 	// Tier-2 Suggest seams (st-suggest.3.3). suggestLLM builds the key-gated model
 	// client (default defaultSuggestLLM over llm.New); tests swap it for a stub so
@@ -159,6 +164,7 @@ func defaultShutdown() {
 func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, static http.Handler, syn strand.Synthesis) *Server {
 	s := &Server{srcFor: srcFor, reg: reg, tmpl: tmpl, static: static, syn: syn, shutdown: defaultShutdown, now: time.Now}
 	s.cache = newSnapshotCache(func() time.Time { return s.now() })
+	s.counts = bdcounts.NewReader()
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	s.suggestLLM = defaultSuggestLLM
 	s.homeDir, _ = os.UserHomeDir()
@@ -324,20 +330,36 @@ type pageData struct {
 
 // Pulse is the masthead's repo-wide bead-status spread — the bead half of the
 // Claude Code status line, mirrored into the page. Each field is a glyph cell:
-// ◆ Waiting, ○ Open, ◐ InProgress, ● Blocked, ✓ Closed, ❄ Deferred. The status
-// counts come from `bd stats` (the same source the status line uses); Waiting is
-// the human-gated count the strand drops. A nonzero cell is a click-to-list
-// filter (handleList's pulse cuts).
+// ◆ Waiting, ○ Open, ◐ InProgress, ● Blocked, ✓ Closed, ❄ Deferred. The counts
+// come from the shared counts.json cache — the same file the status line reads —
+// so the two surfaces agree by construction (st-p1f); a repo the off-render agent
+// hasn't recorded falls back to strand's own bd-derived spread. A nonzero cell is
+// a click-to-list filter (handleList's pulse cuts).
 type Pulse struct {
 	Waiting, Open, InProgress, Blocked, Closed, Deferred int
 }
 
-// computePulse builds the masthead spread for the active repo. The five status
-// counts come from one `bd stats` call (closed/deferred are invisible to `bd
-// list`); Waiting is read off the cached open snapshot so it costs no extra
-// spawn. A failed stats read degrades to zero status counts rather than failing
-// the whole page — the pulse is ambient, not load-bearing.
+// computePulse builds the masthead spread for the active repo. It first reads the
+// shared counts.json the off-render agent writes (bdcounts) — the ONE source the
+// status line reads too, so the masthead and the status line can never disagree
+// (st-p1f). Only that miss — a repo the agent hasn't recorded — falls through to
+// the bd-derived spread below: `bd stats` for the raw status counts plus the
+// insight.Lanes partition for the three derived lanes. In the fallback the counts
+// agree with the cut each clicks through to (st-88o, st-x66); reading from
+// counts.json instead trades that internal agreement for agreement with the status
+// line, the coherence dk asked for. A failed read degrades to zero counts rather
+// than failing the whole page — the pulse is ambient, not load-bearing.
 func (s *Server) computePulse(ctx context.Context, src IssueSource, repo registry.Repo) Pulse {
+	if b, ok := s.counts.Lookup(repo.Path); ok {
+		return Pulse{
+			Waiting:    b.Waiting,
+			Open:       b.Open,
+			InProgress: b.InProgress,
+			Blocked:    b.Blocked,
+			Closed:     b.Closed,
+			Deferred:   b.Deferred,
+		}
+	}
 	var p Pulse
 	if st, err := src.Stats(ctx); err == nil {
 		// bd stats seeds the degraded (List-failed) baseline for the raw status counts.
