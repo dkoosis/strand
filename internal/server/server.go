@@ -1878,7 +1878,7 @@ func (s *Server) synFor(repo registry.Repo) strand.Synthesis {
 	syn := s.syn
 	syn.Project = repo.Name
 	syn.NorthStar = s.northStarFor(repo)
-	syn.NorthStarPath = filepath.Join(repo.Path, strandmd.NorthStarMiniFile)
+	syn.NorthStarPath = filepath.Join(repo.Path, strandmd.NorthStarFile)
 	syn.JTBD = jtbd.Load(repo.Path)
 	return syn
 }
@@ -1887,13 +1887,13 @@ func (s *Server) synFor(repo registry.Repo) strand.Synthesis {
 // synFor does — the keyed Suggest path wants the masthead line only, not a
 // docs/jtbd.md read on every call (JTBD stays inline-cited, never fetched). A
 // non-empty s.syn.NorthStar is the --northstar flag and wins; with no flag the
-// active repo's canonical north-star-mini.md is read (decision nug 952acad4aca2).
-// Missing/empty → "".
+// active repo's NORTH_STAR.md ★ line is read (st-y0a — one destination doc,
+// shared with the wrap SessionStart hook). Missing file or no ★ line → "".
 func (s *Server) northStarFor(repo registry.Repo) string {
 	if s.syn.NorthStar != "" {
 		return s.syn.NorthStar
 	}
-	return strandmd.NorthStarMini(repo.Path)
+	return strandmd.NorthStar(repo.Path)
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {

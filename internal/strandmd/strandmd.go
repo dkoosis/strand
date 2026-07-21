@@ -157,7 +157,7 @@ func expandImports(text, baseDir string) string {
 		}
 		// G703: the @-import target is a path written in the user's own STRAND.md
 		// (user-managed config, like CLAUDE.md @-imports). Pointing at a file
-		// outside the repo — the global ~/.strand, a shared north-star-mini — is
+		// outside the repo — the global ~/.strand, a shared NORTH_STAR.md — is
 		// the intended use, not untrusted input.
 		b, err := os.ReadFile(target) //nolint:gosec // G703: user-managed config path, see comment above
 
@@ -232,50 +232,53 @@ func h2Name(ln string) string {
 	return strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(ln), "#"))
 }
 
-// NorthStarMiniFile is the repo-root file strand reads the masthead's one-line
-// North Star from.
-const NorthStarMiniFile = "north-star-mini.md"
+// NorthStarFile is the repo-root file strand reads the masthead's North Star
+// from — the same NORTH_STAR.md the wrap SessionStart hook greps its ★ line
+// from (st-y0a: one destination doc, every reader on the same file; supersedes
+// the north-star-mini.md of decision nug 952acad4aca2).
+const NorthStarFile = "NORTH_STAR.md"
 
-// NorthStarMini returns the North Star reminder for a repo, read from
-// north-star-mini.md at the repo root (decision nug 952acad4aca2). The file is a
-// few curated lines; the masthead renders them verbatim (newlines preserved). It
-// tolerates a leading YAML frontmatter block (the file may be a vault nug) and a
-// Markdown heading marker on the first line. A missing or empty file yields "" so
-// the masthead renders blank instead of crashing (str-d2s).
-func NorthStarMini(repoPath string) string {
+// NorthStar returns the masthead North Star for a repo: the first ★-marked line
+// of NORTH_STAR.md (marker stripped) plus any immediately following lines up to
+// a blank line or heading, newlines preserved. The ★ line is the doc's own
+// TL;DR by convention, so a full north-star doc renders as its one-liner while
+// a multi-line block under the ★ still comes through whole. A missing file or a
+// doc with no ★ line yields "" so the masthead renders its seed hint instead of
+// crashing (str-d2s).
+func NorthStar(repoPath string) string {
 	if repoPath == "" {
 		return ""
 	}
-	b, err := os.ReadFile(filepath.Join(repoPath, NorthStarMiniFile))
+	b, err := os.ReadFile(filepath.Join(repoPath, NorthStarFile))
 	if err != nil {
 		return ""
 	}
-	return northStarBody(string(b))
+	return northStarBlock(string(b))
 }
 
-// northStarBody skips a leading --- frontmatter block and returns the remaining
-// body trimmed, with any Markdown heading marker stripped from the first line.
-// Internal newlines are preserved so a few-line reminder renders as a few lines.
-func northStarBody(s string) string {
+// northStarBlock extracts the ★ block: from the first line whose trimmed form
+// starts with ★ (marker and surrounding whitespace stripped) through the last
+// contiguous non-blank, non-heading line.
+func northStarBlock(s string) string {
 	lines := strings.Split(s, "\n")
-	i := 0
-	if len(lines) > 0 && strings.TrimSpace(lines[0]) == "---" {
-		closed := false
-		for i = 1; i < len(lines); i++ {
-			if strings.TrimSpace(lines[i]) == "---" {
-				closed = true
-				break
-			}
-		}
-		if closed {
-			i++ // skip the closing ---
-		} else {
-			i = 0 // no closing --- → treat the whole file as body, don't slice past the end (would panic)
+	start := -1
+	for i, ln := range lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), "★") {
+			start = i
+			break
 		}
 	}
-	for i < len(lines) && strings.TrimSpace(lines[i]) == "" { // drop leading blanks
-		i++
+	if start == -1 {
+		return ""
 	}
-	body := strings.TrimRight(strings.Join(lines[i:], "\n"), " \t\n")
-	return strings.TrimSpace(strings.TrimLeft(body, "#")) // strip a leading heading marker
+	first := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[start]), "★"))
+	block := []string{first}
+	for _, ln := range lines[start+1:] {
+		t := strings.TrimSpace(ln)
+		if t == "" || strings.HasPrefix(t, "#") {
+			break
+		}
+		block = append(block, t)
+	}
+	return strings.Join(block, "\n")
 }
