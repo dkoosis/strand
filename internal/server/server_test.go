@@ -2901,6 +2901,39 @@ func TestSnapshotCacheStoreMTimeUnreadable(t *testing.T) {
 	}
 }
 
+// TestDoltStoreMTime exercises the real glob path the injected-seam tests mock out
+// (st-69h, CodeRabbit catch): it builds the on-disk layout doltStoreMTime globs for
+// and asserts it finds the manifest's mtime, so a drift in the
+// .beads/embeddeddolt/*/.dolt/noms/manifest convention fails here instead of
+// silently degrading the whole gate to a no-op. A bare directory with no store
+// returns ok=false — the degrade-to-old-behavior signal.
+func TestDoltStoreMTime(t *testing.T) {
+	root := t.TempDir()
+	manifest := filepath.Join(root, ".beads", "embeddeddolt", "demo", ".dolt", "noms", "manifest")
+	if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifest, []byte("root-chunk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(manifest, want, want); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := doltStoreMTime(root)
+	if !ok {
+		t.Fatal("doltStoreMTime returned ok=false for a valid store layout — the glob path has drifted")
+	}
+	if !got.Equal(want) {
+		t.Errorf("doltStoreMTime = %v, want %v", got, want)
+	}
+
+	if _, ok := doltStoreMTime(t.TempDir()); ok {
+		t.Error("doltStoreMTime returned ok=true for a directory with no store — want false")
+	}
+}
+
 // argAwareBD filters its List result by opts.Status the way bd does, so a test
 // can tell a filtered read from the unfiltered (empty-Status) full read — stubBD
 // ignores its opts and can't. Used to prove cachingSource.List doesn't serve the warm
