@@ -2846,6 +2846,61 @@ func TestSnapshotCacheNoTimeExpiry(t *testing.T) {
 	}
 }
 
+// TestSnapshotCacheStoreMTimeGate proves the out-of-band gate (st-69h): a snapshot
+// serves from memory while the Dolt store is unchanged, but the next read drops it
+// once the store's manifest mtime advances past the fetch stamp — the case strand's
+// own writes can't catch (an agent or bare bd editing the same store). The store
+// mtime is a mutable fake injected over storeMTime, so staleness is driven off the
+// seam, not real filesystem time.
+func TestSnapshotCacheStoreMTimeGate(t *testing.T) {
+	src := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
+	cache := newSnapshotCache(func() time.Time { return cacheNow })
+	storeMTime := cacheNow
+	cache.storeMTime = func(string) (time.Time, bool) { return storeMTime, true }
+	cs := &cachingSource{IssueSource: src, cache: cache, repo: "demo"}
+	ctx := context.Background()
+
+	if _, err := cs.List(ctx, bd.ListOpts{}); err != nil { // miss → fetch #1
+		t.Fatalf("List: %v", err)
+	}
+	if _, err := cs.List(ctx, bd.ListOpts{}); err != nil { // store unchanged → memory
+		t.Fatalf("List: %v", err)
+	}
+	if src.listCalls.Load() != 1 {
+		t.Fatalf("List spawned %d times while the store was unchanged, want 1", src.listCalls.Load())
+	}
+
+	storeMTime = storeMTime.Add(time.Second) // an out-of-band write moves the store
+
+	if _, err := cs.List(ctx, bd.ListOpts{}); err != nil { // store moved → miss → fetch #2
+		t.Fatalf("List: %v", err)
+	}
+	if src.listCalls.Load() != 2 {
+		t.Errorf("List spawned %d times after the store moved, want 2 — the mtime gate must re-fetch", src.listCalls.Load())
+	}
+}
+
+// TestSnapshotCacheStoreMTimeUnreadable proves the graceful degrade: when the store
+// mtime can't be read (ok false — a non-bd path, a permissions error), the snapshot
+// stamps a zero storeAt and the gate stays off, so the cache behaves exactly as it
+// did before st-69h — served until an explicit invalidate, never falsely stale.
+func TestSnapshotCacheStoreMTimeUnreadable(t *testing.T) {
+	src := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
+	cache := newSnapshotCache(func() time.Time { return cacheNow })
+	cache.storeMTime = func(string) (time.Time, bool) { return time.Time{}, false }
+	cs := &cachingSource{IssueSource: src, cache: cache, repo: "demo"}
+	ctx := context.Background()
+
+	for range 3 {
+		if _, err := cs.List(ctx, bd.ListOpts{}); err != nil {
+			t.Fatalf("List: %v", err)
+		}
+	}
+	if src.listCalls.Load() != 1 {
+		t.Errorf("List spawned %d times with an unreadable store mtime, want 1 — the gate must stay off", src.listCalls.Load())
+	}
+}
+
 // argAwareBD filters its List result by opts.Status the way bd does, so a test
 // can tell a filtered read from the unfiltered (empty-Status) full read — stubBD
 // ignores its opts and can't. Used to prove cachingSource.List doesn't serve the warm

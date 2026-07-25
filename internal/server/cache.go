@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -29,16 +31,27 @@ import (
 // next tab (str-udl supersedes the original 3s TTL, which punished lingering).
 //
 // Out-of-band staleness — a bd CLI run or another agent editing the same repo's
-// store while strand holds a snapshot — is the one case writes can't catch. With
-// no clock to age the snapshot out, a plain browser reload would serve the stale
-// view, so the mitigation is the explicit refresh control (POST /refresh →
-// invalidate → reload): out-of-band edits surface on a deliberate click, with a
-// "data as of HH:MM" readout so the staleness window is visible.
+// store while strand holds a snapshot — is the case strand's own writes can't
+// catch. The gate for it is storeMTime: putList stamps the snapshot with the Dolt
+// store's manifest mtime at fetch time, and every read drops the snapshot when the
+// store has moved since (freshEntryLocked). Dolt rewrites the noms manifest on
+// every commit, so any writer — bd CLI, another agent, a /team run — advances that
+// mtime and the next view re-fetches. This is view-triggered, not a clock: one
+// stat() per read (~µs), and the bd spawn is paid only when the store actually
+// changed (st-69h). The explicit refresh control (POST /refresh) and the "data as
+// of HH:MM" readout remain the manual backstop.
+//
+// storeMTime is the seam over that stat: it reports the repo's store mtime, or ok
+// false when it can't be read. A false — or a snapshot stamped with a zero mtime
+// (the stat failed at fetch) — degrades to the old behavior: serve until a write
+// invalidates, never falsely stale. Tests inject a fake so staleness is driven off
+// the seam, not real filesystem time (which wouldn't align with the fixed clock).
 type snapshotCache struct {
-	mu      sync.Mutex
-	now     func() time.Time
-	gen     uint64
-	entries map[string]*snapshot
+	mu         sync.Mutex
+	now        func() time.Time
+	storeMTime func(repo string) (time.Time, bool)
+	gen        uint64
+	entries    map[string]*snapshot
 }
 
 // snapshot is one repo's cached reads: the full `list --limit 0` result and the
@@ -54,6 +67,7 @@ type snapshotCache struct {
 // fixed-clock tests still distinguish versions even when every `at` is equal.
 type snapshot struct {
 	at      time.Time
+	storeAt time.Time // Dolt store mtime observed at fetch; zero when the stat failed (then never gates)
 	gen     uint64
 	list    []bd.Issue
 	deps    []bd.DepEdge
@@ -63,20 +77,59 @@ type snapshot struct {
 }
 
 func newSnapshotCache(now func() time.Time) *snapshotCache {
-	return &snapshotCache{now: now, entries: map[string]*snapshot{}}
+	return &snapshotCache{now: now, storeMTime: doltStoreMTime, entries: map[string]*snapshot{}}
 }
 
-// entryLocked returns the repo's snapshot if present, else nil (a miss). A
-// snapshot lives until a write invalidates it or the repo switches — there is no
-// time-based expiry. The usage model is "open a beadbase, look at each view", so
-// a snapshot must survive a long look without re-paying the bd spawn; out-of-band
-// edits surface through the explicit refresh control (str-udl), not a silent
-// clock. The caller MUST hold c.mu: putDeps mutates an entry's deps/depsOK in
-// place, so a reader that escapes the lock with the *snapshot races that write
-// (strand-4sd). The public accessors below copy the fields they need out under
-// the lock and never hand the pointer to a handler.
-func (c *snapshotCache) entryLocked(repo string) *snapshot {
-	return c.entries[repo]
+// doltStoreMTime reports the newest mtime of the repo's Dolt noms manifest, the
+// file Dolt rewrites on every commit — strand's out-of-band change signal. The
+// glob covers the (single) embedded database under the workspace without strand
+// having to know its name. ok is false when nothing matches or every stat fails
+// (a non-bd path, a permissions error): the caller then treats the snapshot as
+// never-stale, so a missing signal degrades to the pre-gate behavior rather than
+// forcing a re-fetch every read. Read-only — it stats, never opens, the store, so
+// it stays inside the "never touch Dolt directly" contract.
+func doltStoreMTime(repoPath string) (time.Time, bool) {
+	matches, _ := filepath.Glob(filepath.Join(repoPath, ".beads", "embeddeddolt", "*", ".dolt", "noms", "manifest"))
+	var newest time.Time
+	found := false
+	for _, m := range matches {
+		fi, err := os.Stat(m)
+		if err != nil {
+			continue
+		}
+		found = true
+		if fi.ModTime().After(newest) {
+			newest = fi.ModTime()
+		}
+	}
+	return newest, found
+}
+
+// freshEntryLocked returns the repo's snapshot if present and still fresh, else nil
+// (a miss). A snapshot has no time-based expiry: it lives until strand's own write
+// invalidates it, the repo switches, or the Dolt store moves under it. That last
+// case is the out-of-band gate — if the store's manifest mtime has advanced past
+// the mtime stamped at fetch, some other writer changed the beads and the snapshot
+// is dropped so the next read re-fetches bd's truth (st-69h). A zero storeAt (the
+// stat failed at fetch) or a storeMTime that can't read now disables the gate, so a
+// missing signal degrades to "serve until a write invalidates" rather than churning.
+//
+// The caller MUST hold c.mu: putDeps mutates an entry's deps/depsOK in place, so a
+// reader that escapes the lock with the *snapshot races that write (strand-4sd). The
+// public accessors below copy the fields they need out under the lock and never hand
+// the pointer to a handler.
+func (c *snapshotCache) freshEntryLocked(repo string) *snapshot {
+	e := c.entries[repo]
+	if e == nil {
+		return nil
+	}
+	if !e.storeAt.IsZero() && c.storeMTime != nil {
+		if mt, ok := c.storeMTime(repo); ok && mt.After(e.storeAt) {
+			delete(c.entries, repo)
+			return nil
+		}
+	}
+	return e
 }
 
 // stampedAt reports when the repo's snapshot was fetched, for the "data as of …"
@@ -84,7 +137,7 @@ func (c *snapshotCache) entryLocked(repo string) *snapshot {
 func (c *snapshotCache) stampedAt(repo string) (time.Time, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if e, ok := c.entries[repo]; ok {
+	if e := c.freshEntryLocked(repo); e != nil {
 		return e.at, true
 	}
 	return time.Time{}, false
@@ -96,7 +149,7 @@ func (c *snapshotCache) stampedAt(repo string) (time.Time, bool) {
 func (c *snapshotCache) liveList(repo string) ([]bd.Issue, uint64, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if e := c.entryLocked(repo); e != nil {
+	if e := c.freshEntryLocked(repo); e != nil {
 		return e.list, e.gen, true
 	}
 	return nil, 0, false
@@ -109,7 +162,7 @@ func (c *snapshotCache) liveList(repo string) ([]bd.Issue, uint64, bool) {
 func (c *snapshotCache) liveDeps(repo string) ([]bd.DepEdge, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if e := c.entryLocked(repo); e != nil && e.depsOK {
+	if e := c.freshEntryLocked(repo); e != nil && e.depsOK {
 		return e.deps, true
 	}
 	return nil, false
@@ -121,7 +174,7 @@ func (c *snapshotCache) liveDeps(repo string) ([]bd.DepEdge, bool) {
 func (c *snapshotCache) liveStats(repo string) (bd.Stats, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if e := c.entryLocked(repo); e != nil && e.statsOK {
+	if e := c.freshEntryLocked(repo); e != nil && e.statsOK {
 		return e.stats, true
 	}
 	return bd.Stats{}, false
@@ -135,12 +188,21 @@ func (c *snapshotCache) liveStats(repo string) (bd.Stats, bool) {
 // valid, immutable view. Callers must treat the returned slices as read-only.
 
 // putList records a fresh List result, opening the repo's snapshot and stamping it
-// with the fetch time the TTL ages against.
+// with both the wall time (the "data as of" readout) and the Dolt store mtime the
+// out-of-band gate ages against. A storeMTime that can't read now leaves storeAt
+// zero, which disables the gate for this entry (freshEntryLocked) — the same
+// degrade-to-old-behavior a missing signal gets everywhere else.
 func (c *snapshotCache) putList(repo string, list []bd.Issue) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.gen++
-	c.entries[repo] = &snapshot{at: c.now(), gen: c.gen, list: list}
+	var storeAt time.Time
+	if c.storeMTime != nil {
+		if mt, ok := c.storeMTime(repo); ok {
+			storeAt = mt
+		}
+	}
+	c.entries[repo] = &snapshot{at: c.now(), storeAt: storeAt, gen: c.gen, list: list}
 }
 
 // putDeps records the repo-wide Deps result into the snapshot it was fetched for,
