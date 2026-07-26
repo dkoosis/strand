@@ -176,6 +176,32 @@ func TestDecodeStatsWireShape(t *testing.T) {
 	})
 }
 
+// TestDecodeEpicStatusWireShape pins the `bd epic status --json` contract the
+// station derivation reads: an array of {epic:{id,status}, total_children,
+// closed_children} rows. Field names must match the EpicStatus json tags exactly.
+func TestDecodeEpicStatusWireShape(t *testing.T) {
+	const payload = `[
+		{"epic":{"id":"st-2fy","status":"open"},"total_children":6,"closed_children":2},
+		{"epic":{"id":"st-alg","status":"closed"},"total_children":4,"closed_children":4}
+	]`
+	var rows []EpicStatus
+	if err := json.Unmarshal([]byte(payload), &rows); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("decoded %d rows, want 2", len(rows))
+	}
+	if rows[0].Epic.ID != "st-2fy" || rows[0].Epic.Status != StatusOpen {
+		t.Errorf("row0 epic mismatch: got %+v", rows[0].Epic)
+	}
+	if rows[0].TotalChildren != 6 || rows[0].ClosedChildren != 2 {
+		t.Errorf("row0 children mismatch: got total=%d closed=%d", rows[0].TotalChildren, rows[0].ClosedChildren)
+	}
+	if rows[1].Epic.Status != StatusClosed {
+		t.Errorf("row1 status mismatch: got %q", rows[1].Epic.Status)
+	}
+}
+
 // TestRankPresentZero guards the present-zero case: a metadata rank of exactly 0
 // must return (0, true), not (0, false). The existing test suite covers absent,
 // string-encoded, and garbage values but not float64(0). This gap is the exact
