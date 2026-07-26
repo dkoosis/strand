@@ -2574,11 +2574,27 @@ func TestLabelAddError(t *testing.T) {
 // source again. Writes delegate to the embedded stub.
 type countingBD struct {
 	stubBD
-	listCalls atomic.Int64
-	depsCalls atomic.Int64
+	listCalls   atomic.Int64
+	depsCalls   atomic.Int64
+	closedCalls atomic.Int64
 }
 
+// List counts the unfiltered snapshot read (listCalls) and the `--status closed`
+// read (closedCalls) separately, so the closed-fold tests can prove the closed
+// slice is fetched once and served warm. The status read models bd truthfully —
+// it returns only the closed subset — while the unfiltered read delegates to the
+// stub (which, like the real `bd list`, the fixtures keep closed-free).
 func (c *countingBD) List(ctx context.Context, opts bd.ListOpts) ([]bd.Issue, error) {
+	if opts.Status == bd.StatusClosed {
+		c.closedCalls.Add(1)
+		var closed []bd.Issue
+		for i := range c.issues {
+			if c.issues[i].Status == bd.StatusClosed {
+				closed = append(closed, c.issues[i])
+			}
+		}
+		return closed, c.listErr
+	}
 	c.listCalls.Add(1)
 	return c.stubBD.List(ctx, opts)
 }
@@ -2810,6 +2826,86 @@ func TestSnapshotCachePutDepsVersionSkew(t *testing.T) {
 	c.putDeps("demo", genV2, []bd.DepEdge{{IssueID: "a", DependsOnID: "b"}})
 	if _, ok := c.liveDeps("demo"); !ok {
 		t.Error("putDeps for the live snapshot was wrongly dropped")
+	}
+}
+
+// TestSnapshotCachePutClosedVersionSkew proves putClosed binds the closed set to
+// the snapshot generation it was fetched for, mirroring putDeps: a closed fetch
+// that reads the gen from snapshot V1, then races a putList that publishes V2, must
+// NOT staple V1's closed slice onto V2. gen 0 (a closed fetch before any list) never
+// binds either.
+func TestSnapshotCachePutClosedVersionSkew(t *testing.T) {
+	c := newSnapshotCache(func() time.Time { return cacheNow })
+
+	c.putList("demo", []bd.Issue{{ID: "a"}}) // V1
+	_, genV1, ok := c.liveList("demo")
+	if !ok {
+		t.Fatal("V1 not live after putList")
+	}
+
+	c.putList("demo", []bd.Issue{{ID: "a"}, {ID: "b"}}) // V2 replaces V1
+
+	// The late putClosed carries V1's gen — it must be dropped, not written onto V2.
+	c.putClosed("demo", genV1, []bd.Issue{{ID: "stale", Status: bd.StatusClosed}})
+	if _, ok := c.liveClosed("demo"); ok {
+		t.Error("putClosed stapled stale V1 closed onto V2 — version-skew guard failed")
+	}
+
+	// gen 0 never matches a live snapshot.
+	c.putClosed("demo", 0, []bd.Issue{{ID: "z", Status: bd.StatusClosed}})
+	if _, ok := c.liveClosed("demo"); ok {
+		t.Error("putClosed with gen 0 bound to a live snapshot — must never bind")
+	}
+
+	// A putClosed for the current snapshot (V2's gen) still writes.
+	_, genV2, _ := c.liveList("demo")
+	c.putClosed("demo", genV2, []bd.Issue{{ID: "a", Status: bd.StatusClosed}})
+	if got, ok := c.liveClosed("demo"); !ok || len(got) != 1 {
+		t.Errorf("putClosed for the live snapshot was wrongly dropped: ok=%v len=%d", ok, len(got))
+	}
+
+	// An invalidate drops the closed slice with the rest of the entry.
+	c.invalidate("demo")
+	if _, ok := c.liveClosed("demo"); ok {
+		t.Error("liveClosed served after invalidate — closed must drop with the entry")
+	}
+}
+
+// TestCachingSourceClosedFoldOnce proves the closed set is folded into the snapshot:
+// fetched once through the `--status closed` read, then served from memory until an
+// invalidate (a write) drops it, exactly like the Deps and Stats folds. This is what
+// turns the closed cut from a ~0.5s spawn every switch into a warm read.
+func TestCachingSourceClosedFoldOnce(t *testing.T) {
+	src := &countingBD{stubBD: stubBD{issues: []bd.Issue{
+		{ID: "live", Status: bd.StatusOpen},
+		{ID: "done-1", Status: bd.StatusClosed},
+		{ID: "done-2", Status: bd.StatusClosed},
+	}}}
+	cache := newSnapshotCache(func() time.Time { return cacheNow })
+	cs := &cachingSource{IssueSource: src, cache: cache, repo: "demo"}
+	ctx := context.Background()
+
+	got, err := cs.Closed(ctx) // cold: warms the list, then fetches closed → 1
+	if err != nil {
+		t.Fatalf("Closed: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("cold Closed returned %d beads, want 2 closed", len(got))
+	}
+	if _, err := cs.Closed(ctx); err != nil { // warm: served from the snapshot
+		t.Fatalf("Closed: %v", err)
+	}
+	if src.closedCalls.Load() != 1 {
+		t.Fatalf("closed fetched %d times, want 1 — the fold must serve warm", src.closedCalls.Load())
+	}
+
+	cache.invalidate("demo") // a write drops the snapshot
+
+	if _, err := cs.Closed(ctx); err != nil { // miss → fetch #2
+		t.Fatalf("Closed: %v", err)
+	}
+	if src.closedCalls.Load() != 2 {
+		t.Errorf("closed fetched %d times after invalidate, want 2 — invalidate must re-fetch", src.closedCalls.Load())
 	}
 }
 

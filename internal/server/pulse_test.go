@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
 )
@@ -74,8 +75,9 @@ func TestPulseZeroCellDisabled(t *testing.T) {
 	}
 }
 
-// TestPulseCutsListBeads checks each cut lists exactly its status. The closed and
-// deferred cuts prove the uncached --status path surfaces beads the strand drops.
+// TestPulseCutsListBeads checks each cut lists exactly its status. The closed cut
+// surfaces beads the strand drops via the snapshot's folded closed set; the deferred
+// cut surfaces them straight from the open-list snapshot.
 func TestPulseCutsListBeads(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: pulseIssues})
 
@@ -113,6 +115,24 @@ func TestPulseCutsListBeads(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestPulseDeferredServedFromSnapshot proves the deferred cut reads the open-list
+// snapshot rather than paying a `--status` spawn: deferred beads already ride
+// `bd list --limit 0`, so the cut filters memory (st-2fy.1). closedCalls counts the
+// only `--status` read this source serves; a deferred request must leave it at zero.
+func TestPulseDeferredServedFromSnapshot(t *testing.T) {
+	src := &countingBD{stubBD: stubBD{issues: pulseIssues}}
+	srv := newTestServer(t, src)
+	srv.now = func() time.Time { return cacheNow }
+
+	body := do(t, srv, "/list?filter=deferred").Body.String()
+	if !strings.Contains(body, "Parked task") {
+		t.Errorf("deferred cut missing the parked bead:\n%s", body)
+	}
+	if src.closedCalls.Load() != 0 {
+		t.Errorf("deferred cut issued %d --status fetches, want 0 — deferred rides the snapshot", src.closedCalls.Load())
 	}
 }
 

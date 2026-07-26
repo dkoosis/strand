@@ -66,14 +66,16 @@ type snapshotCache struct {
 // it's about to write deps into (see putDeps). It is clock-independent, so the
 // fixed-clock tests still distinguish versions even when every `at` is equal.
 type snapshot struct {
-	at      time.Time
-	storeAt time.Time // Dolt store mtime observed at fetch; zero when the stat failed (then never gates)
-	gen     uint64
-	list    []bd.Issue
-	deps    []bd.DepEdge
-	depsOK  bool
-	stats   bd.Stats
-	statsOK bool
+	at       time.Time
+	storeAt  time.Time // Dolt store mtime observed at fetch; zero when the stat failed (then never gates)
+	gen      uint64
+	list     []bd.Issue
+	deps     []bd.DepEdge
+	depsOK   bool
+	stats    bd.Stats
+	statsOK  bool
+	closed   []bd.Issue // the `--status closed` set bd's default list omits; folded lazily
+	closedOK bool
 }
 
 func newSnapshotCache(now func() time.Time) *snapshotCache {
@@ -180,6 +182,21 @@ func (c *snapshotCache) liveStats(repo string) (bd.Stats, bool) {
 	return bd.Stats{}, false
 }
 
+// liveClosed returns the repo's closed beads and true only when a live snapshot
+// already holds them (closedOK). bd's default `list` omits closed, so the closed
+// cut fetches this set once and folds it here; every later closed view hits memory
+// until a write or the mtime gate drops the entry. Read under the lock putClosed
+// writes under, so the closed/closedOK fields never race; the returned slice is the
+// shared read-only view (see the contract above putList).
+func (c *snapshotCache) liveClosed(repo string) ([]bd.Issue, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e := c.freshEntryLocked(repo); e != nil && e.closedOK {
+		return e.closed, true
+	}
+	return nil, false
+}
+
 // Shared-view contract (matches registry.Registry.Repos): a snapshot's list and
 // deps slices are published once and never mutated in place. liveList/liveDeps
 // hand the same backing array to every concurrent handler, which read it without
@@ -233,6 +250,20 @@ func (c *snapshotCache) putStats(repo string, gen uint64, stats bd.Stats) {
 	}
 }
 
+// putClosed records the repo's closed beads into the snapshot they were fetched for,
+// identified by gen, mirroring putDeps/putStats: it writes only when the current
+// snapshot is still that one, so an invalidate or a fresh putList between the read and
+// here drops the stale set rather than stapling it onto a newer list. gen 0 (a closed
+// fetch before any list) never matches a live snapshot, so the set simply isn't cached
+// until a list is warm.
+func (c *snapshotCache) putClosed(repo string, gen uint64, closed []bd.Issue) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.entries[repo]; ok && e.gen == gen {
+		e.closed, e.closedOK = closed, true
+	}
+}
+
 // invalidate drops a repo's snapshot. Every successful write calls this so the
 // next read re-fetches bd's truth.
 func (c *snapshotCache) invalidate(repo string) {
@@ -258,9 +289,9 @@ type cachingSource struct {
 // the full list. The discriminator keys on the whole opts, not one field, so it stays
 // the invariant ("only the full read is cacheable") even if ListOpts grows another
 // filter — no future field can drift a filtered read onto the open snapshot (st-4g0,
-// st-57y). Most views read unfiltered through this source; the one filtered read path
-// (pulseListView's external cut) relies on this pass-through, so its status slice never
-// serves from nor poisons the open snapshot.
+// st-57y). Most views read unfiltered through this source; the closed fold's fallback
+// `--status closed` read (Closed, for a non-caching source) relies on this pass-through,
+// so its status slice never serves from nor poisons the open snapshot.
 func (c *cachingSource) List(ctx context.Context, opts bd.ListOpts) ([]bd.Issue, error) {
 	if opts != (bd.ListOpts{}) {
 		return c.IssueSource.List(ctx, opts)
@@ -304,6 +335,31 @@ func (c *cachingSource) Stats(ctx context.Context) (bd.Stats, error) {
 	}
 	c.cache.putStats(c.repo, gen, stats)
 	return stats, nil
+}
+
+// Closed serves the repo's closed beads from the snapshot, fetching the `--status
+// closed` set once on a miss and binding it to the current snapshot's gen (like Deps
+// and Stats). bd's default `list` omits closed, so this is the one read that surfaces
+// them; folding it here turns the closed cut from a ~0.5s spawn on every switch into a
+// warm read. It warms the open-list snapshot first when cold so the closed set has a
+// live gen to bind to — a closed-first request (a `?filter=closed` deep-link) then
+// caches instead of re-fetching every switch, and that warm list serves the other
+// views for free. The set drops on the same invalidate (a write) and the same mtime
+// gate as every other fold.
+func (c *cachingSource) Closed(ctx context.Context) ([]bd.Issue, error) {
+	if closed, ok := c.cache.liveClosed(c.repo); ok {
+		return closed, nil
+	}
+	if _, err := c.List(ctx, bd.ListOpts{}); err != nil {
+		return nil, err
+	}
+	_, gen, _ := c.cache.liveList(c.repo)
+	closed, err := c.IssueSource.List(ctx, bd.ListOpts{Status: bd.StatusClosed})
+	if err != nil {
+		return nil, err
+	}
+	c.cache.putClosed(c.repo, gen, closed)
+	return closed, nil
 }
 
 func (c *cachingSource) Deps(ctx context.Context, ids ...string) ([]bd.DepEdge, error) {
