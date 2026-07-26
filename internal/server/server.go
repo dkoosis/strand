@@ -88,10 +88,14 @@ type readSource interface {
 }
 
 // Compile-time proof the fat source and its caching wrapper still satisfy the
-// narrow read seam, so the read helpers accept whatever source() hands back.
+// narrow read seam, so the read helpers accept whatever source() hands back. The
+// caching wrapper also satisfies closedReader, so pulseListView's closed cut always
+// takes the folded path in production — a signature drift breaks the build here, not
+// just the runtime type-assertion.
 var (
-	_ readSource = (IssueSource)(nil)
-	_ readSource = (*cachingSource)(nil)
+	_ readSource   = (IssueSource)(nil)
+	_ readSource   = (*cachingSource)(nil)
+	_ closedReader = (*cachingSource)(nil)
 )
 
 // SourceFunc builds the bd-backed issue source for a repo. It is the seam the
@@ -593,19 +597,27 @@ func (s *Server) searchListView(ctx context.Context, src IssueSource, query stri
 }
 
 // pulseCut is one masthead-pulse drill-down: the pane title and the predicate
-// selecting its beads. external marks the cuts whose beads live outside the live
-// snapshot (closed/deferred) — they need an uncached `--status` fetch because the
-// cachingSource serves only the open-list snapshot and the strand drops them.
+// selecting its beads. closed marks the one cut whose beads bd's default list omits
+// (`bd list` drops closed): it reads the snapshot's folded closed set instead of the
+// open list. Deferred needs no such flag — deferred beads already ride the open-list
+// snapshot, so its cut filters memory like the live cuts.
 type pulseCut struct {
-	title    string
-	status   bd.Status // the --status to fetch for an external cut; "" for live cuts
-	external bool
+	title  string
+	closed bool // read the snapshot's folded closed set, not the open list
 	// lane marks a derived-trio cut (○/●/◆): pulseBeads lists exactly the beads
 	// insight.Lanes puts in this lane, so the list agrees with the masthead count by
 	// construction (st-88o, st-x66). LaneNone means a plain status cut (in_progress /
 	// closed / deferred), which lists by match.
 	lane  insight.Lane
 	match func(*bd.Issue) bool
+}
+
+// closedReader is the narrow seam pulseListView uses to read the repo's closed beads
+// from the snapshot fold: the caching wrapper satisfies it; any other source falls
+// back to an uncached `--status closed` read. A narrow interface (like readSource)
+// keeps Closed off the fat 18-method IssueSource and out of every test fake.
+type closedReader interface {
+	Closed(ctx context.Context) ([]bd.Issue, error)
 }
 
 // pulseCutFor maps a filter token to its cut, or reports false for any other
@@ -625,27 +637,32 @@ func pulseCutFor(filter string) (pulseCut, bool) {
 	case "blocked":
 		return pulseCut{title: "Blocked", lane: insight.LaneBlocked}, true
 	case "closed":
-		return pulseCut{title: "Closed", status: bd.StatusClosed, external: true, match: statusIs(bd.StatusClosed)}, true
+		return pulseCut{title: "Closed", closed: true, match: statusIs(bd.StatusClosed)}, true
 	case "deferred":
-		return pulseCut{title: "Deferred", status: bd.StatusDeferred, external: true, match: statusIs(bd.StatusDeferred)}, true
+		return pulseCut{title: "Deferred", match: statusIs(bd.StatusDeferred)}, true
 	}
 	return pulseCut{}, false
 }
 
-// pulseListView gathers a status cut's beads into a flat list scope. Live cuts
-// (and waiting) read the cached open snapshot; an external cut fetches its status
-// through the same source — the caching wrapper passes a filtered read (opts.Status
-// set) straight through to bd uncached, so the status slice never serves or poisons
-// the open snapshot. The match predicate is applied in both cases,
-// so the cut is correct even when the source returns an unfiltered list.
+// pulseListView gathers a status cut's beads into a flat list scope. Every cut but
+// closed reads the cached open snapshot (deferred beads ride it too); the closed cut
+// reads the snapshot's folded closed set through the caching wrapper (closedReader),
+// falling back to an uncached `--status closed` read for any source that isn't the
+// wrapper. The match predicate is applied in every case (pulseBeads), so the cut is
+// correct even when the source returns an unfiltered list.
 func (s *Server) pulseListView(ctx context.Context, src IssueSource, cut pulseCut) (listView, error) {
 	var (
 		issues []bd.Issue
 		err    error
 	)
-	if cut.external {
-		issues, err = src.List(ctx, bd.ListOpts{Status: cut.status})
-	} else {
+	switch {
+	case cut.closed:
+		if cr, ok := src.(closedReader); ok {
+			issues, err = cr.Closed(ctx)
+		} else {
+			issues, err = src.List(ctx, bd.ListOpts{Status: bd.StatusClosed})
+		}
+	default:
 		issues, err = src.List(ctx, bd.ListOpts{})
 	}
 	if err != nil {
