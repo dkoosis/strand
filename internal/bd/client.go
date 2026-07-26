@@ -237,6 +237,40 @@ func (c *Client) Stats(ctx context.Context) (Stats, error) {
 	return resp.Summary, nil
 }
 
+// EpicStatus mirrors one row of `bd epic status --json`: an epic and its child
+// roll-up. strand's station derivation reads it to find the first roadmap epic
+// still in flight and its percent-done. Fields bd omits stay zero.
+type EpicStatus struct {
+	Epic           EpicRef `json:"epic"`
+	TotalChildren  int     `json:"total_children"`
+	ClosedChildren int     `json:"closed_children"`
+}
+
+// EpicRef is the epic identity inside an EpicStatus row.
+type EpicRef struct {
+	ID     string `json:"id"`
+	Status Status `json:"status"`
+}
+
+// EpicStatus returns every epic's child roll-up from `bd epic status --json`, the
+// read strand's station bar derives phase progress from. An empty repo (bd emits
+// `[]`) yields nil, not an error.
+func (c *Client) EpicStatus(ctx context.Context) ([]EpicStatus, error) {
+	out, err := c.run(ctx, "epic", "status", "--json")
+	if err != nil {
+		return nil, err
+	}
+	trimmed := bytes.TrimSpace(out)
+	if len(trimmed) == 0 || string(trimmed) == "[]" {
+		return nil, nil
+	}
+	var rows []EpicStatus
+	if err := json.Unmarshal(trimmed, &rows); err != nil {
+		return nil, fmt.Errorf("parse bd epic status: %w", err)
+	}
+	return rows, nil
+}
+
 // Show returns the full record for one issue ID.
 func (c *Client) Show(ctx context.Context, id string) (*Issue, error) {
 	out, err := c.run(ctx, "show", id, "--json")

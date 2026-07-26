@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
+	"github.com/dkoosis/strand/internal/counts"
 	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/internal/server"
 	"github.com/dkoosis/strand/internal/strand"
@@ -26,6 +27,16 @@ import (
 var Version = "dev"
 
 func main() {
+	// `strand counts [...]` derives the shared bead-count cache (counts.json) off the
+	// render path and exits — the launchd agent's entry point. It's a subcommand, not
+	// a flag, so it must branch before the server's flag.Parse claims the args.
+	if len(os.Args) > 1 && os.Args[1] == "counts" {
+		if err := counts.Run(os.Args[2:]); err != nil {
+			log.Fatalf("strand counts: %v", err)
+		}
+		return
+	}
+
 	addr := flag.String("addr", "127.0.0.1:7777", "address to listen on")
 	dir := flag.String("dir", "", "seed this beads workspace into the registry and make it active")
 	bin := flag.String("bd", "bd", "path to the bd binary")

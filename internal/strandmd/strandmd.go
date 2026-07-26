@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -254,6 +255,64 @@ func NorthStar(repoPath string) string {
 		return ""
 	}
 	return northStarBlock(string(b))
+}
+
+// Roadmap returns the epic ids listed in NORTH_STAR.md's `## roadmap` section, in
+// route order — the same numbered-line convention the wrap SessionStart hook and
+// the bd-counts refresher parse (epic id = the first token after the number). It
+// is decision-owned route order, not status; strand's station bar walks it against
+// the live epic DAG to find the current phase. A missing file or section yields nil.
+func Roadmap(repoPath string) []string {
+	if repoPath == "" {
+		return nil
+	}
+	b, err := os.ReadFile(filepath.Join(repoPath, NorthStarFile))
+	if err != nil {
+		return nil
+	}
+	return roadmapIDs(string(b))
+}
+
+// roadmapIDs scans the `## roadmap` section for numbered lines (`N. <epic-id> …`)
+// and returns each line's epic id, in order. It reads only within the section: the
+// scan starts after the `## roadmap` heading and stops at the next level-2 heading.
+func roadmapIDs(s string) []string {
+	var ids []string
+	inSection := false
+	for ln := range strings.SplitSeq(s, "\n") {
+		t := strings.TrimSpace(ln)
+		switch {
+		case !inSection:
+			if isH2(t) && strings.EqualFold(h2Name(t), "roadmap") {
+				inSection = true
+			}
+		case isH2(t):
+			return ids // next heading ends the section
+		default:
+			if id, ok := numberedEpicID(t); ok {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
+}
+
+// numberedEpicID pulls the epic id from a roadmap line of the form `N. <id> — …`:
+// a leading number, a dot, then the id as the next whitespace-delimited token. Any
+// line that isn't numbered (prose, blank) yields ok false.
+func numberedEpicID(line string) (string, bool) {
+	dot := strings.IndexByte(line, '.')
+	if dot <= 0 {
+		return "", false
+	}
+	if _, err := strconv.Atoi(line[:dot]); err != nil {
+		return "", false
+	}
+	rest := strings.Fields(line[dot+1:])
+	if len(rest) == 0 {
+		return "", false
+	}
+	return rest[0], true
 }
 
 // northStarBlock extracts the ★ block: from the first line whose trimmed form
