@@ -2,10 +2,14 @@ package counts
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/dkoosis/strand/internal/bd"
 )
+
+// errEpicStatusBoom is a static sentinel for the EpicStatus-failure fixture (err113).
+var errEpicStatusBoom = errors.New("bd epic status: boom")
 
 // TestLaneCountsMatchesInsightPartition is the 5-vs-7 repro: the shell's
 // `ready ∧ label=human` missed two ◆ beads — a review_needed open bead and a
@@ -74,11 +78,12 @@ func TestStation(t *testing.T) {
 
 // fakeSource is a canned bd read surface for computeRow — no subprocess, no repo.
 type fakeSource struct {
-	issues []bd.Issue
-	deps   []bd.DepEdge
-	stats  bd.Stats
-	epics  []bd.EpicStatus
-	err    error
+	issues   []bd.Issue
+	deps     []bd.DepEdge
+	stats    bd.Stats
+	epics    []bd.EpicStatus
+	err      error
+	epicsErr error
 }
 
 func (f *fakeSource) List(context.Context, bd.ListOpts) ([]bd.Issue, error) {
@@ -86,7 +91,9 @@ func (f *fakeSource) List(context.Context, bd.ListOpts) ([]bd.Issue, error) {
 }
 func (f *fakeSource) Deps(context.Context, ...string) ([]bd.DepEdge, error) { return f.deps, nil }
 func (f *fakeSource) Stats(context.Context) (bd.Stats, error)               { return f.stats, nil }
-func (f *fakeSource) EpicStatus(context.Context) ([]bd.EpicStatus, error)   { return f.epics, nil }
+func (f *fakeSource) EpicStatus(context.Context) ([]bd.EpicStatus, error) {
+	return f.epics, f.epicsErr
+}
 
 // TestComputeRowAssemblesBuckets pins the full row: lane counts from insight, bw/bcl/
 // bdf straight from Stats (bw is the raw in_progress total, overlapping ◆). The repo
@@ -101,7 +108,7 @@ func TestComputeRowAssemblesBuckets(t *testing.T) {
 		},
 		stats: bd.Stats{InProgress: 1, Closed: 42, Deferred: 3},
 	}
-	row, err := computeRow(context.Background(), src, "/tmp/not-a-repo-xyz")
+	row, err := computeRow(context.Background(), src, "/tmp/not-a-repo-xyz", "", nil)
 	if err != nil {
 		t.Fatalf("computeRow: %v", err)
 	}
@@ -116,5 +123,43 @@ func TestComputeRowAssemblesBuckets(t *testing.T) {
 	}
 	if row.EID != "" || row.EPct != nil {
 		t.Errorf("station should be empty for a repo with no roadmap: eid=%q epct=%v", row.EID, row.EPct)
+	}
+}
+
+// TestComputeRowStationLastGoodOnEpicStatusFailure is the st-2fy.7 fix: a transient
+// EpicStatus error must NOT blank a station that a prior successful run computed. The
+// buckets already get this last-good treatment from refresh() (a repo whose reads fail
+// keeps its previous row); computeRow now extends the same guarantee to its one
+// best-effort sub-read by taking the prior row and carrying its eid/epct forward on
+// EpicStatus failure, rather than degrading to the empty station.
+func TestComputeRowStationLastGoodOnEpicStatusFailure(t *testing.T) {
+	src := &fakeSource{epicsErr: errEpicStatusBoom}
+	prevPct := 42
+
+	row, err := computeRow(context.Background(), src, "/tmp/not-a-repo-xyz", "st-2fy", &prevPct)
+	if err != nil {
+		t.Fatalf("computeRow: %v", err)
+	}
+	if row.EID != "st-2fy" {
+		t.Errorf("eid = %q, want carried-forward %q", row.EID, "st-2fy")
+	}
+	if row.EPct == nil || *row.EPct != prevPct {
+		t.Errorf("epct = %v, want carried-forward %d", row.EPct, prevPct)
+	}
+}
+
+// TestComputeRowStationClearsOnGenuineEmpty proves the carry-forward is scoped to the
+// EpicStatus *failure* path only: a successful EpicStatus call that legitimately finds
+// no live roadmap epic must still clear a stale prior station, not stick forever.
+func TestComputeRowStationClearsOnGenuineEmpty(t *testing.T) {
+	src := &fakeSource{epics: nil} // succeeds, no epics → station() returns "", nil
+	prevPct := 42
+
+	row, err := computeRow(context.Background(), src, "/tmp/not-a-repo-xyz", "st-2fy", &prevPct)
+	if err != nil {
+		t.Fatalf("computeRow: %v", err)
+	}
+	if row.EID != "" || row.EPct != nil {
+		t.Errorf("eid=%q epct=%v, want empty station — a real result must overwrite a stale prior one", row.EID, row.EPct)
 	}
 }
