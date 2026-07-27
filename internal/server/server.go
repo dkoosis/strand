@@ -518,6 +518,18 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 // handlePulse re-renders just the masthead spread. The page wires it to the
 // refreshList event so an in-app create/edit/close keeps the counts honest
 // without a full reload; with no active repo it renders nothing.
+//
+// It also doubles as the proactive-rebuild trigger (st-2fy.5): st-2fy.4's htmx
+// poll already calls this on a fixed interval for every open landing, so it's
+// the cheapest place to notice an out-of-band bd write (fleet agent, bare bd
+// CLI) without standing up a separate watcher. checkStale peeks the snapshot
+// cache's mtime gate; on a miss the store hasn't moved and nothing else
+// happens. On a hit the entry is already evicted (checkStale's side effect,
+// mirroring the lazy path's own eviction) and a background rebuild is kicked
+// via goBackground, so the snapshot is warm again by the time the user's next
+// filter switch would otherwise pay the cold `bd list` spawn on the request
+// path. computePulse never touches the snapshot cache (it reads counts.json),
+// so this check can't delay the pulse render itself.
 func (s *Server) handlePulse(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
@@ -526,6 +538,13 @@ func (s *Server) handlePulse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, "pulse", s.computePulse(ctx, src, repo))
+	if s.cache.checkStale(repo.Path) {
+		s.goBackground(10*time.Second, func(ctx context.Context) {
+			if _, err := src.List(ctx, bd.ListOpts{}); err != nil {
+				log.Printf("strand: proactive snapshot rebuild for %s: %v", repo.Path, err)
+			}
+		})
+	}
 }
 
 // handleRefresh drops the active repo's snapshot and tells htmx to reload the
