@@ -554,6 +554,19 @@ func TestHomeFilterDeepLink(t *testing.T) {
 	}
 }
 
+// TestPulseBarPollsForOutOfBandWrites pins the st-2fy.4 fix: the masthead pulse
+// bar must poll /pulse on an interval, not just on this tab's own refreshList
+// event or the cold-load re-fetch — otherwise a bd write from outside this tab
+// (CLI, a fleet agent, another tab) never surfaces until reload.
+func TestPulseBarPollsForOutOfBandWrites(t *testing.T) {
+	srv := newTestServer(t, &stubBD{issues: sampleIssues})
+	body := do(t, srv, "/").Body.String()
+
+	if !strings.Contains(body, `hx-trigger="refreshList from:body, load delay:300ms, every 15s"`) {
+		t.Errorf("pulse bar missing the every-15s poll trigger:\n%s", body)
+	}
+}
+
 // TestStrandPageRenders pins the view-centric landing: the page renders the north
 // star, the loud primary view-switcher (Table/Board/Insights tabs), the minimap
 // map with a story per epic carrying its filter identity (data-story, routed to
@@ -1912,6 +1925,83 @@ func TestReopenReflects(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "dot open") {
 		t.Errorf("drawer does not show the reopened status:\n%s", rec.Body.String())
+	}
+}
+
+// TestWriteRefreshesCounts: a successful write through writeAndRefresh
+// (claim/close/reopen/comment/edit/dep/label) kicks off exactly one counts
+// refresh for the active repo, so the masthead's next poll and the status line
+// catch up with strand's own write (st-2fy.4) instead of waiting on the next
+// mtime-triggered launchd cycle.
+func TestWriteRefreshesCounts(t *testing.T) {
+	srv := newTestServer(t, oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"}))
+	var calls int
+	var gotRepo registry.Repo
+	srv.refreshCounts = func(repo registry.Repo) { calls++; gotRepo = repo }
+
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/claim", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST claim = %d, want 200", rec.Code)
+	}
+	if calls != 1 {
+		t.Errorf("refreshCounts called %d times on a successful write, want 1", calls)
+	}
+	if gotRepo != demoRepo {
+		t.Errorf("refreshCounts got repo %+v, want %+v", gotRepo, demoRepo)
+	}
+}
+
+// TestWriteErrorSkipsCountsRefresh: a write bd rejects must not trigger a
+// counts refresh — nothing changed, so a refresh would just be a wasted spawn.
+func TestWriteErrorSkipsCountsRefresh(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Keep me", Status: "open", IssueType: "task"})
+	stub.writeErr = fmt.Errorf("bd update demo-x: %w", bd.ErrBD)
+	srv := newTestServer(t, stub)
+	var calls int
+	srv.refreshCounts = func(registry.Repo) { calls++ }
+
+	send(t, srv, http.MethodPatch, "/bead/demo-x", "field=title&value=Lost+edit")
+
+	if calls != 0 {
+		t.Errorf("refreshCounts called %d times on a failed write, want 0", calls)
+	}
+}
+
+// TestCreateRefreshesCounts: handleCreate bypasses writeAndRefresh, so it needs
+// its own assertion that a successful bd create triggers the same counts
+// refresh (st-2fy.4).
+func TestCreateRefreshesCounts(t *testing.T) {
+	stub := &stubBD{issues: sampleIssues}
+	srv := newTestServer(t, stub)
+	var calls int
+	srv.refreshCounts = func(registry.Repo) { calls++ }
+
+	rec := send(t, srv, http.MethodPost, "/new", "title=New+task&type=task&parent=demo-root")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /new = %d, want 200", rec.Code)
+	}
+	if calls != 1 {
+		t.Errorf("refreshCounts called %d times on a successful create, want 1", calls)
+	}
+}
+
+// TestMoveRefreshesCounts: handleMove also bypasses writeAndRefresh (it's the
+// board drag-drop path), so it needs its own assertion (st-2fy.4).
+func TestMoveRefreshesCounts(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Task", Status: "open", IssueType: "task"})
+	srv := newTestServer(t, stub)
+	var calls int
+	srv.refreshCounts = func(registry.Repo) { calls++ }
+
+	rec := send(t, srv, http.MethodPost, "/bead/demo-x/move", "field=status&value=in_progress")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST move = %d, want 200", rec.Code)
+	}
+	if calls != 1 {
+		t.Errorf("refreshCounts called %d times on a successful move, want 1", calls)
 	}
 }
 

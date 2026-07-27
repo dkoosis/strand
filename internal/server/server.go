@@ -21,6 +21,7 @@ import (
 
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/bdcounts"
+	"github.com/dkoosis/strand/internal/counts"
 	"github.com/dkoosis/strand/internal/insight"
 	"github.com/dkoosis/strand/internal/jtbd"
 	"github.com/dkoosis/strand/internal/llm"
@@ -126,6 +127,14 @@ type Server struct {
 	// repo the agent hasn't recorded falls back to strand's own bd-derived spread.
 	counts *bdcounts.Reader
 
+	// refreshCounts kicks off the counts.json rewrite for one repo after strand's
+	// own write lands (st-2fy.4), so the masthead's next poll and the status line
+	// agree with the write within seconds instead of waiting for the next
+	// mtime-triggered launchd cycle. Default is the real counts.Run spawn; tests
+	// swap in a spy so the write-path tests don't shell out to bd (the newSource/
+	// suggestLLM seam style already used in this file).
+	refreshCounts func(repo registry.Repo)
+
 	// Tier-2 Suggest seams (st-suggest.3.3). suggestLLM builds the key-gated model
 	// client (default defaultSuggestLLM over llm.New); tests swap it for a stub so
 	// the namer never touches the network. homeDir roots the global STRAND.md load
@@ -169,6 +178,7 @@ func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, sta
 	s := &Server{srcFor: srcFor, reg: reg, tmpl: tmpl, static: static, syn: syn, shutdown: defaultShutdown, now: time.Now}
 	s.cache = newSnapshotCache(func() time.Time { return s.now() })
 	s.counts = bdcounts.NewReader()
+	s.refreshCounts = s.defaultRefreshCounts
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	s.suggestLLM = defaultSuggestLLM
 	s.homeDir, _ = os.UserHomeDir()
@@ -199,6 +209,23 @@ func (s *Server) goBackground(timeout time.Duration, fn func(context.Context)) {
 		ctx, cancel := context.WithTimeout(s.bgCtx, timeout)
 		defer cancel()
 		fn(ctx)
+	})
+}
+
+// defaultRefreshCounts is the production refreshCounts: it reruns `strand counts`
+// for exactly this repo (modeExplicit — always recomputes, ignoring the
+// mtime-changed skip, since the write that triggered this call just changed the
+// mtime and there's no reason to depend on winning that race) in a goroutine
+// tracked by goBackground, so counts.json — and therefore the masthead's next
+// poll and the status line (st-p1f) — catch up with strand's own write within
+// seconds. A failure is logged, not surfaced: the write itself already
+// succeeded, and a stale count self-heals on the next poll or the next launchd
+// cycle either way.
+func (s *Server) defaultRefreshCounts(repo registry.Repo) {
+	s.goBackground(10*time.Second, func(_ context.Context) {
+		if err := counts.Run([]string{repo.Path}); err != nil {
+			log.Printf("strand: post-write counts refresh for %s: %v", repo.Path, err)
+		}
 	})
 }
 
@@ -1035,7 +1062,8 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, wrapWrite("move", err))
 		return
 	}
-	if issue == nil { // bd wrote silently; re-read so the card reflects the change
+	s.refreshCounts(repo) // st-2fy.4 — keep counts.json current with this write
+	if issue == nil {     // bd wrote silently; re-read so the card reflects the change
 		if issue, err = src.Show(ctx, id); err != nil {
 			s.renderError(w, err)
 			return
@@ -1469,12 +1497,19 @@ func wrapWrite(action string, err error) error {
 func (s *Server) writeAndRefresh(w http.ResponseWriter, r *http.Request, id string, write writeFunc) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, _, ok := s.source()
+	src, repo, ok := s.source()
 	if !ok {
 		s.renderError(w, errNoRepo)
 		return
 	}
 	issue, writeErr := write(ctx, src)
+	if writeErr == nil {
+		// Refresh counts.json for this repo so the masthead's next poll and the
+		// status line catch up with strand's own write (st-2fy.4) — a successful
+		// write regardless of whether it returned an issue (Comment/DepAdd/etc
+		// return nil on success, since renderDrawer re-reads for them below).
+		s.refreshCounts(repo)
+	}
 	if writeErr != nil || issue == nil {
 		fresh, showErr := src.Show(ctx, id)
 		if showErr != nil {
@@ -1625,7 +1660,7 @@ type createForm struct {
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, _, ok := s.source()
+	src, repo, ok := s.source()
 	if !ok {
 		s.renderError(w, errNoRepo)
 		return
@@ -1662,6 +1697,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		reject(compensateOrphan(src, minted, err))
 		return
 	}
+	s.refreshCounts(repo) // st-2fy.4 — keep counts.json current with this write
 	w.Header().Set("HX-Trigger", "refreshList")
 	s.renderDrawer(ctx, w, src, issue, nil)
 }
