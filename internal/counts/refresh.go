@@ -72,6 +72,16 @@ func Run(args []string) error {
 // entry rather than being zeroed or dropped. The whole file is written atomically
 // (tmp + rename), and the mtime state is recorded even for a failed repo so a broken
 // read doesn't hot-retry every run.
+//
+// modeChanged additionally guards against a torn bd read latching forever (st-3p8): a
+// bd write touches last-touched synchronously but its DB commit can still be landing
+// when the watch-fire triggers this run, so the derive can read a stale snapshot. Once
+// that stale row is cached AND the observed mtime is recorded, a naive "mtime changed
+// since last run?" check would never revisit it — nothing touches last-touched again.
+// Each repo's stored state therefore carries a pending bit: a change-triggered derive
+// this cycle always schedules exactly one guaranteed follow-up derive next cycle
+// (regardless of whether the mtime moves again), by which time bd's commit has
+// settled. See repoState.next for the exact carry-forward rule.
 func refresh(ctx context.Context, cfg *config) error {
 	targets := cfg.targets
 	if cfg.mode != modeExplicit {
@@ -82,23 +92,27 @@ func refresh(ctx context.Context, cfg *config) error {
 	statePath := filepath.Join(cfg.cacheDir, "counts-mtimes")
 	rows := readRows(outPath)
 	seen := readState(statePath)
-	nextState := make(map[string]int64, len(targets))
+	nextState := make(map[string]repoState, len(targets))
 
 	changed := false
 	for _, root := range targets {
 		cur := lastTouched(root)
-		if cfg.mode == modeChanged {
-			if _, cached := rows[root]; cached && seen[root] == cur {
-				nextState[root] = cur // unchanged + already cached → carry state, skip the reads
-				continue
-			}
+		prior := seen[root]
+		mtimeChanged := prior.mtime != cur
+		_, cached := rows[root]
+
+		if cfg.mode == modeChanged && cached && !mtimeChanged && !prior.pending {
+			nextState[root] = repoState{mtime: cur} // settled + already cached → skip the reads
+			continue
 		}
+
 		prev := rows[root]
-		if row, err := computeRow(ctx, cfg.newSource(root), root, prev.EID, prev.EPct); err == nil {
+		row, err := computeRow(ctx, cfg.newSource(root), root, prev.EID, prev.EPct)
+		if err == nil {
 			rows[root] = row
 			changed = true
 		}
-		nextState[root] = cur // record even on failure → no hot-retry loop
+		nextState[root] = repoState{mtime: cur, pending: nextPending(cfg.mode, mtimeChanged, err)}
 	}
 
 	if err := os.MkdirAll(cfg.cacheDir, 0o755); err != nil {
@@ -110,6 +124,28 @@ func refresh(ctx context.Context, cfg *config) error {
 		}
 	}
 	return writeState(statePath, nextState)
+}
+
+// nextPending decides whether a repo should be revisited unconditionally next cycle,
+// regardless of mtime:
+//
+//   - modeChanged, this cycle was change-triggered (mtimeChanged) → always re-arm.
+//     Whether the derive just now succeeded or failed, the settled DB state hasn't
+//     necessarily been observed yet, so schedule the guaranteed follow-up. A failed
+//     change-triggered derive re-arms exactly like the existing last-good retry
+//     behavior (nextState still records failure → next mtime-changed cycle retries).
+//   - modeChanged, pending carried in from before (mtimeChanged false, i.e. this is
+//     the guaranteed follow-up) → clear pending ONLY on success. A failed
+//     pending-triggered derive must NOT clear pending, or the stale row latches
+//     forever with no mtime change left to re-trigger anything (P0 from plan review).
+//   - modeAll/modeExplicit → a visited repo always gets a real read; clear pending on
+//     success (satisfies any inherited flag), keep it set on failure so a later
+//     modeChanged run still gets its guaranteed follow-up.
+func nextPending(m mode, mtimeChanged bool, err error) bool {
+	if m == modeChanged && mtimeChanged {
+		return true
+	}
+	return err != nil
 }
 
 // discover returns every repo root under projects with a real .beads workspace (a
@@ -174,10 +210,22 @@ func tmpPath(path string) string {
 	return fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
 }
 
-// readState loads the per-repo last-touched mtimes recorded last run ("root\tmtime"
-// per line); a missing/garbled file is an empty map (everything reads as changed).
-func readState(path string) map[string]int64 {
-	state := map[string]int64{}
+// repoState is one repo's carry-forward bookkeeping between refresh runs: the
+// last-observed last-touched mtime, plus the st-3p8 pending bit (a change-triggered
+// derive schedules exactly one guaranteed follow-up derive next cycle — see
+// nextPending). Stored as the state file's 2nd/3rd tab-separated columns.
+type repoState struct {
+	mtime   int64
+	pending bool
+}
+
+// readState loads the per-repo state recorded last run ("root\tmtime\tpending" per
+// line); a missing/garbled file is an empty map (everything reads as changed). A
+// pre-st-3p8 2-field line ("root\tmtime", no pending column) parses with pending
+// defaulted false — correct, since a state file written before this fix never had a
+// torn read recorded against it.
+func readState(path string) map[string]repoState {
+	state := map[string]repoState{}
 	f, err := os.Open(path)
 	if err != nil {
 		return state
@@ -185,23 +233,30 @@ func readState(path string) map[string]int64 {
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		root, mt, ok := strings.Cut(sc.Text(), "\t")
+		root, rest, ok := strings.Cut(sc.Text(), "\t")
 		if !ok {
 			continue
 		}
-		if v, err := strconv.ParseInt(mt, 10, 64); err == nil {
-			state[root] = v
+		mt, pendingField, _ := strings.Cut(rest, "\t") // pendingField "" on legacy 2-field lines
+		v, err := strconv.ParseInt(mt, 10, 64)
+		if err != nil {
+			continue
 		}
+		state[root] = repoState{mtime: v, pending: pendingField == "1"}
 	}
 	return state
 }
 
-// writeState records the visited repos' mtimes for the next run's changed-check,
+// writeState records the visited repos' state for the next run's changed-check,
 // atomically like the rows file.
-func writeState(path string, state map[string]int64) error {
+func writeState(path string, state map[string]repoState) error {
 	var b strings.Builder
-	for root, mt := range state {
-		fmt.Fprintf(&b, "%s\t%d\n", root, mt)
+	for root, st := range state {
+		pendingField := "0"
+		if st.pending {
+			pendingField = "1"
+		}
+		fmt.Fprintf(&b, "%s\t%d\t%s\n", root, st.mtime, pendingField)
 	}
 	tmp := tmpPath(path)
 	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {

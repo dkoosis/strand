@@ -60,9 +60,12 @@ func TestRefreshAllComputesEveryRepo(t *testing.T) {
 	}
 }
 
-// TestRefreshChangedSkipsUnchanged: in the default changed mode, a repo already
-// cached with an unchanged last-touched mtime is not recomputed. A counting source
-// proves the skip — its List is never called on the second run.
+// TestRefreshChangedSkipsUnchanged: in the default changed mode, a repo settles into
+// being skipped once its mtime has been stable across a full derive-twice cycle (the
+// st-3p8 guaranteed-follow-up: run 1 is cold/change-triggered so it re-arms pending for
+// exactly one more look; run 2 is that guaranteed follow-up and clears pending; only
+// run 3, with the mtime still unchanged and pending now clear, is actually skipped). A
+// counting source proves the skip — its List is not called on the third run.
 func TestRefreshChangedSkipsUnchanged(t *testing.T) {
 	projects := t.TempDir()
 	cache := t.TempDir()
@@ -81,11 +84,17 @@ func TestRefreshChangedSkipsUnchanged(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("first run computed %d repos, want 1", calls)
 	}
-	if err := refresh(context.Background(), &cfg); err != nil { // second: unchanged mtime → skip
+	if err := refresh(context.Background(), &cfg); err != nil { // second: guaranteed follow-up, still computes
 		t.Fatalf("refresh #2: %v", err)
 	}
-	if calls != 1 {
-		t.Errorf("second run recomputed (calls=%d) — unchanged repo must be skipped", calls)
+	if calls != 2 {
+		t.Fatalf("second run (guaranteed follow-up) calls=%d, want 2", calls)
+	}
+	if err := refresh(context.Background(), &cfg); err != nil { // third: settled → skip
+		t.Fatalf("refresh #3: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("third run recomputed (calls=%d) — a settled, non-pending repo must be skipped", calls)
 	}
 }
 
@@ -115,6 +124,156 @@ func TestRefreshLastGoodOnReadFailure(t *testing.T) {
 	}
 	if bk.Open != 1 {
 		t.Errorf("row zeroed on read failure: bo=%d, want the prior 1", bk.Open)
+	}
+}
+
+// callCountingSource returns a caller-supplied row per call index (clamped to the last
+// row once calls exceed len(rows)) — lets a test prove which of several sequential
+// refresh() invocations actually recomputed vs skipped.
+type callCountingSource struct {
+	calls *int
+	rows  []bd.Issue // one issue slice per call; List returns rows[min(*calls, len-1)]
+}
+
+func (s *callCountingSource) List(context.Context, bd.ListOpts) ([]bd.Issue, error) {
+	i := *s.calls
+	if i >= len(s.rows) {
+		i = len(s.rows) - 1
+	}
+	*s.calls++
+	return []bd.Issue{s.rows[i]}, nil
+}
+func (s *callCountingSource) Deps(context.Context, ...string) ([]bd.DepEdge, error) {
+	return nil, nil
+}
+func (s *callCountingSource) Stats(context.Context) (bd.Stats, error) { return bd.Stats{}, nil }
+func (s *callCountingSource) EpicStatus(context.Context) ([]bd.EpicStatus, error) {
+	return nil, nil
+}
+
+// TestRefreshConvergesAfterTornRead is the st-3p8 repro: a bd write touches
+// last-touched, but the strand-counts derive that fires on that same watch-cycle reads
+// bd mid-commit and computes a stale row (here: an open bead, bo=1 — standing in for
+// the pre-close snapshot). Without the pending-retry fix, that stale row would latch
+// forever, because the recorded mtime never changes again after the single touch.
+//
+// The fix: a change-triggered derive schedules exactly one guaranteed follow-up derive
+// next cycle. This test drives three `refresh()` calls against ONE repo whose
+// last-touched mtime is set once (simulating the single `bd close` touch) and never
+// touched again:
+//
+//  1. cold run — mtime "changed" (no prior state) → derives, gets the stale row (call
+//     0 of the fake), and must schedule a pending re-check.
+//  2. same mtime, no further touch — must STILL recompute (the scheduled pending
+//     re-check), gets call 1's row, and must clear pending afterward.
+//  3. same mtime again — must NOT recompute a third time (pending cleared, mtime
+//     unchanged) — proving the retry is bounded, not a permanent hot-loop.
+func TestRefreshConvergesAfterTornRead(t *testing.T) {
+	projects := t.TempDir()
+	cache := t.TempDir()
+	mkRepo(t, projects, "repo-a")
+
+	calls := 0
+	src := &callCountingSource{
+		calls: &calls,
+		rows: []bd.Issue{
+			{ID: "stale", Status: bd.StatusOpen},   // call 0: torn-read snapshot
+			{ID: "settled", Status: bd.StatusOpen}, // call 1: settled snapshot
+		},
+	}
+	cfg := config{cacheDir: cache, projects: projects, mode: modeChanged,
+		newSource: func(string) source { return src }}
+
+	if err := refresh(context.Background(), &cfg); err != nil { // run 1: change-triggered
+		t.Fatalf("refresh #1: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("run 1: calls=%d, want 1 (change-triggered derive)", calls)
+	}
+
+	if err := refresh(context.Background(), &cfg); err != nil { // run 2: pending-triggered
+		t.Fatalf("refresh #2: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("run 2: calls=%d, want 2 — the guaranteed follow-up derive must fire even though mtime did not change", calls)
+	}
+
+	if err := refresh(context.Background(), &cfg); err != nil { // run 3: must be quiet
+		t.Fatalf("refresh #3: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("run 3: calls=%d, want 2 — pending must have cleared after run 2's successful derive, no permanent hot-loop", calls)
+	}
+}
+
+// TestRefreshPendingClearedOnAllMode: modeAll always derives unconditionally; a repo
+// left with a stale pending flag from a prior modeChanged run must have it cleared by
+// a successful --all visit, so a later modeChanged run doesn't force a needless extra
+// recompute.
+func TestRefreshPendingClearedOnAllMode(t *testing.T) {
+	projects := t.TempDir()
+	cache := t.TempDir()
+	mkRepo(t, projects, "repo-a")
+
+	calls := 0
+	src := &callCountingSource{calls: &calls, rows: []bd.Issue{{ID: "a", Status: bd.StatusOpen}}}
+	changedCfg := config{cacheDir: cache, projects: projects, mode: modeChanged,
+		newSource: func(string) source { return src }}
+	if err := refresh(context.Background(), &changedCfg); err != nil { // arms pending
+		t.Fatalf("seed refresh: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("seed: calls=%d, want 1", calls)
+	}
+
+	allCfg := changedCfg
+	allCfg.mode = modeAll
+	if err := refresh(context.Background(), &allCfg); err != nil { // clears pending
+		t.Fatalf("all refresh: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("--all run: calls=%d, want 2", calls)
+	}
+
+	if err := refresh(context.Background(), &changedCfg); err != nil { // must be quiet now
+		t.Fatalf("final changed refresh: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("final: calls=%d, want 2 — --all must have cleared the pending flag", calls)
+	}
+}
+
+// TestRefreshChangeTriggeredFailureReArmsPending covers the one nextPending branch the
+// other new tests don't reach directly: modeChanged, mtimeChanged=true, err!=nil. A
+// change-triggered derive that itself fails must still re-arm pending (not just record
+// failure and go quiet) — otherwise a failed torn-read-window derive would never get
+// its guaranteed follow-up, reintroducing the exact latch st-3p8 fixes. The repo's
+// mtime never changes again after the initial touch, so only the pending re-arm can
+// trigger a second attempt.
+func TestRefreshChangeTriggeredFailureReArmsPending(t *testing.T) {
+	projects := t.TempDir()
+	cache := t.TempDir()
+	mkRepo(t, projects, "repo-a")
+
+	var calls int
+	failingNew := func(string) source {
+		calls++
+		return &fakeSource{err: os.ErrPermission}
+	}
+	cfg := config{cacheDir: cache, projects: projects, mode: modeChanged, newSource: failingNew}
+
+	if err := refresh(context.Background(), &cfg); err != nil { // run 1: change-triggered, fails
+		t.Fatalf("refresh #1: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("run 1: calls=%d, want 1", calls)
+	}
+
+	if err := refresh(context.Background(), &cfg); err != nil { // run 2: mtime unchanged, but must retry — pending was re-armed despite the failure
+		t.Fatalf("refresh #2: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("run 2: calls=%d, want 2 — a change-triggered derive that failed must still re-arm pending for a retry", calls)
 	}
 }
 
