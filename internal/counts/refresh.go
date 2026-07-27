@@ -93,7 +93,8 @@ func refresh(ctx context.Context, cfg *config) error {
 				continue
 			}
 		}
-		if row, err := computeRow(ctx, cfg.newSource(root), root); err == nil {
+		prev := rows[root]
+		if row, err := computeRow(ctx, cfg.newSource(root), root, prev.EID, prev.EPct); err == nil {
 			rows[root] = row
 			changed = true
 		}

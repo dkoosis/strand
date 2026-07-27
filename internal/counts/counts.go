@@ -54,9 +54,14 @@ type source interface {
 // computeRow derives one repo's row: the six buckets from bd reads folded through
 // insight.Lanes, plus the station phase. List/Deps/Stats are load-bearing — an error
 // fails the row so the caller keeps the last-good entry rather than zeroing it. The
-// station is best-effort: an EpicStatus failure or a repo with no roadmap degrades to
-// an empty station (eid "", epct null), never a failed row.
-func computeRow(ctx context.Context, src source, root string) (Row, error) {
+// station is best-effort: a repo with no roadmap epic still open/in-progress degrades
+// to an empty station (eid "", epct null) — that's a real answer, not a failure. An
+// EpicStatus *read* failure is different: it carries prevEID/prevEPct forward (st-2fy.7,
+// the previous row's station) rather than blanking a station a prior successful run
+// already computed — matching the last-good semantics the buckets get from the caller.
+// Only the two station fields are threaded through (not the whole prior Row) to keep
+// the parameter light.
+func computeRow(ctx context.Context, src source, root string, prevEID string, prevEPct *int) (Row, error) {
 	issues, err := src.List(ctx, bd.ListOpts{})
 	if err != nil {
 		return Row{}, fmt.Errorf("list: %w", err)
@@ -74,9 +79,12 @@ func computeRow(ctx context.Context, src source, root string) (Row, error) {
 		return Row{}, fmt.Errorf("stats: %w", err)
 	}
 	bh, bo, bb := laneCounts(issues, deps)
-	eid, epct := "", (*int)(nil)
+	var eid string
+	var epct *int
 	if epics, err := src.EpicStatus(ctx); err == nil {
 		eid, epct = station(strandmd.Roadmap(root), epics)
+	} else {
+		eid, epct = prevEID, prevEPct // read failed: carry the last-good station forward
 	}
 	return Row{
 		Root: root, Prefix: prefix(root),
