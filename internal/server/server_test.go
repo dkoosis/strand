@@ -38,6 +38,10 @@ var errStubWrite = errors.New("bd: write failed")
 // must degrade to Tier-1 at 200, never surface it (st-suggest.3.3).
 var errModelDown = errors.New("model down")
 
+// errBDSpawnFailed stands in for a transient bd spawn failure hitting a
+// deep-link's pulse-cut fetch (st-2fy.6) — must be logged, not swallowed.
+var errBDSpawnFailed = errors.New("bd spawn failed")
+
 // stubBD is an in-memory issueSource so the handlers run without the bd CLI
 // (spec Q0: fake the bd boundary, assert on the rendered HTML).
 type stubBD struct {
@@ -2721,6 +2725,55 @@ func TestHandleHomeShowsAsOf(t *testing.T) {
 	rec := do(t, srv, "/")
 	if want := "as of " + cacheNow.Format("15:04"); !strings.Contains(rec.Body.String(), want) {
 		t.Errorf("landing missing the refresh readout %q", want)
+	}
+}
+
+// closedFailsBD fails only a `--status closed` List call — every other read
+// delegates to the embedded stub. Models a transient bd spawn error that hits
+// specifically the closed-cut's uncached read (cachingSource.Closed), leaving the
+// open-list snapshot buildStrand already warmed untouched.
+type closedFailsBD struct {
+	stubBD
+	err error
+}
+
+func (c *closedFailsBD) List(ctx context.Context, opts bd.ListOpts) ([]bd.Issue, error) {
+	if opts.Status == bd.StatusClosed {
+		return nil, c.err
+	}
+	return c.stubBD.List(ctx, opts)
+}
+
+// TestHomeFilterDeepLinkLogsPulseFetchError: a deep-link `/?filter=<cut>` whose
+// pulse-fetch fails (a transient bd spawn error) must not vanish silently into the
+// whole-strand fallback — the click path (handleList) surfaces the identical error
+// via renderError, so the deep-link path logs it instead of swallowing it
+// (st-2fy.6). The landing still renders 200 with the whole-strand list: falling
+// back is fine, going silent is not.
+func TestHomeFilterDeepLinkLogsPulseFetchError(t *testing.T) {
+	var buf bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(old)
+
+	// closedFailsBD fails only the `--status closed` read: buildStrand warms the
+	// open-list snapshot first (a plain List(ctx, {}) that must succeed), then
+	// Closed() falls through to this failing status-scoped read.
+	src := &closedFailsBD{stubBD: stubBD{issues: sampleIssues}, err: errBDSpawnFailed}
+	srv := newTestServer(t, src)
+
+	rec := do(t, srv, "/?filter=closed")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /?filter=closed = %d, want 200 — a pulse-fetch error falls back, it doesn't fail the request", rec.Code)
+	}
+	// The masthead's closed pulse cell always renders data-filter="closed" (it's a
+	// clickable button, active or not) — so pin the #viewport element specifically,
+	// the one attribute that reflects pageData.ActiveFilter.
+	if strings.Contains(rec.Body.String(), `data-view="list" data-story="" data-filter="closed"`) {
+		t.Errorf("deep-link filter must NOT apply when its fetch errored — viewport carries data-filter=closed:\n%s", rec.Body.String())
+	}
+	if got := buf.String(); !strings.Contains(got, "deep-link") || !strings.Contains(got, "bd spawn failed") {
+		t.Errorf("swallowed pulse-fetch error was not logged, want a line naming filter=closed and the error; got:\n%s", got)
 	}
 }
 

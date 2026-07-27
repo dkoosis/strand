@@ -468,6 +468,14 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	if cut, ok := pulseCutFor(r.URL.Query().Get("filter")); ok {
 		if v, err := s.pulseListView(ctx, src, cut); err == nil {
 			list, active = v, r.URL.Query().Get("filter")
+		} else {
+			// A bd spawn failure here must not vanish silently: the click path
+			// (handleList) surfaces the identical error via renderError, so a
+			// deep-link hitting the same transient failure should be visible too,
+			// not just fall through to the whole-strand list with no trace (st-2fy.6).
+			// Logs cut.title (pulseCutFor's own fixed enum), not the raw query
+			// param, so an attacker-controlled ?filter= can't inject into the log.
+			log.Printf("strand: deep-link filter=%s: %v", cut.title, err)
 		}
 	}
 	s.render(w, "page", pageData{
