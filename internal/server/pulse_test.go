@@ -51,11 +51,13 @@ func TestPulseStripRenders(t *testing.T) {
 // once on load, not only on refreshList. The landing render reads deps cache-only
 // (str-47z), so a cold ● can undercount open-held blocked beads; the one-shot `load`
 // re-fetch lands after the deps prefetch warms and brings ● back exact. Without this
-// trigger the cold undercount would stick until the next in-app edit.
+// trigger the cold undercount would stick until the next in-app edit. The trigger
+// also carries an `every 15s` poll (st-2fy.4, see TestPulseBarPollsForOutOfBandWrites
+// in server_test.go) — asserted together here since both live on the one attribute.
 func TestPulseBarSelfHealsCold(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: pulseIssues})
 	body := do(t, srv, "/").Body.String()
-	if !strings.Contains(body, `hx-trigger="refreshList from:body, load delay:300ms"`) {
+	if !strings.Contains(body, `hx-trigger="refreshList from:body, load delay:300ms, every 15s"`) {
 		t.Errorf("pulseBar missing the load self-heal trigger:\n%s", body)
 	}
 }
