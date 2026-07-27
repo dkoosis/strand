@@ -134,6 +134,39 @@ func (c *snapshotCache) freshEntryLocked(repo string) *snapshot {
 	return e
 }
 
+// checkStale is freshEntryLocked's staleness rule, factored out for a caller that
+// isn't reading (the masthead poll tick, st-2fy.5) rather than serving a view. A
+// stale entry is evicted exactly as freshEntryLocked would evict it on the next
+// read — checkStale just lets the poll tick catch the eviction first, before any
+// reader shows up, so the caller can kick a background rebuild (goBackground) and
+// have the snapshot warm again by the time a filter switch actually asks for it.
+//
+// No entry yet → false: a cold repo nobody has viewed has nothing to proactively
+// rebuild, so this never turns a lazy miss into an eager fetch. An unreadable or
+// unmoved store mtime → false, same as freshEntryLocked's degrade. Only a moved
+// mtime evicts and reports true.
+//
+// Concurrent pollers for the same repo (two open tabs) can each observe true and
+// each kick a rebuild; that's harmless (putList just overwrites the entry twice
+// with equivalent data), not a correctness bug — no de-dup needed for this bead.
+func (c *snapshotCache) checkStale(repo string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e := c.entries[repo]
+	if e == nil {
+		return false
+	}
+	if e.storeAt.IsZero() || c.storeMTime == nil {
+		return false
+	}
+	mt, ok := c.storeMTime(repo)
+	if !ok || !mt.After(e.storeAt) {
+		return false
+	}
+	delete(c.entries, repo)
+	return true
+}
+
 // stampedAt reports when the repo's snapshot was fetched, for the "data as of …"
 // readout. ok is false when no snapshot is warm yet.
 func (c *snapshotCache) stampedAt(repo string) (time.Time, bool) {

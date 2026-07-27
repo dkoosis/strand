@@ -3119,6 +3119,86 @@ func TestSnapshotCacheStoreMTimeGate(t *testing.T) {
 	}
 }
 
+// TestSnapshotCacheCheckStale proves checkStale (st-2fy.5): the poll-tick's own
+// staleness peek, independent of any read. A cold repo (no entry) has nothing to
+// rebuild, so it reports false without side effects. A warm entry whose store
+// hasn't moved also reports false. Only a warm entry whose store mtime has
+// advanced past the fetch stamp reports true AND evicts — mirroring
+// freshEntryLocked's own eviction rule, so the lazy (read-triggered) and
+// proactive (poll-triggered) paths agree on what "stale" means.
+func TestSnapshotCacheCheckStale(t *testing.T) {
+	cache := newSnapshotCache(func() time.Time { return cacheNow })
+	storeMTime := cacheNow
+	cache.storeMTime = func(string) (time.Time, bool) { return storeMTime, true }
+
+	if cache.checkStale("demo") {
+		t.Error("checkStale on a cold repo (no entry) = true, want false — nothing to rebuild")
+	}
+
+	cache.putList("demo", sampleIssues)
+
+	if cache.checkStale("demo") {
+		t.Error("checkStale with the store unchanged = true, want false")
+	}
+	if _, _, ok := cache.liveList("demo"); !ok {
+		t.Fatal("entry evicted while the store was unchanged — checkStale must not evict a fresh entry")
+	}
+
+	storeMTime = storeMTime.Add(time.Second) // an out-of-band write moves the store
+
+	if !cache.checkStale("demo") {
+		t.Error("checkStale after the store moved = false, want true")
+	}
+	if _, _, ok := cache.liveList("demo"); ok {
+		t.Fatal("checkStale reported stale but left the entry live — it must evict like freshEntryLocked")
+	}
+}
+
+// TestHandlePulseKicksProactiveRebuild proves the end-to-end AC (st-2fy.5): when
+// the poll tick (handlePulse) finds the store has moved out from under a warm
+// snapshot, it kicks the rebuild in the background immediately — rather than
+// waiting for the next filter switch to pay the cold spawn on the request path.
+// Stop() is the deterministic sync point: it cancels + waits every goBackground
+// goroutine, so asserting listCalls after Stop (not a sleep) proves the rebuild
+// actually ran, with no race against real background timing.
+func TestHandlePulseKicksProactiveRebuild(t *testing.T) {
+	src := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
+	srv := newTestServer(t, src)
+	// computePulse must resolve from counts.json (st-p1f), NOT src.Stats/List — a
+	// counts.json miss makes computePulse fall through to src.List itself
+	// (freshEntryLocked evicting + refetching the stale entry before checkStale
+	// ever runs), which would make this test pass for the wrong reason: the
+	// listCalls bump would come from computePulse's own fallback fetch, not from
+	// the proactive rebuild handlePulse is supposed to kick off (go-bug-audit
+	// concurrency pass, st-2fy.5). pointCounts makes the Lookup hit so
+	// computePulse never touches the snapshot cache, isolating checkStale as the
+	// only path that can bump listCalls.
+	pointCounts(t, srv, `{"bh":0,"bo":0,"bw":0,"bb":0,"bcl":0,"bdf":0,"ts":1}`)
+	storeMTime := cacheNow
+	srv.cache.storeMTime = func(string) (time.Time, bool) { return storeMTime, true }
+	srv.now = func() time.Time { return cacheNow }
+
+	do(t, srv, "/") // warms the snapshot (handleHome's buildStrand → List)
+	srv.bgWG.Wait() // drain handleHome's own detached deps prefetch before mutating
+	// storeMTime below — otherwise that goroutine's read of the
+	// closure races the write (test-only race, not a product bug).
+	if n := src.listCalls.Load(); n != 1 {
+		t.Fatalf("List spawned %d times warming the snapshot, want 1", n)
+	}
+
+	storeMTime = storeMTime.Add(time.Second) // an out-of-band write moves the store
+
+	do(t, srv, "/pulse") // the poll tick: must notice the move and kick a rebuild
+	srv.Stop()           // drain the background rebuild deterministically
+
+	if n := src.listCalls.Load(); n != 2 {
+		t.Errorf("List spawned %d times after the poll tick saw a stale store, want 2 — the rebuild must fire from handlePulse, not wait for the next filter switch", n)
+	}
+	if _, _, ok := srv.cache.liveList(demoRepo.Path); !ok {
+		t.Error("snapshot not warm after the proactive rebuild landed — the next filter switch would still pay a cold spawn")
+	}
+}
+
 // TestSnapshotCacheStoreMTimeUnreadable proves the graceful degrade: when the store
 // mtime can't be read (ok false — a non-bd path, a permissions error), the snapshot
 // stamps a zero storeAt and the gate stays off, so the cache behaves exactly as it
