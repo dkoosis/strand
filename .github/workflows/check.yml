@@ -1,0 +1,38 @@
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Keep in lockstep with the `go` directive in go.mod.
+          go-version: '1.26'
+          check-latest: true
+
+      - name: vet
+        run: go vet ./...
+
+      # The -race gate (epic ccp-sbp.4): the race detector is the machine that
+      # catches the concurrency-lifecycle defect class. -count=1 bypasses the
+      # test cache so race runs on every push.
+      - name: test (race)
+        run: go test -race -count=1 ./...
+
+      - name: build
+        run: go build ./...
