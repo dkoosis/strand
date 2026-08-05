@@ -1,4 +1,4 @@
-.PHONY: build run test race lint vet tidy check audit dupe vuln nilcheck install deploy uninstall clean
+.PHONY: build run test race lint vet tidy pack-drift check audit dupe vuln nilcheck install deploy uninstall clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 STRAND_ADDR ?= 127.0.0.1:7777
@@ -37,8 +37,14 @@ vet:
 tidy:
 	go mod tidy
 
-# check is the full local gate: vet + strict lint + race.
-check: vet lint race
+# pack-drift (bugclasses, ccp-sbp): fail if .golangci-rules/bugclasses.go has
+# drifted from the upstream cc-plugins pack. Network-soft — an unreachable
+# upstream warns and passes, so this never breaks an offline/private-repo build.
+pack-drift:
+	@scripts/check-pack-drift.sh .golangci-rules/bugclasses.go
+
+# check is the full local gate: vet + strict lint + race + pack-drift.
+check: vet lint race pack-drift
 
 # audit is the exhaustive gate (modeled on ../trixi): check + dupe + vuln +
 # nilcheck. Slower; run before a release or a risky merge.

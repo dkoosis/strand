@@ -6,6 +6,7 @@ toolchain go1.26.5
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.52.0
+	github.com/quasilyte/go-ruleguard/dsl v0.3.23
 	gonum.org/v1/gonum v0.17.0
 )
 

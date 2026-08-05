@@ -63,7 +63,7 @@ func Run(args []string) error {
 	case *all:
 		cfg.mode = modeAll
 	}
-	return refresh(context.Background(), &cfg)
+	return refresh(context.Background(), &cfg) //nolint:forbidigo // CLI subcommand root: `strand counts` is a one-shot command, not request-scoped
 }
 
 // refresh visits the run's repos, recomputes each row, and writes counts.json. It is
@@ -231,7 +231,7 @@ func readState(path string) map[string]repoState {
 		return state
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(f) //nolint:gocritic // state-file lines are short (repo path + two ints), far under bufio's 64KB default cap
 	for sc.Scan() {
 		root, rest, ok := strings.Cut(sc.Text(), "\t")
 		if !ok {

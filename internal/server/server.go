@@ -179,7 +179,7 @@ func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, sta
 	s.cache = newSnapshotCache(func() time.Time { return s.now() })
 	s.counts = bdcounts.NewReader()
 	s.refreshCounts = s.defaultRefreshCounts
-	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
+	s.bgCtx, s.bgCancel = context.WithCancel(context.Background()) //nolint:forbidigo // server-owned background root, cancelled at shutdown via bgCancel — the st-47z fix (goBackground) hangs off this
 	s.suggestLLM = defaultSuggestLLM
 	s.homeDir, _ = os.UserHomeDir()
 	return s
@@ -1779,7 +1779,7 @@ func compensateOrphan(src IssueSource, minted *bd.Issue, cause error) error {
 	if minted == nil {
 		return cause
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second) //nolint:forbidigo // compensating cleanup deliberately detached from the (possibly-cancelled) request ctx — see doc comment
 	defer cancel()
 	if err := src.Delete(ctx, minted.ID); err != nil {
 		return fmt.Errorf("%w — and its new parent %s could not be cleaned up; delete it by hand", cause, minted.ID)
