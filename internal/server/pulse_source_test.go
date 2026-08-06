@@ -3,8 +3,10 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dkoosis/strand/internal/bdcounts"
 )
@@ -69,6 +71,42 @@ func TestPulseFallsBackToBD(t *testing.T) {
 			t.Errorf("fallback pulse missing bd-derived %q", want)
 		}
 	}
+}
+
+// TestPulseStaleBadge pins st-18l's masthead surface: a counts.json whose liveness
+// meta is older than 2× the refresh interval renders the stale badge; a fresh stamp
+// does not. The badge is the only visible sign a dead/wedged refresher is freezing the
+// numbers, so its presence/absence is the contract.
+func TestPulseStaleBadge(t *testing.T) {
+	t.Run("stale stamp shows the badge", func(t *testing.T) {
+		srv := newTestServer(t, &stubBD{issues: pulseIssues})
+		old := time.Now().Add(-time.Hour).Unix()
+		pointCountsWithMeta(t, srv, `{"bh":4,"bo":7,"bw":2,"bb":3,"bcl":9,"bdf":5,"ts":1}`,
+			`{"lastRun":`+strconv.FormatInt(old, 10)+`,"version":"x"}`)
+		if body := do(t, srv, "/").Body.String(); !strings.Contains(body, `class="pstale"`) {
+			t.Error("stale counts cache did not render the pstale badge")
+		}
+	})
+	t.Run("fresh stamp — no badge", func(t *testing.T) {
+		srv := newTestServer(t, &stubBD{issues: pulseIssues})
+		pointCountsWithMeta(t, srv, `{"bh":4,"bo":7,"bw":2,"bb":3,"bcl":9,"bdf":5,"ts":1}`,
+			`{"lastRun":`+strconv.FormatInt(time.Now().Unix(), 10)+`,"version":"x"}`)
+		if body := do(t, srv, "/").Body.String(); strings.Contains(body, `class="pstale"`) {
+			t.Error("fresh counts cache rendered a spurious pstale badge")
+		}
+	})
+}
+
+// pointCountsWithMeta writes a counts.json holding demoRepo's row plus the reserved
+// _meta liveness stamp, and points the server's reader at it.
+func pointCountsWithMeta(t *testing.T, srv *Server, row, meta string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "counts.json")
+	body := `{"` + demoRepo.Path + `":` + row + `,"_meta":` + meta + `}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write counts.json: %v", err)
+	}
+	srv.counts = bdcounts.NewReaderAt(path)
 }
 
 // pointCountsForOtherRepo writes a well-formed counts.json that has no row for

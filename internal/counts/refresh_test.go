@@ -61,6 +61,79 @@ func TestRefreshAllComputesEveryRepo(t *testing.T) {
 	}
 }
 
+// TestRefreshStampsLivenessMeta: every run stamps counts.json's liveness meta (the
+// last-run time + binary version, st-18l) and the existing bdcounts.Reader reads both
+// the meta and the per-repo buckets back — the new top-level fields round-trip without
+// disturbing the row schema the masthead and status line already read.
+func TestRefreshStampsLivenessMeta(t *testing.T) {
+	projects := t.TempDir()
+	cache := t.TempDir()
+	a := mkRepo(t, projects, "repo-a")
+
+	ran := time.Unix(1_700_000_000, 0)
+	cfg := config{
+		cacheDir:  cache,
+		projects:  projects,
+		mode:      modeAll,
+		version:   "9.9.9",
+		newSource: func(string) source { return oneOpenBead() },
+		now:       func() time.Time { return ran },
+	}
+	if err := refresh(context.Background(), &cfg); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	r := bdcounts.NewReaderAt(filepath.Join(cache, "counts.json"))
+	// The row still decodes (schema intact alongside the new meta key).
+	if bk, ok := r.Lookup(a); !ok || bk.Open != 1 {
+		t.Fatalf("Lookup(%s) = %+v ok=%v, want Open 1 — meta stamp perturbed the row schema", a, bk, ok)
+	}
+	// The meta round-trips.
+	m, ok := r.Meta()
+	if !ok {
+		t.Fatal("Meta() = !ok — the liveness stamp did not round-trip")
+	}
+	if m.Version != "9.9.9" || m.LastRun != ran.Unix() {
+		t.Errorf("Meta = %+v, want LastRun %d version 9.9.9", m, ran.Unix())
+	}
+}
+
+// TestRefreshStampsMetaEvenWhenUnchanged: a no-op run (nothing to recompute) still
+// advances the liveness stamp, so a quiet period never looks like a dead refresher
+// (st-18l/B4). The stamp is the proof the job ran, independent of whether any bead
+// changed.
+func TestRefreshStampsMetaEvenWhenUnchanged(t *testing.T) {
+	projects := t.TempDir()
+	cache := t.TempDir()
+	mkRepo(t, projects, "repo-a")
+
+	t1 := time.Unix(1_700_000_000, 0)
+	cfg := config{
+		cacheDir:  cache,
+		projects:  projects,
+		mode:      modeChanged,
+		version:   "1.0.0",
+		newSource: func(string) source { return oneOpenBead() },
+		now:       func() time.Time { return t1 },
+	}
+	// Two runs settle the repo into the skip path (see TestRefreshChangedSkipsUnchanged).
+	for i := range 3 {
+		if err := refresh(context.Background(), &cfg); err != nil {
+			t.Fatalf("refresh #%d: %v", i+1, err)
+		}
+	}
+	// A later run finds nothing changed — but must still stamp a fresh lastRun.
+	t2 := t1.Add(time.Hour)
+	cfg.now = func() time.Time { return t2 }
+	if err := refresh(context.Background(), &cfg); err != nil {
+		t.Fatalf("refresh (quiet): %v", err)
+	}
+	m, ok := bdcounts.NewReaderAt(filepath.Join(cache, "counts.json")).Meta()
+	if !ok || m.LastRun != t2.Unix() {
+		t.Errorf("Meta after a no-change run = %+v ok=%v, want LastRun %d — a quiet run must still prove liveness", m, ok, t2.Unix())
+	}
+}
+
 // TestRefreshChangedSkipsUnchanged: in the default changed mode, a repo settles into
 // being skipped once its mtime has been stable across a full derive-twice cycle (the
 // st-3p8 guaranteed-follow-up: run 1 is cold/change-triggered so it re-arms pending for

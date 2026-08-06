@@ -11,8 +11,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
+	"github.com/dkoosis/strand/internal/bdcounts"
 )
 
 // mode is which repos a refresh visits.
@@ -31,9 +33,11 @@ type config struct {
 	cacheDir  string
 	projects  string
 	bin       string
+	version   string // the strand binary version, stamped into counts.json's liveness meta
 	mode      mode
 	targets   []string
 	newSource func(root string) source
+	now       func() time.Time // clock seam for the liveness stamp; nil → time.Now
 }
 
 // Run is the `strand counts` entry point. It resolves the run from flags + the same
@@ -42,7 +46,7 @@ type config struct {
 //	strand counts              # every changed repo (skip mtime-unchanged)
 //	strand counts --all        # every discovered repo, unconditionally
 //	strand counts <dir>...      # only the named repo roots
-func Run(args []string) error {
+func Run(args []string, version string) error {
 	fs := flag.NewFlagSet("counts", flag.ContinueOnError)
 	all := fs.Bool("all", false, "refresh every discovered repo unconditionally")
 	bin := fs.String("bd", "bd", "path to the bd binary")
@@ -53,6 +57,7 @@ func Run(args []string) error {
 		cacheDir:  cacheDir(),
 		projects:  projectsDir(),
 		bin:       *bin,
+		version:   version,
 		mode:      modeChanged,
 		targets:   fs.Args(),
 		newSource: nil, // set below
@@ -95,7 +100,6 @@ func refresh(ctx context.Context, cfg *config) error {
 	seen := readState(statePath)
 	nextState := make(map[string]repoState, len(targets))
 
-	changed := false
 	for _, root := range targets {
 		cur := changeKey(root)
 		prior := seen[root]
@@ -111,7 +115,6 @@ func refresh(ctx context.Context, cfg *config) error {
 		row, err := computeRow(ctx, cfg.newSource(root), root, prev.EID, prev.EPct)
 		if err == nil {
 			rows[root] = row
-			changed = true
 		}
 		nextState[root] = repoState{mtime: cur, pending: nextPending(cfg.mode, mtimeChanged, err)}
 	}
@@ -119,12 +122,26 @@ func refresh(ctx context.Context, cfg *config) error {
 	if err := os.MkdirAll(cfg.cacheDir, 0o755); err != nil {
 		return fmt.Errorf("counts: cache dir: %w", err)
 	}
-	if changed {
-		if err := writeRowsAtomic(outPath, rows); err != nil {
-			return err
-		}
+	// counts.json is rewritten every run, even when no row changed: the write stamps a
+	// fresh liveness meta (last-run time + binary version) so a dead or wedged refresher
+	// shows a stale flag in the masthead instead of freezing the file indistinguishably
+	// from "nothing changed" (st-18l/B4). The per-repo read-skip above still holds — an
+	// unchanged repo pays no bd reads; only the meta stamp and a small atomic rewrite are
+	// unconditional.
+	meta := bdcounts.Meta{LastRun: cfg.clock().Unix(), Version: cfg.version}
+	if err := writeRowsAtomic(outPath, rows, meta); err != nil {
+		return err
 	}
 	return writeState(statePath, nextState)
+}
+
+// clock returns the config's clock, defaulting to time.Now — the seam a test pins to
+// stamp a deterministic last-run time.
+func (c *config) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
 }
 
 // nextPending decides whether a repo should be revisited unconditionally next cycle,
@@ -183,13 +200,21 @@ func readRows(path string) map[string]Row {
 		return rows
 	}
 	_ = json.Unmarshal(data, &rows) // malformed → empty base, rebuilt this run
+	delete(rows, bdcounts.MetaKey)  // the liveness stamp is not a repo row — re-injected on write
 	return rows
 }
 
-// writeRowsAtomic writes the rows as compact JSON via a temp file + rename, so a
-// concurrent reader never sees a half-written file.
-func writeRowsAtomic(path string, rows map[string]Row) error {
-	data, err := json.Marshal(rows)
+// writeRowsAtomic writes the rows plus the liveness meta as compact JSON via a temp
+// file + rename, so a concurrent reader never sees a half-written file. The meta rides
+// under bdcounts.MetaKey — a reserved key no repo path collides with — so keyed readers
+// (bdcounts.Reader.Lookup, the status line's `.[$repo]`) are untouched by its presence.
+func writeRowsAtomic(path string, rows map[string]Row, meta bdcounts.Meta) error {
+	out := make(map[string]any, len(rows)+1)
+	for k, v := range rows {
+		out[k] = v
+	}
+	out[bdcounts.MetaKey] = meta
+	data, err := json.Marshal(out)
 	if err != nil {
 		return fmt.Errorf("counts: marshal: %w", err)
 	}

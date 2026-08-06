@@ -40,6 +40,11 @@
 {{template "pcell" (pulseCell "blocked"     "pc-blocked"  "●" .Blocked    "Blocked")}}
 {{template "pcell" (pulseCell "closed"      "pc-closed"   "✓" .Closed     "Closed")}}
 {{template "pcell" (pulseCell "deferred"    "pc-deferred" "❄" .Deferred   "Deferred")}}
+{{/* Stale badge: the shared counts cache hasn't been refreshed within 2× the
+     refresher's interval — the off-render agent is dead or wedged, so these numbers
+     may be silently frozen (st-18l). Subtle, non-clickable, does not shift the layout;
+     the counts still render as the last-good spread. */}}
+{{if .Stale}}<span class="pstale" title="Bead counts may be stale — the counts refresher hasn't run recently" aria-label="Bead counts may be stale">⚠</span>{{end}}
 {{end}}
 
 {{define "pcell"}}

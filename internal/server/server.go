@@ -162,6 +162,13 @@ type Server struct {
 	startOnce sync.Once
 }
 
+// Version is the strand binary version, stamped into counts.json's liveness meta by
+// the in-process post-write refresh (defaultRefreshCounts) so it matches the launchd
+// `strand counts` run's stamp — one binary, one version, whether the refresh came from
+// the server or the agent. main sets it from its own ldflags-stamped Version at startup;
+// the "dev" default matches an unstamped build.
+var Version = "dev"
+
 // externalFreshnessBound is the maximum idle time before the authoritative JSON
 // snapshot is checked. Detection additionally takes one serialized bd list
 // command. Browsers are notified by SSE; they do not poll.
@@ -243,7 +250,7 @@ func (s *Server) goBackground(timeout time.Duration, fn func(context.Context)) {
 // cycle either way.
 func (s *Server) defaultRefreshCounts(repo registry.Repo) {
 	s.goBackground(10*time.Second, func(_ context.Context) {
-		if err := counts.Run([]string{repo.Path}); err != nil {
+		if err := counts.Run([]string{repo.Path}, Version); err != nil {
 			log.Printf("strand: post-write counts refresh for %s: %v", repo.Path, err)
 		}
 	})
@@ -458,6 +465,11 @@ type pageData struct {
 // a click-to-list filter (handleList's pulse cuts).
 type Pulse struct {
 	Waiting, Open, InProgress, Blocked, Closed, Deferred int
+	// Stale is true when the shared counts cache's last refresh is older than 2× the
+	// refresher's interval — the launchd agent is dead or wedged, so these numbers may
+	// be silently frozen (st-18l). The masthead renders a subtle stale badge; it does not
+	// suppress the counts, which are still the last-good spread.
+	Stale bool
 }
 
 // computePulse builds the masthead spread for the active repo. It first reads the
@@ -471,6 +483,10 @@ type Pulse struct {
 // line, the coherence dk asked for. A failed read degrades to zero counts rather
 // than failing the whole page — the pulse is ambient, not load-bearing.
 func (s *Server) computePulse(ctx context.Context, src IssueSource, repo registry.Repo) Pulse {
+	// Staleness is a property of the shared cache's liveness (its meta stamp), not of any
+	// one repo's row, so it's read the same whether this repo hits counts.json or falls
+	// back to bd. ok=false (no stamp / unreadable) leaves Stale false — no false alarm.
+	stale, _ := s.counts.Stale(time.Now())
 	if b, ok := s.counts.Lookup(repo.Path); ok {
 		return Pulse{
 			Waiting:    b.Waiting,
@@ -479,9 +495,10 @@ func (s *Server) computePulse(ctx context.Context, src IssueSource, repo registr
 			Blocked:    b.Blocked,
 			Closed:     b.Closed,
 			Deferred:   b.Deferred,
+			Stale:      stale,
 		}
 	}
-	var p Pulse
+	p := Pulse{Stale: stale}
 	if st, err := src.Stats(ctx); err == nil {
 		// bd stats seeds the degraded (List-failed) baseline for the raw status counts.
 		// ● is deliberately NOT seeded here: bd's blocked_issues is a DIFFERENT metric than

@@ -17,7 +17,43 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 )
+
+// MetaKey is the reserved top-level key in counts.json under which the refresher
+// stamps its liveness meta (last-run time + binary version). It is not a repo root
+// — every real key is an absolute path — so keyed readers (Lookup, the shell status
+// line's `.[$repo]`) never collide with it, and a value shaped unlike an entry
+// unmarshals into a zero entry there, harmless. It lets a dead or wedged refresher
+// be seen (st-18l/B4) instead of freezing counts.json indistinguishably from "nothing
+// changed."
+const MetaKey = "_meta"
+
+// RefreshInterval is the cadence the launchd agent com.trixi.bd-counts fires `strand
+// counts` at — the ONE source of that number on the strand side, mirroring the plist's
+// StartInterval (cc-plugins: plugins/wrap/scripts/bd-counts-install.sh, <integer>120).
+// Staleness is judged against 2× this: a single missed tick is normal jitter, two is a
+// refresher that stopped.
+const RefreshInterval = 120 * time.Second
+
+// Meta is the refresher's liveness stamp, written under MetaKey. LastRun is the unix
+// second the last `strand counts` run finished; Version is the binary that wrote it,
+// so a stale ~/go/bin/strand reintroducing predicate drift (B2) is legible in the file.
+type Meta struct {
+	LastRun int64  `json:"lastRun"`
+	Version string `json:"version"`
+}
+
+// IsStale is the stale-detection rule, pure so it tests without a file: the counts
+// cache is stale when its last run is older than 2× the refresh interval. A lastRun of
+// 0 (no stamp) is treated as not-stale here — the absence of a stamp is handled by the
+// ok return of Reader.Stale, not by flagging every unstamped cache as broken.
+func IsStale(lastRun int64, now time.Time) bool {
+	if lastRun == 0 {
+		return false
+	}
+	return now.Sub(time.Unix(lastRun, 0)) > 2*RefreshInterval
+}
 
 // Buckets is one repo's aggregate counts, mapped to strand's masthead glyphs. The
 // field order matches the Pulse strip so a caller can copy them across by name.
@@ -88,7 +124,11 @@ func (r *Reader) Lookup(repoPath string) (Buckets, bool) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return Buckets{}, false
 	}
-	e, ok := m[filepath.Clean(repoPath)]
+	key := filepath.Clean(repoPath)
+	if key == MetaKey {
+		return Buckets{}, false // the reserved liveness stamp is not a repo row
+	}
+	e, ok := m[key]
 	if !ok {
 		return Buckets{}, false
 	}
@@ -100,4 +140,36 @@ func (r *Reader) Lookup(repoPath string) (Buckets, bool) {
 		Closed:     e.BCl,
 		Deferred:   e.BDf,
 	}, true
+}
+
+// Meta returns the refresher's liveness stamp from counts.json. ok is false — the
+// caller shows no stale flag rather than a false alarm — when the file is missing,
+// unreadable, malformed, or carries no MetaKey stamp (a pre-st-18l cache). The dynamic
+// repo-path keys are ignored: only MetaKey is decoded.
+func (r *Reader) Meta() (Meta, bool) {
+	data, err := os.ReadFile(r.path)
+	if err != nil {
+		return Meta{}, false
+	}
+	var wrap struct {
+		Meta Meta `json:"_meta"`
+	}
+	if err := json.Unmarshal(data, &wrap); err != nil {
+		return Meta{}, false
+	}
+	if wrap.Meta.LastRun == 0 {
+		return Meta{}, false // no stamp — not a stamped-then-stale cache
+	}
+	return wrap.Meta, true
+}
+
+// Stale reports whether the counts cache is older than 2× the refresh interval — a
+// dead or wedged refresher (st-18l). ok is false when there's no meta stamp to judge,
+// so the caller renders no flag rather than a false alarm on an unstamped cache.
+func (r *Reader) Stale(now time.Time) (stale, ok bool) {
+	m, ok := r.Meta()
+	if !ok {
+		return false, false
+	}
+	return IsStale(m.LastRun, now), true
 }
