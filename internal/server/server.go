@@ -220,9 +220,12 @@ func defaultSuggestLLM() (suggest.Completer, bool) {
 // goroutine lands, so no bd spawn or snapshot-cache write outlives shutdown.
 func (s *Server) goBackground(timeout time.Duration, fn func(context.Context)) {
 	s.bgWG.Go(func() {
-		ctx, cancel := context.WithCancel(s.bgCtx)
+		var ctx context.Context
+		var cancel context.CancelFunc
 		if timeout > 0 {
 			ctx, cancel = context.WithTimeout(s.bgCtx, timeout)
+		} else {
+			ctx, cancel = context.WithCancel(s.bgCtx)
 		}
 		defer cancel()
 		fn(ctx)
@@ -296,6 +299,13 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		http.Error(w, "streaming unavailable", http.StatusInternalServerError)
 		return
+	}
+	// http.Server.WriteTimeout is a fixed deadline from request start, not reset
+	// per write — an idle SSE stream would otherwise be killed on that clock
+	// (dropping every open tab and forcing an EventSource reconnect) even though
+	// the connection is healthy. Clear it for this handler only.
+	if rc := http.NewResponseController(w); rc != nil {
+		_ = rc.SetWriteDeadline(time.Time{})
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

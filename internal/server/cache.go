@@ -114,7 +114,12 @@ func (c *snapshotCache) refreshList(ctx context.Context, repo string, src IssueS
 	f := &refreshFlight{done: make(chan struct{})}
 	c.flights[repo] = f
 	c.mu.Unlock()
-	list, err := src.List(ctx, bd.ListOpts{})
+	// The fetch is a shared flight: other goroutines are waiting on f.done with
+	// their own live contexts. Detach from the leader's ctx (context.WithoutCancel)
+	// so a canceled leader doesn't hand every follower a spurious ctx.Err() —
+	// only this call's deadline/cancel would leak into a result the followers
+	// never asked to be canceled by.
+	list, err := src.List(context.WithoutCancel(ctx), bd.ListOpts{})
 	c.mu.Lock()
 	changed := false
 	if err == nil {

@@ -16,11 +16,15 @@ type refreshStub struct {
 	calls   int
 	block   chan struct{}
 	listErr error
+	started chan struct{} // closed once, on the first List call
 }
 
 func (s *refreshStub) List(ctx context.Context, opts bd.ListOpts) ([]bd.Issue, error) {
 	s.mu.Lock()
 	s.calls++
+	if s.calls == 1 && s.started != nil {
+		close(s.started)
+	}
 	block, err := s.block, s.listErr
 	issues := append([]bd.Issue(nil), s.issues...)
 	s.mu.Unlock()
@@ -37,7 +41,7 @@ func (s *refreshStub) List(ctx context.Context, opts bd.ListOpts) ([]bd.Issue, e
 func (s *refreshStub) callCount() int { s.mu.Lock(); defer s.mu.Unlock(); return s.calls }
 
 func TestRefreshCoalescesConcurrentReads(t *testing.T) {
-	src := &refreshStub{stubBD: stubBD{issues: sampleIssues}, block: make(chan struct{})}
+	src := &refreshStub{stubBD: stubBD{issues: sampleIssues}, block: make(chan struct{}), started: make(chan struct{})}
 	cache := newSnapshotCache(func() time.Time { return cacheNow })
 	const readers = 20
 	var wg sync.WaitGroup
@@ -50,7 +54,10 @@ func TestRefreshCoalescesConcurrentReads(t *testing.T) {
 			}
 		}()
 	}
-	for src.callCount() == 0 {
+	select {
+	case <-src.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("refresh goroutine never started")
 	}
 	close(src.block)
 	wg.Wait()
