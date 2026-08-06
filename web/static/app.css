@@ -312,6 +312,7 @@ header {
    map (real epics + a loose block) renders exactly as before. */
 .epic[data-epic="__loose__"]:only-child .story {
   --sc: color-mix(in srgb, var(--rc) calc(100% - var(--si, 0) * 12%), var(--bg));
+
   background: var(--sc);
 }
 .epic[data-epic="__loose__"]:only-child .story:hover {
