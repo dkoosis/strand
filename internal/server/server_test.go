@@ -594,6 +594,44 @@ func TestHomeRepoDeepLinkRegistersUnknownRepo(t *testing.T) {
 	}
 }
 
+// TestHomeRepoDeepLinkCrossSiteDoesNotRegister pins the CodeRabbit #102 fix:
+// registering an unknown repo from `?repo=` is a real write (it persists a new
+// registry entry), so a cross-site GET — e.g. an <img src> a malicious page
+// points at localhost — must not be able to trigger it, the same way
+// guardCrossSite blocks cross-site POST/DELETE. The request still renders (a
+// deep-link GET is not itself blocked), it just falls back to the active repo
+// instead of silently registering the named one.
+func TestHomeRepoDeepLinkCrossSiteDoesNotRegister(t *testing.T) {
+	tmpl, err := web.Templates()
+	if err != nil {
+		t.Fatalf("parse templates: %v", err)
+	}
+	unregisteredPath := t.TempDir()
+	if err := os.Mkdir(filepath.Join(unregisteredPath, ".beads"), 0o755); err != nil {
+		t.Fatalf("seed .beads: %v", err)
+	}
+	reg := registry.InMemory(demoRepo)
+	srv := New(func(registry.Repo) IssueSource { return &stubBD{issues: sampleIssues} },
+		reg, tmpl, web.Static(), strand.Synthesis{NorthStar: "x"})
+	srv.suggestLLM = func() (suggest.Completer, bool) { return nil, false }
+	srv.counts = bdcounts.NewReaderAt(filepath.Join(t.TempDir(), "counts.json"))
+
+	rec := sendWithHeaders(t, srv, http.MethodGet, "/?repo="+unregisteredPath,
+		map[string]string{"Sec-Fetch-Site": "cross-site"})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cross-site deep-link GET = %d, want 200 (rendered, just not registered)", rec.Code)
+	}
+	if active, ok := reg.Active(); !ok || active.Path != demoRepo.Path {
+		t.Errorf("registry active = %+v, ok=%v; want the original active repo untouched", active, ok)
+	}
+	for _, repo := range reg.Repos() {
+		if repo.Path == unregisteredPath {
+			t.Error("cross-site deep-link GET registered the unknown repo")
+		}
+	}
+}
+
 // TestPulseBarPollsForOutOfBandWrites pins the st-2fy.4 fix: the masthead pulse
 // bar must poll /pulse on an interval, not just on this tab's own refreshList
 // event or the cold-load re-fetch — otherwise a bd write from outside this tab

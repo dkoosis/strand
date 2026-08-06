@@ -567,7 +567,11 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 			// active repo, so the click can't silently show the wrong report.
 			// Add's own ErrNoBeads (or any other failure) is still a silent
 			// fallback — a bad/unregisterable path shouldn't error the landing.
-			if _, err := s.reg.Switch(p); errors.Is(err, registry.ErrUnknownRepo) {
+			// Add persists a new registry entry — a real write, unlike Switch's
+			// re-point — so gate it on sameSite the way guardCrossSite gates every
+			// other write route (CodeRabbit #102: an unguarded GET write is a CSRF
+			// vector — a cross-site <img src> could register any local .beads path).
+			if _, err := s.reg.Switch(p); errors.Is(err, registry.ErrUnknownRepo) && sameSite(r) {
 				_, _ = s.reg.Add(p)
 			}
 		}
