@@ -96,7 +96,7 @@ func refresh(ctx context.Context, cfg *config) error {
 
 	changed := false
 	for _, root := range targets {
-		cur := lastTouched(root)
+		cur := changeKey(root)
 		prior := seen[root]
 		mtimeChanged := prior.mtime != cur
 		_, cached := rows[root]
@@ -211,9 +211,11 @@ func tmpPath(path string) string {
 }
 
 // repoState is one repo's carry-forward bookkeeping between refresh runs: the
-// last-observed last-touched mtime, plus the st-3p8 pending bit (a change-triggered
-// derive schedules exactly one guaranteed follow-up derive next cycle — see
-// nextPending). Stored as the state file's 2nd/3rd tab-separated columns.
+// last-observed change key (changeKey — the Dolt store mtime, or last-touched when
+// no store), plus the st-3p8 pending bit (a change-triggered derive schedules exactly
+// one guaranteed follow-up derive next cycle — see nextPending). Stored as the state
+// file's 2nd/3rd tab-separated columns. The field is named mtime for the on-disk
+// format's sake; its value is whatever changeKey returned that run.
 type repoState struct {
 	mtime   int64
 	pending bool
