@@ -277,6 +277,46 @@ func TestRefreshChangeTriggeredFailureReArmsPending(t *testing.T) {
 	}
 }
 
+// TestRefreshExplicitPreservesOtherReposGateState is the st-dd9 repro: an explicit-mode
+// run for one repo must not truncate the mtime-gate state of the repos it did not visit.
+// Two repos are first settled (a full --all derive records gate state for both). An
+// explicit `strand counts <repo-a>` then visits only repo-a. If writeState replaced the
+// state file wholesale, repo-b's gate entry would vanish, so the next changed-mode run
+// would find no prior mtime for repo-b and cold-recompute it — the ~60s thrash this fix
+// removes. The final changed run must recompute NOTHING: both repos stay settled.
+func TestRefreshExplicitPreservesOtherReposGateState(t *testing.T) {
+	projects := t.TempDir()
+	cache := t.TempDir()
+	a := mkRepo(t, projects, "repo-a")
+	mkRepo(t, projects, "repo-b")
+
+	// Seed: --all derives and settles both repos (modeAll records gate state, pending clear).
+	seed := config{cacheDir: cache, projects: projects, mode: modeAll,
+		newSource: func(string) source { return oneOpenBead() }}
+	if err := refresh(context.Background(), &seed); err != nil {
+		t.Fatalf("seed refresh: %v", err)
+	}
+
+	// Explicit run for repo-a only — must not drop repo-b's gate entry.
+	explicit := config{cacheDir: cache, projects: projects, mode: modeExplicit,
+		targets: []string{a}, newSource: func(string) source { return oneOpenBead() }}
+	if err := refresh(context.Background(), &explicit); err != nil {
+		t.Fatalf("explicit refresh: %v", err)
+	}
+
+	// Final changed-mode run: with repo-b's gate state preserved, both repos are settled
+	// and unchanged, so nothing recomputes. Truncation would force repo-b's recompute.
+	var calls int
+	final := config{cacheDir: cache, projects: projects, mode: modeChanged,
+		newSource: func(string) source { calls++; return oneOpenBead() }}
+	if err := refresh(context.Background(), &final); err != nil {
+		t.Fatalf("final refresh: %v", err)
+	}
+	if calls != 0 {
+		t.Errorf("final changed run recomputed %d repo(s), want 0 — explicit run truncated another repo's gate state", calls)
+	}
+}
+
 // TestRefreshExplicitDirs: named roots are visited directly, no discovery scan.
 func TestRefreshExplicitDirs(t *testing.T) {
 	projects := t.TempDir() // deliberately empty — explicit mode must ignore discovery
