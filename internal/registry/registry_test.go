@@ -129,6 +129,62 @@ func TestAddRequiresBeads(t *testing.T) {
 	}
 }
 
+// TestResolve pins st-ga4: a per-request `?repo=` param resolves without any
+// registry mutation — a known path returns its entry, an unknown-but-valid
+// path (has .beads) returns an ephemeral unregistered Repo, an unresolvable
+// path reports ok=false, and an empty param defers to Active(). None of these
+// touch r.repos or r.active or trigger a disk write.
+func TestResolve(t *testing.T) {
+	root := t.TempDir()
+	known := mkRepo(t, root, "known")
+	unregistered := mkRepo(t, root, "unregistered")
+	bare := filepath.Join(root, "bare")
+	if err := os.MkdirAll(bare, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	reg := InMemory(Repo{Name: "known", Path: known, LastUsed: time.Now()})
+
+	t.Run("empty param defers to Active", func(t *testing.T) {
+		repo, ok := reg.Resolve("")
+		if !ok || repo.Path != known {
+			t.Errorf("Resolve(\"\") = %+v, %v; want the active repo", repo, ok)
+		}
+	})
+
+	t.Run("known path returns its registered entry", func(t *testing.T) {
+		repo, ok := reg.Resolve(known)
+		if !ok || repo.Name != "known" {
+			t.Errorf("Resolve(known) = %+v, %v; want the registered entry", repo, ok)
+		}
+	})
+
+	t.Run("unregistered but valid path resolves ephemerally", func(t *testing.T) {
+		repo, ok := reg.Resolve(unregistered)
+		if !ok || repo.Path != unregistered {
+			t.Errorf("Resolve(unregistered) = %+v, %v; want an ephemeral match", repo, ok)
+		}
+		if len(reg.Repos()) != 1 {
+			t.Errorf("Resolve must not register: known repos = %v", reg.Repos())
+		}
+		if active, ok := reg.Active(); !ok || active.Path != known {
+			t.Errorf("Resolve must not re-point active: got %+v, %v", active, ok)
+		}
+	})
+
+	t.Run("no .beads is unresolved", func(t *testing.T) {
+		if _, ok := reg.Resolve(bare); ok {
+			t.Error("Resolve(bare dir with no .beads) = ok, want false")
+		}
+	})
+
+	t.Run("nonexistent path is unresolved", func(t *testing.T) {
+		if _, ok := reg.Resolve(filepath.Join(root, "nope")); ok {
+			t.Error("Resolve(nonexistent path) = ok, want false")
+		}
+	})
+}
+
 // TestOpenPersistsDiscovered: first run discovers repos under the root and writes
 // them to the registry file.
 func TestOpenPersistsDiscovered(t *testing.T) {

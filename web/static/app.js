@@ -529,7 +529,12 @@ if (window.EventSource) {
   let changes = null;
   const connectEvents = () => {
     if (changes) return;
-    changes = new EventSource("/events");
+    // The scoped repo rides in the URL, mirroring the hx-vals every htmx
+    // fragment carries (data-repo is stamped on <body> from the same
+    // pageData.RepoPath) — EventSource can't send arbitrary request bodies or
+    // headers, so the query param is the only carrier available (st-ga4).
+    const repo = document.body.dataset.repo || "";
+    changes = new EventSource("/events?repo=" + encodeURIComponent(repo));
     changes.addEventListener("beads", () => htmx.trigger(document.body, "refreshList"));
   };
   document.addEventListener("visibilitychange", () => {

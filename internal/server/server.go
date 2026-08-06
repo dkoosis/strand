@@ -336,17 +336,22 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// source resolves the active repo's issue source. ok is false when no repo is
-// active, which the landing renders as the empty state.
-func (s *Server) source() (IssueSource, registry.Repo, bool) {
-	repo, ok := s.reg.Active()
+// source resolves this request's repo and its issue source. A `?repo=` query
+// param scopes THIS request only — via registry.Resolve, which never mutates
+// the registry or writes repos.json (st-ga4: the deep-link that used to
+// re-point the global active repo on a plain GET). No param falls back to the
+// persistent active repo. ok is false when neither resolves, which the
+// landing renders as the empty state.
+func (s *Server) source(r *http.Request) (IssueSource, registry.Repo, bool) {
+	repo, ok := s.reg.Resolve(r.URL.Query().Get("repo"))
 	if !ok {
 		return nil, registry.Repo{}, false
 	}
-	// Wrap the bd source in the snapshot cache, keyed by the active repo's path.
-	// Reads (List/Deps) are served from the per-repo snapshot; writes pass through
-	// and drop that repo's snapshot. Keying on the path makes a repo switch a
-	// natural miss — the new repo has no entry — so switching re-scopes for free.
+	// Wrap the bd source in the snapshot cache, keyed by the resolved repo's
+	// path. Reads (List/Deps) are served from the per-repo snapshot; writes pass
+	// through and drop that repo's snapshot. Keying on the path makes scoping a
+	// different repo a natural cache miss — a repo with no entry yet — so a
+	// deep-link re-scopes for free without touching any other repo's snapshot.
 	return &cachingSource{IssueSource: s.srcFor(repo), cache: s.cache, repo: repo.Path}, repo, true
 }
 
@@ -446,8 +451,14 @@ type pageData struct {
 	List   listView
 	Pulse  Pulse
 	Repos  repoMenu
-	Empty  bool
-	AsOf   string // "data as of HH:MM" for the refresh readout; empty when no snapshot
+	// RepoPath is this page's scoped repo (registry.Repo.Path — empty when no
+	// repo resolved). The page carries it on every htmx fragment it fires via
+	// an inherited hx-vals, and on the SSE EventSource URL via data-repo, so a
+	// `?repo=` deep-link scopes the whole page's lifetime, not just this one
+	// render (st-ga4).
+	RepoPath string
+	Empty    bool
+	AsOf     string // "data as of HH:MM" for the refresh readout; empty when no snapshot
 	// ActiveFilter is the pulse cut the landing opened with — the token from a
 	// deep-link `/?filter=<token>` (the status line's OSC 8 links land here). It
 	// renders onto #viewport's data-filter so the client's syncChrome() lights the
@@ -548,35 +559,16 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	// A deep-link may name the repo it wants shown (`/?repo=<path>`): the status
 	// line's OSC 8 links carry the line's own repo path so a click lands on THAT
-	// repo, not whatever was last active (st-vai). Switch before resolving the
-	// source so buildStrand, the pulse, and every follow-on htmx fragment (which all
-	// read the active repo) scope to the named repo. This is the one GET that
-	// re-points the active repo; that is the point of a deep-link (a localhost
-	// navigation), not the cross-site write the mutate guard defends against.
-	// filepath.Clean so a trailing slash or redundant segment still matches the
-	// registry's canonical absolute paths; skip the switch (and Switch's disk
-	// write) when the link already names the active repo — a re-click of the same
-	// status-line link is the common case.
-	if p := r.URL.Query().Get("repo"); p != "" {
-		p = filepath.Clean(p)
-		if active, ok := s.reg.Active(); !ok || active.Path != p {
-			// Switch only re-points to an ALREADY-registered repo — a status-line
-			// link can name one strand has never added (st-55q: e.g. itzy, never
-			// registered but has a valid .beads). On that miss, register it (Add
-			// validates .beads and makes it active) before falling back to the
-			// active repo, so the click can't silently show the wrong report.
-			// Add's own ErrNoBeads (or any other failure) is still a silent
-			// fallback — a bad/unregisterable path shouldn't error the landing.
-			// Add persists a new registry entry — a real write, unlike Switch's
-			// re-point — so gate it on sameSite the way guardCrossSite gates every
-			// other write route (CodeRabbit #102: an unguarded GET write is a CSRF
-			// vector — a cross-site <img src> could register any local .beads path).
-			if _, err := s.reg.Switch(p); errors.Is(err, registry.ErrUnknownRepo) && sameSite(r) {
-				_, _ = s.reg.Add(p)
-			}
-		}
-	}
-	src, repo, ok := s.source()
+	// repo, not whatever was last active. source(r) resolves it per-request —
+	// via registry.Resolve, covering an already-registered repo, an unregistered
+	// but valid one (st-55q: e.g. itzy, never added but has a working .beads),
+	// or falling back to the persistent active repo — without mutating the
+	// registry or writing repos.json (st-ga4: a GET must not have that side
+	// effect; that was the CSRF vector CodeRabbit flagged on #102, and it also
+	// leaked the deep-link's repo into every other open tab). The scope lives
+	// only in this request's query param and, via source(r), threads through
+	// buildStrand, the pulse, and every htmx fragment the page fires.
+	src, repo, ok := s.source(r)
 	if !ok {
 		s.render(w, "page", pageData{Empty: true, Repos: s.repoMenu("")})
 		return
@@ -629,6 +621,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		List:         list,
 		Pulse:        pulse,
 		Repos:        s.repoMenu(""),
+		RepoPath:     repo.Path,
 		AsOf:         s.asOf(repo),
 		ActiveFilter: active,
 	})
@@ -652,7 +645,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePulse(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, repo, ok := s.source()
+	src, repo, ok := s.source(r)
 	if !ok {
 		return
 	}
@@ -665,8 +658,8 @@ func (s *Server) handlePulse(w http.ResponseWriter, r *http.Request) {
 // same store) needs this deliberate invalidate. The HX-Refresh response header
 // makes htmx do a full document reload, which re-runs handleHome and re-warms List
 // + Deps from bd's truth. No active repo is a no-op reload.
-func (s *Server) handleRefresh(w http.ResponseWriter, _ *http.Request) {
-	if _, repo, ok := s.source(); ok {
+func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	if _, repo, ok := s.source(r); ok {
 		s.cache.invalidate(repo.Path)
 	}
 	w.Header().Set("HX-Refresh", "true")
@@ -686,7 +679,7 @@ func (s *Server) asOf(repo registry.Repo) string {
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, repo, ok := s.source()
+	src, repo, ok := s.source(r)
 	if !ok {
 		s.render(w, "list", listView{})
 		return
@@ -1053,7 +1046,7 @@ type boardColumn struct {
 func (s *Server) handleBoard(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, repo, ok := s.source()
+	src, repo, ok := s.source(r)
 	if !ok {
 		s.render(w, "board", boardView{Pivots: boardPivots, Pivot: boardPivots[0]})
 		return
@@ -1182,7 +1175,7 @@ func pivotByName(name string) pivotField {
 func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, repo, ok := s.source()
+	src, repo, ok := s.source(r)
 	if !ok {
 		s.renderError(w, errNoRepo)
 		return
@@ -1236,7 +1229,7 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRank(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, repo, ok := s.source()
+	src, repo, ok := s.source(r)
 	if !ok {
 		s.renderError(w, errNoRepo)
 		return
@@ -1293,7 +1286,7 @@ type insightsView struct {
 func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, repo, ok := s.source()
+	src, repo, ok := s.source(r)
 	if !ok {
 		s.render(w, "insights", insightsView{})
 		return
@@ -1357,7 +1350,7 @@ type drawerData struct {
 func (s *Server) handleBead(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, _, ok := s.source()
+	src, _, ok := s.source(r)
 	if !ok {
 		s.renderError(w, errNoRepo)
 		return
@@ -1398,7 +1391,7 @@ type sectionPreview struct {
 func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, repo, ok := s.source()
+	src, repo, ok := s.source(r)
 	if !ok {
 		s.renderError(w, errNoRepo)
 		return
@@ -1628,7 +1621,7 @@ func wrapWrite(action string, err error) error {
 func (s *Server) writeAndRefresh(w http.ResponseWriter, r *http.Request, id string, write writeFunc) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, repo, ok := s.source()
+	src, repo, ok := s.source(r)
 	if !ok {
 		s.renderError(w, errNoRepo)
 		return
@@ -1749,7 +1742,7 @@ func (s *Server) handleNewForm(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
 	form := createForm{Type: "task", Priority: "2"}
-	if src, _, ok := s.source(); ok {
+	if src, _, ok := s.source(r); ok {
 		form.Parents = candidateParents(ctx, src)
 	}
 	s.render(w, "createForm", form)
@@ -1791,7 +1784,7 @@ type createForm struct {
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, repo, ok := s.source()
+	src, repo, ok := s.source(r)
 	if !ok {
 		s.renderError(w, errNoRepo)
 		return
@@ -1926,7 +1919,7 @@ func (s *Server) handleAttachForm(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
 	form := attachForm{StoryID: r.URL.Query().Get("story")}
-	if src, _, ok := s.source(); ok {
+	if src, _, ok := s.source(r); ok {
 		form.Epics = candidateEpics(ctx, src)
 		if iss, err := src.Show(ctx, form.StoryID); err == nil && iss != nil {
 			form.StoryTitle = iss.Title
@@ -1964,7 +1957,7 @@ func candidateEpics(ctx context.Context, src readSource) []parentOpt {
 func (s *Server) handleAttachEpic(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, _, ok := s.source()
+	src, _, ok := s.source(r)
 	if !ok {
 		s.renderError(w, errNoRepo)
 		return
@@ -2033,7 +2026,7 @@ func (s *Server) resolveAttachEpic(ctx context.Context, src IssueSource, form *a
 func (s *Server) handleDeletePreview(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, _, ok := s.source()
+	src, _, ok := s.source(r)
 	if !ok {
 		s.renderError(w, errNoRepo)
 		return
@@ -2058,7 +2051,7 @@ type deleteData struct {
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
-	src, _, ok := s.source()
+	src, _, ok := s.source(r)
 	if !ok {
 		s.renderError(w, errNoRepo)
 		return
