@@ -550,18 +550,30 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	// line's OSC 8 links carry the line's own repo path so a click lands on THAT
 	// repo, not whatever was last active (st-vai). Switch before resolving the
 	// source so buildStrand, the pulse, and every follow-on htmx fragment (which all
-	// read the active repo) scope to the named repo. An unknown or unregistered path
-	// is ignored — the landing falls back to the active repo rather than erroring on
-	// a stale bookmark. This is the one GET that re-points the active repo; that is
-	// the point of a deep-link (a localhost navigation), not the cross-site write the
-	// mutate guard defends against. filepath.Clean so a trailing slash or redundant
-	// segment still matches the registry's canonical absolute paths; skip the switch
-	// (and Switch's disk write) when the link already names the active repo — a
-	// re-click of the same status-line link is the common case.
+	// read the active repo) scope to the named repo. This is the one GET that
+	// re-points the active repo; that is the point of a deep-link (a localhost
+	// navigation), not the cross-site write the mutate guard defends against.
+	// filepath.Clean so a trailing slash or redundant segment still matches the
+	// registry's canonical absolute paths; skip the switch (and Switch's disk
+	// write) when the link already names the active repo — a re-click of the same
+	// status-line link is the common case.
 	if p := r.URL.Query().Get("repo"); p != "" {
 		p = filepath.Clean(p)
 		if active, ok := s.reg.Active(); !ok || active.Path != p {
-			_, _ = s.reg.Switch(p)
+			// Switch only re-points to an ALREADY-registered repo — a status-line
+			// link can name one strand has never added (st-55q: e.g. itzy, never
+			// registered but has a valid .beads). On that miss, register it (Add
+			// validates .beads and makes it active) before falling back to the
+			// active repo, so the click can't silently show the wrong report.
+			// Add's own ErrNoBeads (or any other failure) is still a silent
+			// fallback — a bad/unregisterable path shouldn't error the landing.
+			// Add persists a new registry entry — a real write, unlike Switch's
+			// re-point — so gate it on sameSite the way guardCrossSite gates every
+			// other write route (CodeRabbit #102: an unguarded GET write is a CSRF
+			// vector — a cross-site <img src> could register any local .beads path).
+			if _, err := s.reg.Switch(p); errors.Is(err, registry.ErrUnknownRepo) && sameSite(r) {
+				_, _ = s.reg.Add(p)
+			}
 		}
 	}
 	src, repo, ok := s.source()
