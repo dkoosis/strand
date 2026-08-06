@@ -70,6 +70,7 @@ func Open(file, scanRoot string) (*Registry, error) {
 	if err := r.load(); err != nil {
 		return nil, err
 	}
+	r.pruneDeadLocked()
 	r.merge(discover(scanRoot))
 	r.sortLocked()
 	r.pickActiveLocked()
@@ -194,6 +195,22 @@ func (r *Registry) sortLocked() {
 		}
 		return a.Name < b.Name
 	})
+}
+
+// pruneDeadLocked drops entries whose directory no longer exists — a removed
+// worktree or deleted clone. Left in place, a dead entry can win the
+// most-recently-used active pick, then 502 every view and make the background
+// reconciler retry `bd list` against a gone dir forever (st-f9o). A missing dir
+// is unambiguous (unlike a transient read error), so pruning here is safe.
+// Callers hold the lock (Open constructs before any goroutine reaches r).
+func (r *Registry) pruneDeadLocked() {
+	live := r.repos[:0]
+	for _, repo := range r.repos {
+		if _, err := os.Stat(repo.Path); err == nil {
+			live = append(live, repo)
+		}
+	}
+	r.repos = live
 }
 
 // pickActiveLocked keeps a still-valid active selection, else defaults to the

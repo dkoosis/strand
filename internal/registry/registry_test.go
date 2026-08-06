@@ -152,6 +152,57 @@ func TestOpenPersistsDiscovered(t *testing.T) {
 	}
 }
 
+// TestOpenPrunesDeadEntry: a registry entry whose dir was deleted (a removed
+// worktree) is the most-recently-used, so it would win the active pick and then
+// 502 every view + spam the reconciler (st-f9o). Open drops it, activates the
+// live repo instead, and persists the pruned list.
+func TestOpenPrunesDeadEntry(t *testing.T) {
+	root := t.TempDir()
+	live := mkRepo(t, root, "live")
+	dead := filepath.Join(root, "gone") // never created on disk
+	file := filepath.Join(t.TempDir(), "repos.json")
+
+	now := time.Now()
+	seed := []Repo{
+		{Name: "gone", Path: dead, LastUsed: now},                  // MRU — would be active
+		{Name: "live", Path: live, LastUsed: now.Add(-time.Hour)},
+	}
+	data, err := json.MarshalIndent(seed, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	reg, err := Open(file, root)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	active, ok := reg.Active()
+	if !ok || active.Path != live {
+		t.Fatalf("active = %+v ok=%v, want the live repo", active, ok)
+	}
+	for _, repo := range reg.Repos() {
+		if repo.Path == dead {
+			t.Errorf("dead entry survived prune: %+v", reg.Repos())
+		}
+	}
+	persisted, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []Repo
+	if err := json.Unmarshal(persisted, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, repo := range out {
+		if repo.Path == dead {
+			t.Errorf("dead entry persisted to disk: %+v", out)
+		}
+	}
+}
+
 // TestOpenMissingFileIsEmpty: a registry pointed at a non-existent file with an
 // empty scan root opens clean, with no repos and no active selection.
 func TestOpenMissingFileIsEmpty(t *testing.T) {
