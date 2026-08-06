@@ -164,7 +164,7 @@ func TestOpenPrunesDeadEntry(t *testing.T) {
 
 	now := time.Now()
 	seed := []Repo{
-		{Name: "gone", Path: dead, LastUsed: now},                  // MRU — would be active
+		{Name: "gone", Path: dead, LastUsed: now}, // MRU — would be active
 		{Name: "live", Path: live, LastUsed: now.Add(-time.Hour)},
 	}
 	data, err := json.MarshalIndent(seed, "", "  ")
