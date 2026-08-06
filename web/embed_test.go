@@ -60,6 +60,51 @@ func TestAppJSGuardsSSEWithVisibility(t *testing.T) {
 	}
 }
 
+// TestPageCarriesRepoScopeToFragments pins st-ga4: the page's root element
+// must carry the scoped repo for every htmx fragment it fires, via an
+// hx-vals htmx inherits down to every descendant hx-get/hx-post/hx-patch, and
+// a data-repo attribute for the SSE EventSource (app.js can't reach hx-vals).
+// A regression that drops either carrier silently re-widens fragments back to
+// the server's Active() default instead of the deep-linked scope.
+func TestPageCarriesRepoScopeToFragments(t *testing.T) {
+	html, err := assets.ReadFile("templates/page.html")
+	if err != nil {
+		t.Fatalf("read embedded page.html: %v", err)
+	}
+	src := string(html)
+
+	if !strings.Contains(src, `hx-vals='{"repo":"{{.RepoPath}}"}'`) {
+		t.Fatal("page.html's root element is missing hx-vals carrying .RepoPath — " +
+			"htmx fragments will fall back to the server default instead of the " +
+			"page's scoped repo (st-ga4)")
+	}
+	if !strings.Contains(src, `data-repo="{{.RepoPath}}"`) {
+		t.Fatal("page.html's root element is missing data-repo — app.js's " +
+			"EventSource has no way to read the scoped repo (st-ga4)")
+	}
+}
+
+// TestAppJSEventSourceCarriesScopedRepo pins st-ga4's SSE half: EventSource
+// can't inherit htmx's hx-vals, so app.js must read the page's data-repo
+// attribute and put it on the /events URL itself. A regression to a bare
+// `new EventSource("/events")` silently drops the scope.
+func TestAppJSEventSourceCarriesScopedRepo(t *testing.T) {
+	js, err := assets.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatalf("read embedded app.js: %v", err)
+	}
+	src := string(js)
+
+	if !strings.Contains(src, `document.body.dataset.repo`) {
+		t.Fatal("app.js's EventSource setup no longer reads document.body.dataset.repo — " +
+			"the SSE stream will not carry the page's scoped repo (st-ga4)")
+	}
+	if !strings.Contains(src, `new EventSource("/events?repo="`) {
+		t.Fatal("app.js must open EventSource against \"/events?repo=\" + the scoped " +
+			"repo, not a bare \"/events\" (st-ga4)")
+	}
+}
+
 // TestLooseOnlyMapCarriesShadeSteps pins the st-ps1 fix: a repo with no epics
 // renders one gray catch-all epic, so app.css needs a per-cell --si shade index
 // on every story to make cells distinguishable. The map template must emit

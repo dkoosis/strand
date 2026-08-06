@@ -110,6 +110,44 @@ func (r *Registry) Active() (Repo, bool) {
 	return Repo{}, false
 }
 
+// Lookup returns the known repo at path with no mutation and no persist — the
+// read-only counterpart to Switch/Add. A per-request `?repo=` scope resolves
+// through this, not Switch, so naming a repo to view never re-points the
+// persistent default or touches repos.json (st-ga4).
+func (r *Registry) Lookup(path string) (Repo, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if i := r.indexOf(path); i >= 0 {
+		return r.repos[i], true
+	}
+	return Repo{}, false
+}
+
+// Resolve scopes one request's repo with no side effect on the registry: an
+// empty param defers to Active() (the persistent default); a known path
+// returns its registered Repo; an unknown-but-valid path (has a .beads
+// workspace) returns an ephemeral, unregistered Repo scoped to this request
+// only — the deep-link-to-a-never-added-repo case (st-55q) without st-55q's
+// register-on-GET side effect. An unresolvable param (empty after cleaning,
+// or no .beads) reports ok=false so the caller renders the explicit no-repo
+// state rather than silently falling back to some other repo.
+func (r *Registry) Resolve(param string) (Repo, bool) {
+	if param == "" {
+		return r.Active()
+	}
+	path, err := filepath.Abs(expandHome(filepath.Clean(param)))
+	if err != nil {
+		return Repo{}, false
+	}
+	if repo, ok := r.Lookup(path); ok {
+		return repo, true
+	}
+	if !hasBeads(path) {
+		return Repo{}, false
+	}
+	return Repo{Name: filepath.Base(path), Path: path}, true
+}
+
 // Switch makes path the active repo, stamps it most-recently-used, and persists.
 // An unknown path is ErrUnknownRepo — the caller never silently scopes to nothing.
 func (r *Registry) Switch(path string) (Repo, error) {

@@ -554,12 +554,14 @@ func TestHomeFilterDeepLink(t *testing.T) {
 	}
 }
 
-// TestHomeRepoDeepLinkRegistersUnknownRepo pins st-55q: a status-line deep-link
-// naming a repo strand has never registered (valid .beads, never Add-ed) must
-// land on THAT repo, not silently fall back to whatever was already active.
-// Switch alone only re-points an already-registered path (ErrUnknownRepo on a
-// miss); handleHome must Add it first so the click can't show the wrong report.
-func TestHomeRepoDeepLinkRegistersUnknownRepo(t *testing.T) {
+// TestHomeRepoDeepLinkScopesUnregisteredRepoEphemerally pins st-ga4 (supersedes
+// st-55q): a status-line deep-link naming a repo strand has never registered
+// (valid .beads, never Add-ed) must land on THAT repo for this render, not
+// silently fall back to whatever was already active — but, unlike st-55q's
+// original fix, it must NOT persist: the registry's known-repo list and active
+// selection stay exactly as they were. Scope is per-request now; registering a
+// repo is only ever an explicit POST (handleAddRepo).
+func TestHomeRepoDeepLinkScopesUnregisteredRepoEphemerally(t *testing.T) {
 	tmpl, err := web.Templates()
 	if err != nil {
 		t.Fatalf("parse templates: %v", err)
@@ -589,19 +591,22 @@ func TestHomeRepoDeepLinkRegistersUnknownRepo(t *testing.T) {
 	if strings.Contains(body, `data-id="demo-e1.a"`) {
 		t.Errorf("deep-link to an unregistered repo silently fell back to the active repo's beads:\n%s", body)
 	}
-	if active, ok := reg.Active(); !ok || active.Path != unregisteredPath {
-		t.Errorf("registry active = %+v, ok=%v; want the deep-linked repo registered and active", active, ok)
+	if active, ok := reg.Active(); !ok || active.Path != demoRepo.Path {
+		t.Errorf("registry active = %+v, ok=%v; want the persistent default untouched by a scoping GET", active, ok)
+	}
+	for _, repo := range reg.Repos() {
+		if repo.Path == unregisteredPath {
+			t.Error("a per-request deep-link GET must not persist the repo into the registry's known list")
+		}
 	}
 }
 
-// TestHomeRepoDeepLinkCrossSiteDoesNotRegister pins the CodeRabbit #102 fix:
-// registering an unknown repo from `?repo=` is a real write (it persists a new
-// registry entry), so a cross-site GET — e.g. an <img src> a malicious page
-// points at localhost — must not be able to trigger it, the same way
-// guardCrossSite blocks cross-site POST/DELETE. The request still renders (a
-// deep-link GET is not itself blocked), it just falls back to the active repo
-// instead of silently registering the named one.
-func TestHomeRepoDeepLinkCrossSiteDoesNotRegister(t *testing.T) {
+// TestHomeRepoDeepLinkCrossSiteStillScopes pins the CodeRabbit #102 concern from
+// the other direction: since GET home no longer writes anything (st-ga4 dropped
+// the register-on-GET this guarded), a cross-site GET is safe to scope exactly
+// like a same-site one — there's no longer a persistence side effect for
+// guardCrossSite-style origin checking to gate.
+func TestHomeRepoDeepLinkCrossSiteStillScopes(t *testing.T) {
 	tmpl, err := web.Templates()
 	if err != nil {
 		t.Fatalf("parse templates: %v", err)
@@ -610,9 +615,15 @@ func TestHomeRepoDeepLinkCrossSiteDoesNotRegister(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(unregisteredPath, ".beads"), 0o755); err != nil {
 		t.Fatalf("seed .beads: %v", err)
 	}
+	unregisteredIssues := []bd.Issue{{ID: "other-1", Title: "Other repo's bead", IssueType: "task", Status: "open"}}
 	reg := registry.InMemory(demoRepo)
-	srv := New(func(registry.Repo) IssueSource { return &stubBD{issues: sampleIssues} },
-		reg, tmpl, web.Static(), strand.Synthesis{NorthStar: "x"})
+	srcFor := func(r registry.Repo) IssueSource {
+		if r.Path == unregisteredPath {
+			return &stubBD{issues: unregisteredIssues}
+		}
+		return &stubBD{issues: sampleIssues}
+	}
+	srv := New(srcFor, reg, tmpl, web.Static(), strand.Synthesis{NorthStar: "x"})
 	srv.suggestLLM = func() (suggest.Completer, bool) { return nil, false }
 	srv.counts = bdcounts.NewReaderAt(filepath.Join(t.TempDir(), "counts.json"))
 
@@ -620,10 +631,13 @@ func TestHomeRepoDeepLinkCrossSiteDoesNotRegister(t *testing.T) {
 		map[string]string{"Sec-Fetch-Site": "cross-site"})
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("cross-site deep-link GET = %d, want 200 (rendered, just not registered)", rec.Code)
+		t.Fatalf("cross-site deep-link GET = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `data-id="other-1"`) {
+		t.Errorf("cross-site deep-link should still scope the render (no persistence to guard):\n%s", rec.Body.String())
 	}
 	if active, ok := reg.Active(); !ok || active.Path != demoRepo.Path {
-		t.Errorf("registry active = %+v, ok=%v; want the original active repo untouched", active, ok)
+		t.Errorf("registry active = %+v, ok=%v; want the persistent default untouched", active, ok)
 	}
 	for _, repo := range reg.Repos() {
 		if repo.Path == unregisteredPath {

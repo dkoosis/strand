@@ -15,7 +15,7 @@
 <script src="/static/vendor/sortable.min.js" defer></script>
 <script src="/static/app.js" defer></script>
 </head>
-<body>
+<body data-repo="{{.RepoPath}}" hx-vals='{"repo":"{{.RepoPath}}"}'>
 <header>
   <span class="brand"><img class="brand-mark" src="/static/icons/logo.png" alt="" width="22" height="22">strand</span>
   <div class="repo-wrap">

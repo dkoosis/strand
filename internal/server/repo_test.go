@@ -80,11 +80,15 @@ func TestSwitchRepoReScopes(t *testing.T) {
 	}
 }
 
-// TestHomeRepoDeepLinkScopes: a `/?repo=<path>` deep-link (the status line's OSC 8
-// link carrying its own repo) switches the active repo before rendering, so the
-// landing — and every follow-on fragment — scopes to the named repo, not whatever
-// was last active (st-vai). A combined `?repo=&filter=` still applies the pulse cut.
-func TestHomeRepoDeepLinkScopes(t *testing.T) {
+// TestHomeRepoDeepLinkScopesPerRequest pins st-ga4: a `/?repo=<path>` deep-link
+// (the status line's OSC 8 link carrying its own repo) scopes THAT request's
+// landing to the named repo without touching the persistent active repo — no
+// registry write, and a follow-on request with no `?repo=` reads the untouched
+// default, not whatever the deep-link named (the old, now-superseded, sticky
+// st-vai behavior). A combined `?repo=&filter=` still applies the pulse cut,
+// and every fragment carries its own scope the same way the page's hx-vals
+// would (a bare fragment request with no param falls back to the default).
+func TestHomeRepoDeepLinkScopesPerRequest(t *testing.T) {
 	reg := registry.InMemory(
 		registry.Repo{Name: "alpha", Path: "/a"},
 		registry.Repo{Name: "beta", Path: "/b"},
@@ -101,18 +105,30 @@ func TestHomeRepoDeepLinkScopes(t *testing.T) {
 	if strings.Contains(body, "Alpha work") {
 		t.Error("deep-link landing still shows the old active repo's beads")
 	}
-
-	// The switch is sticky: a follow-on fragment reads the now-active repo.
-	if lb := do(t, srv, "/list").Body.String(); !strings.Contains(lb, "Beta work") || strings.Contains(lb, "Alpha work") {
-		t.Errorf("fragment after deep-link not scoped to beta:\n%s", lb)
+	if active, ok := reg.Active(); !ok || active.Path != "/a" {
+		t.Errorf("registry active = %+v, ok=%v; a scoping GET must not re-point the default", active, ok)
 	}
 
-	// An unknown path is ignored — the landing keeps the active repo, no error.
-	if eb := do(t, srv, "/?repo=/nope").Body.String(); !strings.Contains(eb, "Beta work") {
-		t.Errorf("unknown ?repo should fall back to the active repo, got:\n%s", eb)
+	// Not sticky: a follow-on fragment with no ?repo= reads the untouched
+	// default (alpha), not the deep-link's beta.
+	if lb := do(t, srv, "/list").Body.String(); !strings.Contains(lb, "Alpha work") || strings.Contains(lb, "Beta work") {
+		t.Errorf("unscoped fragment should read the default (alpha), got:\n%s", lb)
 	}
 
-	// A combined ?repo=&filter= applies both: switch repo, then the pulse cut. A
+	// A fragment that DOES carry the scope (mirroring the page's inherited
+	// hx-vals) resolves to the named repo.
+	if lb := do(t, srv, "/list?repo=/b").Body.String(); !strings.Contains(lb, "Beta work") || strings.Contains(lb, "Alpha work") {
+		t.Errorf("fragment carrying ?repo=/b not scoped to beta:\n%s", lb)
+	}
+
+	// An unknown, unregistered, no-.beads path is unresolved — the landing
+	// renders the explicit empty state rather than silently falling back to
+	// some other repo (no silent fallback, st-ga4).
+	if eb := do(t, srv, "/?repo=/nope").Body.String(); !strings.Contains(eb, "No active beads workspace") {
+		t.Errorf("unresolvable ?repo= should render the empty state, got:\n%s", eb)
+	}
+
+	// A combined ?repo=&filter= applies both: scope repo, then the pulse cut. A
 	// trailing slash still resolves (filepath.Clean) — a hand-typed/bookmarked link.
 	cb := do(t, srv, "/?repo=/a/&filter=open").Body.String()
 	if !strings.Contains(cb, "Alpha work") || strings.Contains(cb, "Beta work") {
