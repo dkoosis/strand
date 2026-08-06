@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -250,10 +251,19 @@ func readState(path string) map[string]repoState {
 }
 
 // writeState records the visited repos' state for the next run's changed-check,
-// atomically like the rows file.
+// atomically like the rows file. It MERGES the just-computed entries over the state
+// already on disk rather than replacing it wholesale: modeExplicit (and any run that
+// visits a subset of the discovered repos) only carries state for its named roots, so
+// a plain overwrite would truncate every other repo's gate entry — the next launchd
+// changed-mode run would then find no prior mtime for those repos and cold-recompute
+// them all (st-dd9). Reading the prior state and overlaying keeps the untouched repos'
+// gate entries intact.
 func writeState(path string, state map[string]repoState) error {
+	merged := readState(path)
+	maps.Copy(merged, state)
+
 	var b strings.Builder
-	for root, st := range state {
+	for root, st := range merged {
 		pendingField := "0"
 		if st.pending {
 			pendingField = "1"
