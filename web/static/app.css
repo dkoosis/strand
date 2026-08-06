@@ -173,6 +173,18 @@ header {
 .pc-closed   .pg { color: var(--st-closed); }
 .pc-deferred .pg { color: var(--st-deferred); }
 
+/* Stale badge — the counts refresher is dead/wedged (st-18l). Subtle amber warning
+   that sits inline with the pulse strip; it flags the numbers as possibly frozen
+   without recoloring or displacing them. */
+.pstale {
+  margin-left: .35rem;
+  color: var(--st-wait);
+  opacity: .8;
+  font-size: var(--fs-2);
+  line-height: 1;
+  cursor: help;
+}
+
 /* ============================================================ view-centric layout
    The active VIEW is the centerpiece (full-width center); the map is demoted to
    a slim ambient minimap rail on the right. A LOUD primary tab strip up top is the

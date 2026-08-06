@@ -31,7 +31,7 @@ func main() {
 	// render path and exits — the launchd agent's entry point. It's a subcommand, not
 	// a flag, so it must branch before the server's flag.Parse claims the args.
 	if len(os.Args) > 1 && os.Args[1] == "counts" {
-		if err := counts.Run(os.Args[2:]); err != nil {
+		if err := counts.Run(os.Args[2:], Version); err != nil {
 			log.Fatalf("strand counts: %v", err)
 		}
 		return
@@ -67,6 +67,7 @@ func main() {
 		return &bd.Client{Dir: repo.Path, Bin: bdBin}
 	}
 	syn := strand.Synthesis{NorthStar: *northStar}
+	server.Version = Version // the in-process post-write counts refresh stamps this into counts.json's meta
 	srv := server.New(srcFor, reg, tmpl, web.Static(), syn)
 	srv.Start()
 
