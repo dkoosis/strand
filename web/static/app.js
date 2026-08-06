@@ -520,9 +520,28 @@ initList();
 // The server performs the bounded bd reconciliation once per process and fans
 // changes out over SSE. Open tabs refresh only when the snapshot actually
 // changes; EventSource reconnects automatically after transient disconnects.
+// Only the visible tab holds the stream: browsers cap HTTP/1.1 connections at
+// 6 per host, and one always-open EventSource per tab exhausts that pool —
+// with 6 strand tabs every further request (GET /repos, POST /repo, the
+// HX-Refresh reload) queues forever and the UI silently dies (st-58m). A
+// hidden tab drops its stream and re-syncs with one refreshList on return.
 if (window.EventSource) {
-  const changes = new EventSource("/events");
-  changes.addEventListener("beads", () => htmx.trigger(document.body, "refreshList"));
+  let changes = null;
+  const connectEvents = () => {
+    if (changes) return;
+    changes = new EventSource("/events");
+    changes.addEventListener("beads", () => htmx.trigger(document.body, "refreshList"));
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      changes?.close();
+      changes = null;
+    } else {
+      connectEvents();
+      htmx.trigger(document.body, "refreshList"); // catch changes missed while hidden
+    }
+  });
+  if (!document.hidden) connectEvents();
 }
 
 // ---- detail drawer ----
