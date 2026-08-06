@@ -305,6 +305,18 @@ header {
   transition: background .1s;
 }
 .story:hover { background: color-mix(in srgb, var(--rc) 85%, #000); }
+/* Loose-only map: a repo with no epics has one gray catch-all epic, so cells
+   can't read apart by epic color. Step each cell's fill toward the page
+   background by its shade index (--si, 0–3 from the template) so a single-epic
+   map still shows distinct clickable cells. Scoped to :only-child so a mixed
+   map (real epics + a loose block) renders exactly as before. */
+.epic[data-epic="__loose__"]:only-child .story {
+  --sc: color-mix(in srgb, var(--rc) calc(100% - var(--si, 0) * 12%), var(--bg));
+  background: var(--sc);
+}
+.epic[data-epic="__loose__"]:only-child .story:hover {
+  background: color-mix(in srgb, var(--sc) 85%, #000);
+}
 /* bug dot — small, constant corner; noticed via saturation + consistency, not size */
 .flag { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%;
   background: #ff1f29; box-shadow: 0 0 0 1px #ff1f2966; }
