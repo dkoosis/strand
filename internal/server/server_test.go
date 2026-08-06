@@ -554,6 +554,46 @@ func TestHomeFilterDeepLink(t *testing.T) {
 	}
 }
 
+// TestHomeRepoDeepLinkRegistersUnknownRepo pins st-55q: a status-line deep-link
+// naming a repo strand has never registered (valid .beads, never Add-ed) must
+// land on THAT repo, not silently fall back to whatever was already active.
+// Switch alone only re-points an already-registered path (ErrUnknownRepo on a
+// miss); handleHome must Add it first so the click can't show the wrong report.
+func TestHomeRepoDeepLinkRegistersUnknownRepo(t *testing.T) {
+	tmpl, err := web.Templates()
+	if err != nil {
+		t.Fatalf("parse templates: %v", err)
+	}
+	// A real directory with a .beads marker, standing in for a repo (e.g. itzy)
+	// that has a valid workspace but was never registered with strand.
+	unregisteredPath := t.TempDir()
+	if err := os.Mkdir(filepath.Join(unregisteredPath, ".beads"), 0o755); err != nil {
+		t.Fatalf("seed .beads: %v", err)
+	}
+	unregisteredIssues := []bd.Issue{{ID: "other-1", Title: "Other repo's bead", IssueType: "task", Status: "open"}}
+	reg := registry.InMemory(demoRepo)
+	srcFor := func(r registry.Repo) IssueSource {
+		if r.Path == unregisteredPath {
+			return &stubBD{issues: unregisteredIssues}
+		}
+		return &stubBD{issues: sampleIssues}
+	}
+	srv := New(srcFor, reg, tmpl, web.Static(), strand.Synthesis{NorthStar: "x"})
+	srv.suggestLLM = func() (suggest.Completer, bool) { return nil, false }
+	srv.counts = bdcounts.NewReaderAt(filepath.Join(t.TempDir(), "counts.json"))
+
+	body := do(t, srv, "/?repo="+unregisteredPath).Body.String()
+	if !strings.Contains(body, `data-id="other-1"`) {
+		t.Errorf("deep-link to an unregistered repo did not scope the render to it (want other-1):\n%s", body)
+	}
+	if strings.Contains(body, `data-id="demo-e1.a"`) {
+		t.Errorf("deep-link to an unregistered repo silently fell back to the active repo's beads:\n%s", body)
+	}
+	if active, ok := reg.Active(); !ok || active.Path != unregisteredPath {
+		t.Errorf("registry active = %+v, ok=%v; want the deep-linked repo registered and active", active, ok)
+	}
+}
+
 // TestPulseBarPollsForOutOfBandWrites pins the st-2fy.4 fix: the masthead pulse
 // bar must poll /pulse on an interval, not just on this tab's own refreshList
 // event or the cold-load re-fetch — otherwise a bd write from outside this tab
