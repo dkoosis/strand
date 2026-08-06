@@ -89,6 +89,38 @@ func TestWatchedReposEmptyWithNoOpenChannels(t *testing.T) {
 	}
 }
 
+// awaitRegisteredRepo runs handleEvents for req and returns the repo it
+// records against its channel, once registration lands (or fails the test on
+// timeout). It leaves the connection open — the caller must cancel() and
+// drain done to shut it down.
+func awaitRegisteredRepo(t *testing.T, srv *Server, req *http.Request) (got registry.Repo, done chan struct{}) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	done = make(chan struct{})
+	go func() {
+		srv.handleEvents(rec, req)
+		close(done)
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		srv.eventsMu.Lock()
+		n := len(srv.events)
+		for _, r := range srv.events {
+			got = r
+		}
+		srv.eventsMu.Unlock()
+		if n == 1 {
+			return got, done
+		}
+		select {
+		case <-deadline:
+			t.Fatal("handleEvents never registered a channel")
+		default:
+		}
+	}
+}
+
 // TestHandleEventsRegistersRequestedRepo covers the other half of st-6i1:
 // handleEvents must resolve the connection's ?repo= the same way a page/
 // fragment request does (registry.Resolve), and record that repo against its
@@ -99,33 +131,52 @@ func TestHandleEventsRegistersRequestedRepo(t *testing.T) {
 	// ?repo= resolves to via Active().
 	ctx, cancel := context.WithCancel(context.Background())
 	req := httptest.NewRequest(http.MethodGet, "/events", nil).WithContext(ctx)
-	rec := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() {
-		srv.handleEvents(rec, req)
-		close(done)
-	}()
 
-	deadline := time.After(2 * time.Second)
-	for {
-		srv.eventsMu.Lock()
-		n := len(srv.events)
-		var got registry.Repo
-		for _, r := range srv.events {
-			got = r
-		}
-		srv.eventsMu.Unlock()
-		if n == 1 {
-			if got.Path != demoRepo.Path {
-				t.Errorf("handleEvents registered repo %q, want %q", got.Path, demoRepo.Path)
-			}
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("handleEvents never registered a channel")
-		default:
-		}
+	got, done := awaitRegisteredRepo(t, srv, req)
+	if got.Path != demoRepo.Path {
+		t.Errorf("handleEvents registered repo %q, want %q", got.Path, demoRepo.Path)
+	}
+
+	cancel()
+	<-done
+}
+
+// TestHandleEventsRegistersNonActiveRepo covers the ?repo= param itself, not
+// just the no-param fallback to Active(): a connection scoped to a second,
+// non-active registered repo must be recorded against THAT repo, not the
+// active one — else watchedRepos/broadcastChange would silently reduce to
+// single-repo behavior again.
+func TestHandleEventsRegistersNonActiveRepo(t *testing.T) {
+	srv := newTestServer(t, &stubBD{})
+	srv.reg = registry.InMemory(demoRepo, repoA)
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/events?repo="+repoA.Path, nil).WithContext(ctx)
+
+	got, done := awaitRegisteredRepo(t, srv, req)
+	if got.Path != repoA.Path {
+		t.Errorf("handleEvents registered repo %q, want %q", got.Path, repoA.Path)
+	}
+
+	cancel()
+	<-done
+}
+
+// TestHandleEventsUnresolvedRepoGetsNoLiveRefreshScope covers the documented
+// degrade path: a ?repo= that resolves to nothing still opens the stream
+// (registered with a zero Repo so cleanup works) but must NOT show up in
+// watchedRepos — else reconcileLoop would force-refresh a non-repo every
+// tick (the bug watchedRepos' Path=="" guard fixes).
+func TestHandleEventsUnresolvedRepoGetsNoLiveRefreshScope(t *testing.T) {
+	srv := newTestServer(t, &stubBD{})
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/events?repo=/no-such-repo", nil).WithContext(ctx)
+
+	got, done := awaitRegisteredRepo(t, srv, req)
+	if got.Path != "" {
+		t.Errorf("handleEvents registered repo %q for an unresolved ?repo=, want \"\"", got.Path)
+	}
+	if watched := srv.watchedRepos(); len(watched) != 0 {
+		t.Errorf("watchedRepos returned %d entries for an unresolved connection, want 0", len(watched))
 	}
 
 	cancel()

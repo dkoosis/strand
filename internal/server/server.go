@@ -299,13 +299,16 @@ func (s *Server) reconcileLoop(ctx context.Context) {
 // deduped by path. Only those repos need the background force-refresh: a repo
 // with no open tab has nobody to notify, and its next request re-primes the
 // cache itself (st-6i1) — this replaces the old single registry.Active() watch.
+// A connection whose ?repo= didn't resolve is registered with a zero Repo
+// (Path == "") so broadcastChange/cleanup still work; it's excluded here so
+// reconcileLoop never force-refreshes a non-repo (st-6i1 follow-up).
 func (s *Server) watchedRepos() []registry.Repo {
 	s.eventsMu.Lock()
 	defer s.eventsMu.Unlock()
 	seen := make(map[string]bool, len(s.events))
 	repos := make([]registry.Repo, 0, len(s.events))
 	for _, repo := range s.events {
-		if seen[repo.Path] {
+		if repo.Path == "" || seen[repo.Path] {
 			continue
 		}
 		seen[repo.Path] = true
