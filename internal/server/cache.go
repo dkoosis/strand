@@ -3,8 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 	"sync"
 	"time"
@@ -83,7 +81,7 @@ type snapshot struct {
 }
 
 func newSnapshotCache(now func() time.Time) *snapshotCache {
-	return &snapshotCache{now: now, storeMTime: doltStoreMTime, entries: map[string]*snapshot{}, flights: map[string]*refreshFlight{}}
+	return &snapshotCache{now: now, storeMTime: bd.StoreMTime, entries: map[string]*snapshot{}, flights: map[string]*refreshFlight{}}
 }
 
 // refreshList coalesces loads and atomically publishes only complete successful
@@ -176,30 +174,9 @@ func (c *snapshotCache) goodList(repo string) []bd.Issue {
 	return nil
 }
 
-// doltStoreMTime reports the newest mtime of the repo's Dolt noms manifest, the
-// file Dolt rewrites on every commit — strand's out-of-band change signal. The
-// glob covers the (single) embedded database under the workspace without strand
-// having to know its name. ok is false when nothing matches or every stat fails
-// (a non-bd path, a permissions error): the caller then treats the snapshot as
-// never-stale, so a missing signal degrades to the pre-gate behavior rather than
-// forcing a re-fetch every read. Read-only — it stats, never opens, the store, so
-// it stays inside the "never touch Dolt directly" contract.
-func doltStoreMTime(repoPath string) (time.Time, bool) {
-	matches, _ := filepath.Glob(filepath.Join(repoPath, ".beads", "embeddeddolt", "*", ".dolt", "noms", "manifest"))
-	var newest time.Time
-	found := false
-	for _, m := range matches {
-		fi, err := os.Stat(m)
-		if err != nil {
-			continue
-		}
-		found = true
-		if fi.ModTime().After(newest) {
-			newest = fi.ModTime()
-		}
-	}
-	return newest, found
-}
+// The Dolt-store-mtime computation lives in internal/bd (bd.StoreMTime): the counts
+// refresher gates on the SAME helper, so the board and the badge can't diverge on
+// freshness (st-nm5). newSnapshotCache wires it into the storeMTime seam above.
 
 // freshEntryLocked returns the repo's snapshot if present and still fresh, else nil
 // (a miss). A snapshot has no time-based expiry: it lives until strand's own write

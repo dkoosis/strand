@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/bdcounts"
@@ -290,5 +291,78 @@ func TestRefreshExplicitDirs(t *testing.T) {
 	}
 	if _, ok := bdcounts.NewReaderAt(filepath.Join(cache, "counts.json")).Lookup(root); !ok {
 		t.Errorf("explicit dir %s not in output", root)
+	}
+}
+
+// setStoreMTime builds the embedded-Dolt manifest layout bd.StoreMTime globs for under
+// root and stamps it with mt, so the change key sees a store the way an out-of-band
+// write (a Dolt pull/sync, a direct commit) would leave one. Returns the manifest path.
+func setStoreMTime(t *testing.T, root string, mt time.Time) string {
+	t.Helper()
+	manifest := filepath.Join(root, ".beads", "embeddeddolt", "demo", ".dolt", "noms", "manifest")
+	if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
+		t.Fatalf("mkdir store: %v", err)
+	}
+	if err := os.WriteFile(manifest, []byte("root-chunk"), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if err := os.Chtimes(manifest, mt, mt); err != nil {
+		t.Fatalf("chtimes manifest: %v", err)
+	}
+	return manifest
+}
+
+// TestRefreshOutOfBandStoreChangeRefreshes is the st-nm5 guard: the refresh gate is the
+// Dolt store mtime (bd.StoreMTime), not .beads/last-touched. An out-of-band write — a bd
+// dolt pull/sync, a direct Dolt commit, a bd import — moves the store manifest WITHOUT
+// bumping last-touched. Before st-nm5 that repo latched skipped (last-touched unchanged →
+// counts.json stalled while the board stayed fresh). Here we settle a repo, advance ONLY
+// the manifest mtime, and assert the next changed-mode run recomputes it.
+func TestRefreshOutOfBandStoreChangeRefreshes(t *testing.T) {
+	projects := t.TempDir()
+	cache := t.TempDir()
+	root := mkRepo(t, projects, "repo-a")
+	setStoreMTime(t, root, time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC))
+
+	lastTouchedPath := filepath.Join(root, ".beads", "last-touched")
+	fi, err := os.Stat(lastTouchedPath)
+	if err != nil {
+		t.Fatalf("stat last-touched: %v", err)
+	}
+	ltBefore := fi.ModTime()
+
+	var calls int
+	countingNew := func(string) source {
+		calls++
+		return oneOpenBead()
+	}
+	cfg := config{cacheDir: cache, projects: projects, mode: modeChanged, newSource: countingNew}
+
+	// Runs 1 (cold) + 2 (st-3p8 guaranteed follow-up) settle the repo: after this a
+	// third unchanged run would be skipped (see TestRefreshChangedSkipsUnchanged).
+	if err := refresh(context.Background(), &cfg); err != nil {
+		t.Fatalf("refresh #1: %v", err)
+	}
+	if err := refresh(context.Background(), &cfg); err != nil {
+		t.Fatalf("refresh #2: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("after settle calls=%d, want 2", calls)
+	}
+
+	// Out-of-band write: advance ONLY the store manifest; last-touched must not move.
+	setStoreMTime(t, root, time.Date(2026, 7, 25, 13, 0, 0, 0, time.UTC))
+
+	if err := refresh(context.Background(), &cfg); err != nil {
+		t.Fatalf("refresh #3: %v", err)
+	}
+	if calls != 3 {
+		t.Errorf("out-of-band store change was skipped (calls=%d, want 3) — the gate is not on the Dolt store mtime", calls)
+	}
+
+	if fi, err := os.Stat(lastTouchedPath); err != nil {
+		t.Fatalf("re-stat last-touched: %v", err)
+	} else if !fi.ModTime().Equal(ltBefore) {
+		t.Fatalf("last-touched mtime moved (%v → %v) — the test no longer isolates the store signal", ltBefore, fi.ModTime())
 	}
 }

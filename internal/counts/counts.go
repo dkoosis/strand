@@ -162,3 +162,19 @@ func lastTouched(root string) int64 {
 	}
 	return fi.ModTime().Unix()
 }
+
+// changeKey is the refresh gate: the Dolt store mtime (unix-nanos) — the SAME signal
+// the server's snapshot cache evicts on, via the one shared helper bd.StoreMTime.
+// last-touched moves only on a local bd write, a strict subset of what changes beads;
+// an out-of-band write (bd dolt pull/sync, a direct Dolt commit, bd import) advances
+// the store manifest without bumping last-touched, so gating counts on the store mtime
+// is what stops the badge stalling while the board stays fresh (st-nm5). Falls back to
+// last-touched for a workspace with no embedded Dolt store (StoreMTime ok=false),
+// preserving the pre-fix behavior there. The row's ts stays lastTouched for DISPLAY —
+// only this gate moved.
+func changeKey(root string) int64 {
+	if mt, ok := bd.StoreMTime(root); ok {
+		return mt.UnixNano()
+	}
+	return lastTouched(root)
+}
