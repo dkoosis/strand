@@ -10,6 +10,8 @@ import (
 	"github.com/dkoosis/strand/internal/bd"
 )
 
+var errTornRead = errors.New("torn read")
+
 type refreshStub struct {
 	stubBD
 	mu      sync.Mutex
@@ -74,7 +76,7 @@ func TestFailedRefreshRetainsLastGood(t *testing.T) {
 	}
 	src.mu.Lock()
 	src.issues = []bd.Issue{{ID: "partial"}}
-	src.listErr = errors.New("torn read")
+	src.listErr = errTornRead
 	src.mu.Unlock()
 	if _, err := cache.refreshList(context.Background(), "repo", src, true); err == nil {
 		t.Fatal("failed refresh returned nil error")

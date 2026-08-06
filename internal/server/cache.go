@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -98,18 +99,7 @@ func (c *snapshotCache) refreshList(ctx context.Context, repo string, src IssueS
 	}
 	if f := c.flights[repo]; f != nil {
 		c.mu.Unlock()
-		select {
-		case <-f.done:
-			c.mu.Lock()
-			e := c.entries[repo]
-			c.mu.Unlock()
-			if e != nil {
-				return e.list, nil
-			}
-			return nil, f.err
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+		return c.waitFlight(ctx, repo, f)
 	}
 	f := &refreshFlight{done: make(chan struct{})}
 	c.flights[repo] = f
@@ -120,7 +110,44 @@ func (c *snapshotCache) refreshList(ctx context.Context, repo string, src IssueS
 	// only this call's deadline/cancel would leak into a result the followers
 	// never asked to be canceled by.
 	list, err := src.List(context.WithoutCancel(ctx), bd.ListOpts{})
+	changed, onChange := c.publishList(repo, f, list, err)
+	if changed && onChange != nil {
+		onChange(repo)
+	}
+	if err != nil {
+		if good := c.goodList(repo); good != nil {
+			return good, err
+		}
+	}
+	return list, err
+}
+
+// waitFlight blocks on an in-progress refresh (f) and returns its published list,
+// or the flight's error when it published nothing, or ctx cancellation. The
+// follower reads with its own live ctx; the leader detached from it, so a canceled
+// leader never hands the follower a spurious ctx.Err().
+func (c *snapshotCache) waitFlight(ctx context.Context, repo string, f *refreshFlight) ([]bd.Issue, error) {
+	select {
+	case <-f.done:
+		c.mu.Lock()
+		e := c.entries[repo]
+		c.mu.Unlock()
+		if e != nil {
+			return e.list, nil
+		}
+		return nil, f.err
+	case <-ctx.Done():
+		return nil, fmt.Errorf("waiting for in-flight refresh: %w", ctx.Err())
+	}
+}
+
+// publishList records a completed fetch under the lock: on success it opens a new
+// snapshot when the list changed (else just re-stamps the existing one), then
+// retires the flight and wakes its followers. It returns whether a change fired
+// and the onChange callback to run outside the lock.
+func (c *snapshotCache) publishList(repo string, f *refreshFlight, list []bd.Issue, err error) (bool, func(string)) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	changed := false
 	if err == nil {
 		old := c.entries[repo]
@@ -135,20 +162,18 @@ func (c *snapshotCache) refreshList(ctx context.Context, repo string, src IssueS
 	f.err = err
 	delete(c.flights, repo)
 	close(f.done)
-	onChange := c.onChange
-	c.mu.Unlock()
-	if changed && onChange != nil {
-		onChange(repo)
+	return changed, c.onChange
+}
+
+// goodList returns the repo's last-known-good list, or nil when none is cached —
+// the fallback a failed refresh serves so a fetch error never drops a live entry.
+func (c *snapshotCache) goodList(repo string) []bd.Issue {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if good := c.entries[repo]; good != nil {
+		return good.list
 	}
-	if err != nil {
-		c.mu.Lock()
-		good := c.entries[repo]
-		c.mu.Unlock()
-		if good != nil {
-			return good.list, err
-		}
-	}
-	return list, err
+	return nil
 }
 
 // doltStoreMTime reports the newest mtime of the repo's Dolt noms manifest, the
