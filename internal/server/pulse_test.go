@@ -57,7 +57,7 @@ func TestPulseStripRenders(t *testing.T) {
 func TestPulseBarSelfHealsCold(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: pulseIssues})
 	body := do(t, srv, "/").Body.String()
-	if !strings.Contains(body, `hx-trigger="refreshList from:body, load delay:300ms, every 15s"`) {
+	if !strings.Contains(body, `hx-trigger="refreshList from:body, load delay:300ms"`) {
 		t.Errorf("pulseBar missing the load self-heal trigger:\n%s", body)
 	}
 }
