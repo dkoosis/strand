@@ -45,6 +45,18 @@ var funcs = template.FuncMap{
 	"rankLabel":   rankLabel,
 	"labelPart":   labelPart,
 	"pulseCell":   pulseCell,
+	"shadeStep":   shadeStep,
+}
+
+// shadeStep maps a story's index to one of four repeating shade steps (0–3).
+// The map template writes it as the cell's --si CSS var; app.css consumes it
+// only on a loose-only map (a single catch-all epic), where every cell shares
+// the same gray and needs per-cell lightness steps to read as distinct cells.
+func shadeStep(i int) int {
+	if i < 0 {
+		return 0
+	}
+	return i % 4
 }
 
 // PulseCell carries one masthead-pulse glyph's render fields. html/template can't

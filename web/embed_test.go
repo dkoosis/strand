@@ -1,11 +1,13 @@
 package web
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dkoosis/strand/internal/bd"
+	"github.com/dkoosis/strand/internal/strand"
 )
 
 // TestBeadTypesDerivesFromIssueTypes pins the create-form dropdown to bd's closed
@@ -55,5 +57,58 @@ func TestAppJSGuardsSSEWithVisibility(t *testing.T) {
 		t.Fatal("app.js opens an EventSource with no visibilitychange lifecycle — " +
 			"hidden tabs will hold /events connections and exhaust the browser's " +
 			"6-per-host pool (st-58m)")
+	}
+}
+
+// TestLooseOnlyMapCarriesShadeSteps pins the st-ps1 fix: a repo with no epics
+// renders one gray catch-all epic, so app.css needs a per-cell --si shade index
+// on every story to make cells distinguishable. The map template must emit
+// data-epic="__loose__" on the epic and cycling --si:0..3 on the story cells;
+// losing either regresses the loose-only map to a featureless block.
+func TestLooseOnlyMapCarriesShadeSteps(t *testing.T) {
+	tmpl, err := Templates()
+	if err != nil {
+		t.Fatalf("Templates() error: %v", err)
+	}
+
+	stories := make([]strand.Story, 5)
+	for i := range stories {
+		stories[i] = strand.Story{ID: fmt.Sprintf("st-%d", i), Name: fmt.Sprintf("story %d", i), Open: 1}
+	}
+	m := strand.Model{Epics: []strand.Epic{{
+		Key:     "__loose__",
+		Name:    "strand",
+		Color:   "#7a8290",
+		Open:    5,
+		Stories: stories,
+	}}}
+
+	var b strings.Builder
+	if err := tmpl.ExecuteTemplate(&b, "map", m); err != nil {
+		t.Fatalf("execute map template: %v", err)
+	}
+	out := b.String()
+
+	if !strings.Contains(out, `data-epic="__loose__"`) {
+		t.Error("loose-only map lost its data-epic=\"__loose__\" hook — CSS shade steps won't apply")
+	}
+	// Steps cycle 0..3; the fifth story wraps back to 0.
+	for step, want := range map[string]int{"--si:0": 2, "--si:1": 1, "--si:2": 1, "--si:3": 1} {
+		if got := strings.Count(out, step+";"); got != want {
+			t.Errorf("story shade var %s appears %d times, want %d", step, got, want)
+		}
+	}
+}
+
+// TestShadeStepCyclesAndClamps pins the helper: steps repeat 0..3 and a
+// negative index (defensive; ranges never produce one) clamps to 0.
+func TestShadeStepCyclesAndClamps(t *testing.T) {
+	for i, want := range []int{0, 1, 2, 3, 0, 1} {
+		if got := shadeStep(i); got != want {
+			t.Errorf("shadeStep(%d) = %d, want %d", i, got, want)
+		}
+	}
+	if got := shadeStep(-1); got != 0 {
+		t.Errorf("shadeStep(-1) = %d, want 0", got)
 	}
 }

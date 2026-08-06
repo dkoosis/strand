@@ -8,10 +8,10 @@
   <div class="epic" data-name="{{.Name}}" data-epic="{{.Key}}" data-open="{{.Open}}" style="--rc:{{.Color}};left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%">
     <div class="epic-head mm-filter" role="button" tabindex="0" data-name="{{.Name}}" data-epic="{{.Key}}" aria-label="{{.Name}} — whole epic"></div>
     <div class="epic-body">
-      {{range .Stories}}
+      {{range $i, $s := .Stories}}
       <div class="story mm-filter" role="button" tabindex="0"
            aria-label="{{cleanName .Name}}"
-           style="left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%"
+           style="--si:{{shadeStep $i}};left:{{printf "%.3f" .Rect.X}}%;top:{{printf "%.3f" .Rect.Y}}%;width:{{printf "%.3f" .Rect.W}}%;height:{{printf "%.3f" .Rect.H}}%"
            data-name="{{cleanName .Name}}" data-story="{{.ID}}" data-open="{{.Open}}" data-flag="{{if .Flag}}1{{end}}">
         {{if .Flag}}<span class="flag"></span>{{end}}
       </div>
