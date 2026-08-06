@@ -154,11 +154,18 @@ type Server struct {
 	// roots every goBackground context so Stop can cancel them; bgWG tracks the
 	// goroutines so Stop can wait them out. The HTTP drain covers request handlers
 	// only — these outlive their request and would otherwise escape it (str-47z).
-	bgCtx     context.Context //nolint:containedctx // the server owns the lifecycle of its detached goroutines; bgCtx IS that lifecycle, cancelled by Stop.
-	bgCancel  context.CancelFunc
-	bgWG      sync.WaitGroup
-	eventsMu  sync.Mutex
-	events    map[chan struct{}]struct{}
+	bgCtx    context.Context //nolint:containedctx // the server owns the lifecycle of its detached goroutines; bgCtx IS that lifecycle, cancelled by Stop.
+	bgCancel context.CancelFunc
+	bgWG     sync.WaitGroup
+	eventsMu sync.Mutex
+	// events maps each open SSE channel to the repo it is scoped to (the same
+	// registry.Repo resolved for its request, incl. an ephemeral unregistered
+	// one — st-55q). reconcileLoop watches the distinct set of these repos
+	// instead of only registry.Active(), and broadcastChange filters delivery
+	// to the channels scoped to the repo that actually changed (st-6i1): a tab
+	// deep-linked to repo B no longer needs repo A to go quiet to get its own
+	// live-refresh signal, and repo A's churn no longer wakes repo B's tab.
+	events    map[chan struct{}]registry.Repo
 	startOnce sync.Once
 }
 
@@ -195,8 +202,8 @@ func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, sta
 	s.counts = bdcounts.NewReader()
 	s.refreshCounts = s.defaultRefreshCounts
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background()) //nolint:forbidigo // server-owned background root, cancelled at shutdown via bgCancel — the st-47z fix (goBackground) hangs off this
-	s.events = make(map[chan struct{}]struct{})
-	s.cache.onChange = func(string) { s.broadcastChange() }
+	s.events = make(map[chan struct{}]registry.Repo)
+	s.cache.onChange = func(repo string) { s.broadcastChange(repo) }
 	s.suggestLLM = defaultSuggestLLM
 	s.homeDir, _ = os.UserHomeDir()
 	return s
@@ -275,25 +282,48 @@ func (s *Server) reconcileLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			repo, ok := s.reg.Active()
-			if !ok {
-				continue
-			}
-			src := s.srcFor(repo)
-			refreshCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			_, err := s.cache.refreshList(refreshCtx, repo.Path, src, true)
-			cancel()
-			if err != nil && ctx.Err() == nil {
-				log.Printf("strand: snapshot refresh for %s: %v", repo.Path, err)
+			for _, repo := range s.watchedRepos() {
+				src := s.srcFor(repo)
+				refreshCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				_, err := s.cache.refreshList(refreshCtx, repo.Path, src, true)
+				cancel()
+				if err != nil && ctx.Err() == nil {
+					log.Printf("strand: snapshot refresh for %s: %v", repo.Path, err)
+				}
 			}
 		}
 	}
 }
 
-func (s *Server) broadcastChange() {
+// watchedRepos returns the distinct repos with at least one open SSE channel,
+// deduped by path. Only those repos need the background force-refresh: a repo
+// with no open tab has nobody to notify, and its next request re-primes the
+// cache itself (st-6i1) — this replaces the old single registry.Active() watch.
+func (s *Server) watchedRepos() []registry.Repo {
 	s.eventsMu.Lock()
 	defer s.eventsMu.Unlock()
-	for ch := range s.events {
+	seen := make(map[string]bool, len(s.events))
+	repos := make([]registry.Repo, 0, len(s.events))
+	for _, repo := range s.events {
+		if seen[repo.Path] {
+			continue
+		}
+		seen[repo.Path] = true
+		repos = append(repos, repo)
+	}
+	return repos
+}
+
+// broadcastChange notifies only the SSE channels scoped to the repo that
+// changed, so a tab deep-linked to repo B doesn't wake for repo A's churn and
+// vice versa (st-6i1).
+func (s *Server) broadcastChange(repo string) {
+	s.eventsMu.Lock()
+	defer s.eventsMu.Unlock()
+	for ch, r := range s.events {
+		if r.Path != repo {
+			continue
+		}
 		select {
 		case ch <- struct{}{}:
 		default:
@@ -307,6 +337,14 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unavailable", http.StatusInternalServerError)
 		return
 	}
+	// Scope this connection to the same repo a page/fragment request would
+	// resolve to (registry.Resolve — honors ?repo=, incl. an ephemeral
+	// unregistered repo, st-55q), so reconcileLoop knows to watch it and
+	// broadcastChange knows which tabs care when it changes (st-6i1). No
+	// resolvable repo means nothing to watch; the stream still opens (a
+	// deep-link to a bad path degrades to "connected, no live-refresh" rather
+	// than a hard error, matching this handler's other no-repo behavior).
+	repo, _ := s.reg.Resolve(r.URL.Query().Get("repo"))
 	// http.Server.WriteTimeout is a fixed deadline from request start, not reset
 	// per write — an idle SSE stream would otherwise be killed on that clock
 	// (dropping every open tab and forcing an EventSource reconnect) even though
@@ -318,7 +356,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	ch := make(chan struct{}, 1)
 	s.eventsMu.Lock()
-	s.events[ch] = struct{}{}
+	s.events[ch] = repo
 	s.eventsMu.Unlock()
 	defer func() { s.eventsMu.Lock(); delete(s.events, ch); s.eventsMu.Unlock() }()
 	_, _ = fmt.Fprint(w, ": connected\n\n")
