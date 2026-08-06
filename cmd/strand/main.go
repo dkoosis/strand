@@ -68,6 +68,7 @@ func main() {
 	}
 	syn := strand.Synthesis{NorthStar: *northStar}
 	srv := server.New(srcFor, reg, tmpl, web.Static(), syn)
+	srv.Start()
 
 	httpSrv := &http.Server{
 		Addr:              *addr,

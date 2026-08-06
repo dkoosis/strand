@@ -562,8 +562,8 @@ func TestPulseBarPollsForOutOfBandWrites(t *testing.T) {
 	srv := newTestServer(t, &stubBD{issues: sampleIssues})
 	body := do(t, srv, "/").Body.String()
 
-	if !strings.Contains(body, `hx-trigger="refreshList from:body, load delay:300ms, every 15s"`) {
-		t.Errorf("pulse bar missing the every-15s poll trigger:\n%s", body)
+	if !strings.Contains(body, `hx-trigger="refreshList from:body, load delay:300ms"`) {
+		t.Errorf("pulse bar missing the event-driven refresh trigger:\n%s", body)
 	}
 }
 
@@ -2722,9 +2722,9 @@ func TestSnapshotCacheCrossView(t *testing.T) {
 	}
 }
 
-// TestSnapshotCacheInvalidatesOnWrite: a successful write drops the repo's
-// snapshot, so the next view re-reads bd's truth (acceptance: writes invalidate
-// the cache so the UI still shows bd truth).
+// TestSnapshotCacheInvalidatesOnWrite: a successful write patches the snapshot
+// from bd's JSON response, so write-followed-by-read is consistent without a
+// second subprocess.
 func TestSnapshotCacheInvalidatesOnWrite(t *testing.T) {
 	src := &countingBD{stubBD: stubBD{
 		issues: sampleIssues,
@@ -2740,14 +2740,14 @@ func TestSnapshotCacheInvalidatesOnWrite(t *testing.T) {
 		t.Fatalf("List spawned %d times before write, want 1", src.listCalls.Load())
 	}
 
-	// A successful edit must invalidate the snapshot.
+	// A successful edit must publish into the snapshot.
 	if rec := send(t, srv, http.MethodPatch, "/bead/demo-e1.a", "field=title&value=Renamed"); rec.Code != http.StatusOK {
 		t.Fatalf("PATCH = %d, want 200", rec.Code)
 	}
 
-	do(t, srv, "/list") // must re-read bd's truth (List #2)
-	if src.listCalls.Load() != 2 {
-		t.Errorf("List spawned %d times, want 2 — a write must invalidate the snapshot", src.listCalls.Load())
+	do(t, srv, "/list")
+	if src.listCalls.Load() != 1 {
+		t.Errorf("List spawned %d times, want 1 — write response should update memory", src.listCalls.Load())
 	}
 }
 
@@ -3114,8 +3114,8 @@ func TestSnapshotCacheStoreMTimeGate(t *testing.T) {
 	if _, err := cs.List(ctx, bd.ListOpts{}); err != nil { // store moved → miss → fetch #2
 		t.Fatalf("List: %v", err)
 	}
-	if src.listCalls.Load() != 2 {
-		t.Errorf("List spawned %d times after the store moved, want 2 — the mtime gate must re-fetch", src.listCalls.Load())
+	if src.listCalls.Load() != 1 {
+		t.Errorf("List spawned %d times after the store moved, want 1 — filesystem signals are not authoritative", src.listCalls.Load())
 	}
 }
 
@@ -3191,8 +3191,8 @@ func TestHandlePulseKicksProactiveRebuild(t *testing.T) {
 	do(t, srv, "/pulse") // the poll tick: must notice the move and kick a rebuild
 	srv.Stop()           // drain the background rebuild deterministically
 
-	if n := src.listCalls.Load(); n != 2 {
-		t.Errorf("List spawned %d times after the poll tick saw a stale store, want 2 — the rebuild must fire from handlePulse, not wait for the next filter switch", n)
+	if n := src.listCalls.Load(); n != 1 {
+		t.Errorf("List spawned %d times after pulse render, want 1 — browser requests must not drive authoritative refresh", n)
 	}
 	if _, _, ok := srv.cache.liveList(demoRepo.Path); !ok {
 		t.Error("snapshot not warm after the proactive rebuild landed — the next filter switch would still pay a cold spawn")

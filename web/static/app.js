@@ -517,6 +517,14 @@ document.body.addEventListener("htmx:afterSwap", (e) => {
 // The V1 list renders inline on first paint (no htmx swap), so bind it once at load.
 initList();
 
+// The server performs the bounded bd reconciliation once per process and fans
+// changes out over SSE. Open tabs refresh only when the snapshot actually
+// changes; EventSource reconnects automatically after transient disconnects.
+if (window.EventSource) {
+  const changes = new EventSource("/events");
+  changes.addEventListener("beads", () => htmx.trigger(document.body, "refreshList"));
+}
+
 // ---- detail drawer ----
 const scrim = document.getElementById("scrim");
 const drawer = document.getElementById("drawer");

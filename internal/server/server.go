@@ -154,10 +154,18 @@ type Server struct {
 	// roots every goBackground context so Stop can cancel them; bgWG tracks the
 	// goroutines so Stop can wait them out. The HTTP drain covers request handlers
 	// only — these outlive their request and would otherwise escape it (str-47z).
-	bgCtx    context.Context //nolint:containedctx // the server owns the lifecycle of its detached goroutines; bgCtx IS that lifecycle, cancelled by Stop.
-	bgCancel context.CancelFunc
-	bgWG     sync.WaitGroup
+	bgCtx     context.Context //nolint:containedctx // the server owns the lifecycle of its detached goroutines; bgCtx IS that lifecycle, cancelled by Stop.
+	bgCancel  context.CancelFunc
+	bgWG      sync.WaitGroup
+	eventsMu  sync.Mutex
+	events    map[chan struct{}]struct{}
+	startOnce sync.Once
 }
+
+// externalFreshnessBound is the maximum idle time before the authoritative JSON
+// snapshot is checked. Detection additionally takes one serialized bd list
+// command. Browsers are notified by SSE; they do not poll.
+const externalFreshnessBound = 2 * time.Second
 
 // defaultShutdown raises os.Interrupt at strand's own process, so the Quit button
 // flows through the same graceful path Ctrl-C does (signal.NotifyContext →
@@ -180,10 +188,16 @@ func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, sta
 	s.counts = bdcounts.NewReader()
 	s.refreshCounts = s.defaultRefreshCounts
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background()) //nolint:forbidigo // server-owned background root, cancelled at shutdown via bgCancel — the st-47z fix (goBackground) hangs off this
+	s.events = make(map[chan struct{}]struct{})
+	s.cache.onChange = func(string) { s.broadcastChange() }
 	s.suggestLLM = defaultSuggestLLM
 	s.homeDir, _ = os.UserHomeDir()
 	return s
 }
+
+// Start begins the authoritative background reconciler. It is separate from New
+// so construction-only tests do not leak goroutines; production calls it once.
+func (s *Server) Start() { s.startOnce.Do(func() { s.goBackground(0, s.reconcileLoop) }) }
 
 // defaultSuggestLLM is the production Tier-2 model gate: it builds the key-gated
 // llm client, reporting unavailable (so Suggest stays Tier-1) when no API key is
@@ -206,7 +220,13 @@ func defaultSuggestLLM() (suggest.Completer, bool) {
 // goroutine lands, so no bd spawn or snapshot-cache write outlives shutdown.
 func (s *Server) goBackground(timeout time.Duration, fn func(context.Context)) {
 	s.bgWG.Go(func() {
-		ctx, cancel := context.WithTimeout(s.bgCtx, timeout)
+		var ctx context.Context
+		var cancel context.CancelFunc
+		if timeout > 0 {
+			ctx, cancel = context.WithTimeout(s.bgCtx, timeout)
+		} else {
+			ctx, cancel = context.WithCancel(s.bgCtx)
+		}
 		defer cancel()
 		fn(ctx)
 	})
@@ -240,6 +260,75 @@ func (s *Server) Stop() {
 	s.bgWG.Wait()
 }
 
+func (s *Server) reconcileLoop(ctx context.Context) {
+	t := time.NewTicker(externalFreshnessBound)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			repo, ok := s.reg.Active()
+			if !ok {
+				continue
+			}
+			src := s.srcFor(repo)
+			refreshCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			_, err := s.cache.refreshList(refreshCtx, repo.Path, src, true)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				log.Printf("strand: snapshot refresh for %s: %v", repo.Path, err)
+			}
+		}
+	}
+}
+
+func (s *Server) broadcastChange() {
+	s.eventsMu.Lock()
+	defer s.eventsMu.Unlock()
+	for ch := range s.events {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unavailable", http.StatusInternalServerError)
+		return
+	}
+	// http.Server.WriteTimeout is a fixed deadline from request start, not reset
+	// per write — an idle SSE stream would otherwise be killed on that clock
+	// (dropping every open tab and forcing an EventSource reconnect) even though
+	// the connection is healthy. Clear it for this handler only.
+	if rc := http.NewResponseController(w); rc != nil {
+		_ = rc.SetWriteDeadline(time.Time{})
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	ch := make(chan struct{}, 1)
+	s.eventsMu.Lock()
+	s.events[ch] = struct{}{}
+	s.eventsMu.Unlock()
+	defer func() { s.eventsMu.Lock(); delete(s.events, ch); s.eventsMu.Unlock() }()
+	_, _ = fmt.Fprint(w, ": connected\n\n")
+	flusher.Flush()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-s.bgCtx.Done():
+			return
+		case <-ch:
+			_, _ = fmt.Fprint(w, "event: beads\ndata: changed\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
 // source resolves the active repo's issue source. ok is false when no repo is
 // active, which the landing renders as the empty state.
 func (s *Server) source() (IssueSource, registry.Repo, bool) {
@@ -263,6 +352,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /{$}", s.handleHome)
 	mux.HandleFunc("GET /list", s.handleList)
 	mux.HandleFunc("GET /pulse", s.handlePulse)
+	mux.HandleFunc("GET /events", s.handleEvents)
 	mux.HandleFunc("GET /board", s.handleBoard)
 	mux.HandleFunc("GET /insights", s.handleInsights)
 	mux.HandleFunc("GET /bead/{id}", s.handleBead)
@@ -538,13 +628,6 @@ func (s *Server) handlePulse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, "pulse", s.computePulse(ctx, src, repo))
-	if s.cache.checkStale(repo.Path) {
-		s.goBackground(10*time.Second, func(ctx context.Context) {
-			if _, err := src.List(ctx, bd.ListOpts{}); err != nil {
-				log.Printf("strand: proactive snapshot rebuild for %s: %v", repo.Path, err)
-			}
-		})
-	}
 }
 
 // handleRefresh drops the active repo's snapshot and tells htmx to reload the

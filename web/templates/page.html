@@ -74,10 +74,11 @@
          CLI edit, a fleet agent, another tab — none of which fires this tab's
          refreshList event. /pulse reads the shared counts.json (0.4-1.6ms, 0 spawns
          warm — st-2fy.2), so polling it is cheap by construction; explicitly not
-         SSE/websockets (bead AC). */}}
+         The process-wide reconciler notifies tabs over SSE, so this element only
+         reacts to refreshList and never runs its own interval poll. */}}
     <div class="pulse" id="pulseBar" role="group"
          aria-label="Bead status — click a count to list those beads"
-         hx-get="/pulse" hx-trigger="refreshList from:body, load delay:300ms, every 15s" hx-swap="innerHTML">
+         hx-get="/pulse" hx-trigger="refreshList from:body, load delay:300ms" hx-swap="innerHTML">
       {{template "pulse" .Pulse}}
     </div>
   </div>

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"time"
 
@@ -18,17 +19,12 @@ import (
 // multi-fragment page. The snapshot folds the List result and the Deps result for
 // one repo so every view after the first hits memory.
 //
-// strand is the SOLE writer to its repos, so the snapshot stays correct by
-// invalidating on every successful write (cachingSource's write methods drop the
-// repo's entry) and on repo switch (a switched-to path is a different key, hence a
-// miss — no explicit hook needed). execMu in package bd is untouched: it still
-// serializes the bd calls that do happen, but the cache removes the contention by
-// removing the calls.
+// Viewer writes patch the snapshot from bd's response. A bounded background
+// reconciliation catches writes made by other bd processes; repo paths remain
+// independent keys. execMu in package bd still serializes the calls that remain.
 //
-// A snapshot has no time-based expiry: it lives until a write invalidates it or
-// the repo switches. The model is "open a beadbase, look at each view in turn", so
-// a snapshot must outlast a long look without re-paying the ~0.4s bd spawn on the
-// next tab (str-udl supersedes the original 3s TTL, which punished lingering).
+// A snapshot has no request-path expiry. It remains usable while reconciliation
+// is running or failing, avoiding a ~0.4s spawn on navigation and filtering.
 //
 // Out-of-band staleness — a bd CLI run or another agent editing the same repo's
 // store while strand holds a snapshot — is the case strand's own writes can't
@@ -52,6 +48,13 @@ type snapshotCache struct {
 	storeMTime func(repo string) (time.Time, bool)
 	gen        uint64
 	entries    map[string]*snapshot
+	flights    map[string]*refreshFlight
+	onChange   func(string)
+}
+
+type refreshFlight struct {
+	done chan struct{}
+	err  error
 }
 
 // snapshot is one repo's cached reads: the full `list --limit 0` result and the
@@ -79,7 +82,73 @@ type snapshot struct {
 }
 
 func newSnapshotCache(now func() time.Time) *snapshotCache {
-	return &snapshotCache{now: now, storeMTime: doltStoreMTime, entries: map[string]*snapshot{}}
+	return &snapshotCache{now: now, storeMTime: doltStoreMTime, entries: map[string]*snapshot{}, flights: map[string]*refreshFlight{}}
+}
+
+// refreshList coalesces loads and atomically publishes only complete successful
+// JSON snapshots. A failed refresh leaves the last-known-good entry untouched.
+func (c *snapshotCache) refreshList(ctx context.Context, repo string, src IssueSource, force bool) ([]bd.Issue, error) {
+	c.mu.Lock()
+	if !force {
+		if e := c.entries[repo]; e != nil {
+			list := e.list
+			c.mu.Unlock()
+			return list, nil
+		}
+	}
+	if f := c.flights[repo]; f != nil {
+		c.mu.Unlock()
+		select {
+		case <-f.done:
+			c.mu.Lock()
+			e := c.entries[repo]
+			c.mu.Unlock()
+			if e != nil {
+				return e.list, nil
+			}
+			return nil, f.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	f := &refreshFlight{done: make(chan struct{})}
+	c.flights[repo] = f
+	c.mu.Unlock()
+	// The fetch is a shared flight: other goroutines are waiting on f.done with
+	// their own live contexts. Detach from the leader's ctx (context.WithoutCancel)
+	// so a canceled leader doesn't hand every follower a spurious ctx.Err() —
+	// only this call's deadline/cancel would leak into a result the followers
+	// never asked to be canceled by.
+	list, err := src.List(context.WithoutCancel(ctx), bd.ListOpts{})
+	c.mu.Lock()
+	changed := false
+	if err == nil {
+		old := c.entries[repo]
+		changed = old == nil || !reflect.DeepEqual(old.list, list)
+		if changed {
+			c.gen++
+			c.entries[repo] = &snapshot{at: c.now(), gen: c.gen, list: list}
+		} else {
+			old.at = c.now()
+		}
+	}
+	f.err = err
+	delete(c.flights, repo)
+	close(f.done)
+	onChange := c.onChange
+	c.mu.Unlock()
+	if changed && onChange != nil {
+		onChange(repo)
+	}
+	if err != nil {
+		c.mu.Lock()
+		good := c.entries[repo]
+		c.mu.Unlock()
+		if good != nil {
+			return good.list, err
+		}
+	}
+	return list, err
 }
 
 // doltStoreMTime reports the newest mtime of the repo's Dolt noms manifest, the
@@ -255,6 +324,59 @@ func (c *snapshotCache) putList(repo string, list []bd.Issue) {
 	c.entries[repo] = &snapshot{at: c.now(), storeAt: storeAt, gen: c.gen, list: list}
 }
 
+func (c *snapshotCache) upsert(repo string, issue *bd.Issue) {
+	if issue == nil {
+		return
+	}
+	c.mu.Lock()
+	e := c.entries[repo]
+	if e == nil {
+		c.mu.Unlock()
+		return
+	}
+	list := append([]bd.Issue(nil), e.list...)
+	found := false
+	for i := range list {
+		if list[i].ID == issue.ID {
+			list[i] = *issue
+			found = true
+			break
+		}
+	}
+	if !found {
+		list = append(list, *issue)
+	}
+	c.gen++
+	c.entries[repo] = &snapshot{at: c.now(), gen: c.gen, list: list}
+	onChange := c.onChange
+	c.mu.Unlock()
+	if onChange != nil {
+		onChange(repo)
+	}
+}
+
+func (c *snapshotCache) remove(repo, id string) {
+	c.mu.Lock()
+	e := c.entries[repo]
+	if e == nil {
+		c.mu.Unlock()
+		return
+	}
+	list := make([]bd.Issue, 0, len(e.list))
+	for i := range e.list {
+		if e.list[i].ID != id {
+			list = append(list, e.list[i])
+		}
+	}
+	c.gen++
+	c.entries[repo] = &snapshot{at: c.now(), gen: c.gen, list: list}
+	onChange := c.onChange
+	c.mu.Unlock()
+	if onChange != nil {
+		onChange(repo)
+	}
+}
+
 // putDeps records the repo-wide Deps result into the snapshot it was fetched for,
 // identified by gen (the value liveList returned alongside the ids). It writes only
 // when the current snapshot is still that one: an invalidate or a fresh putList
@@ -332,12 +454,7 @@ func (c *cachingSource) List(ctx context.Context, opts bd.ListOpts) ([]bd.Issue,
 	if list, _, ok := c.cache.liveList(c.repo); ok {
 		return list, nil
 	}
-	list, err := c.IssueSource.List(ctx, opts)
-	if err != nil {
-		return nil, err
-	}
-	c.cache.putList(c.repo, list)
-	return list, nil
+	return c.cache.refreshList(ctx, c.repo, c.IssueSource, false)
 }
 
 // Deps serves the repo-wide dependency edges, fetching once over the whole repo on
@@ -425,43 +542,51 @@ func (c *cachingSource) repoIDs(reqIDs []string) ([]string, uint64) {
 	return ids, gen
 }
 
-// The write methods pass through to bd, then drop the repo's snapshot on success so
-// the next read reflects the change (strand is the sole writer — invalidate exactly
-// on a successful write). A failed write leaves the snapshot, since nothing changed.
-
-// done drops the repo's snapshot when a write succeeded and returns the write's
-// error unchanged, so every wrapper is one line and the invalidate-on-success rule
-// lives in one place.
+// Writes that return an issue atomically upsert bd's response. Operations whose
+// CLI contract returns no issue preserve last-good data until reconciliation.
+// Failed writes never alter the snapshot.
 func (c *cachingSource) done(err error) error {
-	if err == nil {
-		c.cache.invalidate(c.repo)
-	}
 	return err
 }
 
 func (c *cachingSource) Update(ctx context.Context, id, field, value string) (*bd.Issue, error) {
 	iss, err := c.IssueSource.Update(ctx, id, field, value)
-	return iss, c.done(err)
+	if err == nil {
+		c.cache.upsert(c.repo, iss)
+	}
+	return iss, err
 }
 
 func (c *cachingSource) Claim(ctx context.Context, id string) (*bd.Issue, error) {
 	iss, err := c.IssueSource.Claim(ctx, id)
-	return iss, c.done(err)
+	if err == nil {
+		c.cache.upsert(c.repo, iss)
+	}
+	return iss, err
 }
 
 func (c *cachingSource) Close(ctx context.Context, id, reason string) (*bd.Issue, error) {
 	iss, err := c.IssueSource.Close(ctx, id, reason)
-	return iss, c.done(err)
+	if err == nil {
+		c.cache.upsert(c.repo, iss)
+	}
+	return iss, err
 }
 
 func (c *cachingSource) SetRank(ctx context.Context, id string, rank float64) (*bd.Issue, error) {
 	iss, err := c.IssueSource.SetRank(ctx, id, rank)
-	return iss, c.done(err)
+	if err == nil {
+		c.cache.upsert(c.repo, iss)
+	}
+	return iss, err
 }
 
 func (c *cachingSource) SetParent(ctx context.Context, id, parent bd.ID) (*bd.Issue, error) {
 	iss, err := c.IssueSource.SetParent(ctx, id, parent)
-	return iss, c.done(err)
+	if err == nil {
+		c.cache.upsert(c.repo, iss)
+	}
+	return iss, err
 }
 
 func (c *cachingSource) Comment(ctx context.Context, id, text string) error {
@@ -486,9 +611,16 @@ func (c *cachingSource) LabelRemove(ctx context.Context, id, label string) error
 
 func (c *cachingSource) Create(ctx context.Context, opts *bd.CreateOpts) (*bd.Issue, error) {
 	iss, err := c.IssueSource.Create(ctx, opts)
-	return iss, c.done(err)
+	if err == nil {
+		c.cache.upsert(c.repo, iss)
+	}
+	return iss, err
 }
 
 func (c *cachingSource) Delete(ctx context.Context, id string) error {
-	return c.done(c.IssueSource.Delete(ctx, id))
+	err := c.IssueSource.Delete(ctx, id)
+	if err == nil {
+		c.cache.remove(c.repo, id)
+	}
+	return err
 }
