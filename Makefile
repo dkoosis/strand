@@ -53,6 +53,7 @@ audit: check dupe vuln nilcheck
 
 # dupe flags copy-paste duplication (jscpd, config in .jscpd.json).
 dupe:
+	@command -v jscpd >/dev/null 2>&1 || { echo "dupe: jscpd missing — npm i -g jscpd@latest"; exit 1; }
 	@TMP=$$(mktemp -d); jscpd . --output $$TMP; rm -rf $$TMP
 
 # vuln scans for known vulnerabilities in dependencies.

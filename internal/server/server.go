@@ -611,7 +611,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	// buildStrand, the pulse, and every htmx fragment the page fires.
 	src, repo, ok := s.source(r)
 	if !ok {
-		s.render(w, "page", pageData{Empty: true, Repos: s.repoMenu("")})
+		s.render(w, "page", pageData{Empty: true, Repos: s.repoMenu(registry.Repo{}, false, "")})
 		return
 	}
 	f, _, err := s.buildStrand(ctx, src, repo)
@@ -661,7 +661,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		Strand:       f,
 		List:         list,
 		Pulse:        pulse,
-		Repos:        s.repoMenu(""),
+		Repos:        s.repoMenu(repo, true, ""),
 		RepoPath:     repo.Path,
 		AsOf:         s.asOf(repo),
 		ActiveFilter: active,
