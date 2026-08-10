@@ -22,27 +22,43 @@ type repoMenu struct {
 	Err        string
 }
 
-// repoMenu builds the selector view from the registry, flagging the active repo
-// and carrying an optional inline error. ActiveName is "—" when no repo is active,
-// matching the empty header caption.
-func (s *Server) repoMenu(errMsg string) repoMenu {
-	active, ok := s.reg.Active()
+// repoMenu builds the selector view from the registry, flagging the repo this
+// request is SCOPED to (a `?repo=` deep-link, else the persistent active repo)
+// and carrying an optional inline error. ActiveName is "—" when nothing
+// resolves, matching the empty header caption.
+//
+// Scoped, not active: st-ga4 made `?repo=` a pure per-request override for the
+// body of the page but left this chrome reading registry.Active(), so a status
+// line click rendered the right repo's beads under the wrong repo's name. The
+// caption is how a human answers "what am I looking at" — it has to track the
+// same repo source(r) resolved.
+func (s *Server) repoMenu(scoped registry.Repo, ok bool, errMsg string) repoMenu {
 	repos := s.reg.Repos()
 	items := make([]repoItem, len(repos))
 	for i, r := range repos {
-		items[i] = repoItem{Repo: r, Active: r.Path == active.Path}
+		items[i] = repoItem{Repo: r, Active: ok && r.Path == scoped.Path}
 	}
 	name := "—"
 	if ok {
-		name = active.Name
+		name = scoped.Name
 	}
 	return repoMenu{Items: items, ActiveName: name, Err: errMsg}
 }
 
+// scopedMenu is repoMenu for a request that has not already resolved its repo:
+// it re-runs the same read-only Resolve source(r) uses, so the dropdown a
+// deep-linked page opens marks the deep-link's repo, not the registry default.
+// FormValue, not URL.Query: htmx sends the page's inherited hx-vals as query
+// params on a GET and as form fields on a POST, and both shapes reach this.
+func (s *Server) scopedMenu(r *http.Request, errMsg string) repoMenu {
+	scoped, ok := s.reg.Resolve(r.FormValue("repo"))
+	return s.repoMenu(scoped, ok, errMsg)
+}
+
 // handleRepos renders the selector dropdown fragment (the known repos plus the
 // add field and rescan control).
-func (s *Server) handleRepos(w http.ResponseWriter, _ *http.Request) {
-	s.render(w, "repoMenu", s.repoMenu(""))
+func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "repoMenu", s.scopedMenu(r, ""))
 }
 
 // handleSwitchRepo makes the posted repo active and tells htmx to reload, so
@@ -60,26 +76,33 @@ func (s *Server) handleAddRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 // activateRepo runs a registry mutation that makes the posted path the active repo
-// (Switch or Add) and, on success, tells htmx to reload so every view re-scopes. Any
-// failure — a mistyped/unregistered path, a path with no .beads, or unexpected
-// resolve-abs/persistence trouble — surfaces its message inline so the user keeps
-// their typed path, never scoping to nothing or adding a bare directory. Switch and
-// Add differ only in the registry call, so both handlers share this shape.
+// (Switch or Add) and, on success, sends the browser to the UNSCOPED landing so
+// every view re-scopes. Any failure — a mistyped/unregistered path, a path with
+// no .beads, or unexpected resolve-abs/persistence trouble — surfaces its message
+// inline so the user keeps their typed path, never scoping to nothing or adding a
+// bare directory. Switch and Add differ only in the registry call, so both
+// handlers share this shape.
+//
+// Redirect, not HX-Refresh: a reload replays the CURRENT url, and a page opened
+// from a status-line deep-link still carries `?repo=<old>` — the per-request
+// override (st-ga4) would then win over the repo just switched to, so picking a
+// repo from the dropdown appeared to do nothing. Dropping the query string makes
+// the new active repo the one that renders.
 func (s *Server) activateRepo(w http.ResponseWriter, r *http.Request, activate func(string) (registry.Repo, error)) {
 	if _, err := activate(r.FormValue("path")); err != nil {
-		s.render(w, "repoMenu", s.repoMenu(err.Error()))
+		s.render(w, "repoMenu", s.scopedMenu(r, err.Error()))
 		return
 	}
-	w.Header().Set("HX-Refresh", "true")
+	w.Header().Set("HX-Redirect", "/")
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleRescan re-scans ~/Projects for workspaces and re-renders the menu with
 // any newly-found repos. The active selection is untouched, so no reload.
-func (s *Server) handleRescan(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleRescan(w http.ResponseWriter, r *http.Request) {
 	if err := s.reg.Rescan(registry.ScanRoot()); err != nil {
-		s.render(w, "repoMenu", s.repoMenu(err.Error()))
+		s.render(w, "repoMenu", s.scopedMenu(r, err.Error()))
 		return
 	}
-	s.render(w, "repoMenu", s.repoMenu(""))
+	s.render(w, "repoMenu", s.scopedMenu(r, ""))
 }

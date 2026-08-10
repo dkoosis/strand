@@ -67,8 +67,8 @@ func TestSwitchRepoReScopes(t *testing.T) {
 	}
 
 	rec := send(t, srv, http.MethodPost, "/repo", "path=/b")
-	if rec.Header().Get("HX-Refresh") != "true" {
-		t.Errorf("switch did not request a reload, got %q", rec.Header().Get("HX-Refresh"))
+	if rec.Header().Get("HX-Redirect") != "/" {
+		t.Errorf("switch did not redirect to the unscoped landing, got %q", rec.Header().Get("HX-Redirect"))
 	}
 
 	body := do(t, srv, "/list").Body.String()
@@ -139,6 +139,59 @@ func TestHomeRepoDeepLinkScopesPerRequest(t *testing.T) {
 	}
 }
 
+// TestSelectorNamesTheScopedRepo pins the deep-link's chrome: a `/?repo=<path>`
+// landing renders the SCOPED repo's name in the header caption (and marks it
+// active in the dropdown), not whatever the registry's persistent active repo
+// happens to be. The body was already scoped (st-ga4); the caption lagged, so a
+// status-line click landed on the right beads under the wrong project name —
+// which reads as "the URL doesn't match what strand displays".
+func TestSelectorNamesTheScopedRepo(t *testing.T) {
+	reg := registry.InMemory(
+		registry.Repo{Name: "alpha", Path: "/a"},
+		registry.Repo{Name: "beta", Path: "/b"},
+	)
+	srv := serverFor(t, reg, map[string]IssueSource{"/a": &stubBD{}, "/b": &stubBD{}})
+
+	head := headerCaption(t, do(t, srv, "/?repo=/b").Body.String())
+	if head != "beta" {
+		t.Errorf("header caption on a ?repo=/b landing = %q, want beta", head)
+	}
+
+	// The dropdown fragment carries the same scope (the page's inherited
+	// hx-vals) and must mark the scoped row, not the registry default.
+	menu := do(t, srv, "/repos?repo=/b").Body.String()
+	i := strings.Index(menu, `class="rm-item active"`)
+	if i < 0 {
+		t.Fatalf("menu marked no row active:\n%s", menu)
+	}
+	activeRow := menu[i:]
+	if !strings.Contains(activeRow[:min(len(activeRow), 200)], "beta") {
+		t.Errorf("menu marked the wrong row active:\n%s", menu)
+	}
+
+	// An unscoped landing still names the registry default.
+	if head := headerCaption(t, do(t, srv, "/").Body.String()); head != "alpha" {
+		t.Errorf("unscoped header caption = %q, want alpha", head)
+	}
+}
+
+// headerCaption pulls the repo-selector button's caption out of a rendered page.
+func headerCaption(t *testing.T, body string) string {
+	t.Helper()
+	const anchor = `<button class="repo"`
+	i := strings.Index(body, anchor)
+	if i < 0 {
+		t.Fatalf("no repo selector button in page:\n%s", body)
+	}
+	rest := body[i:]
+	start := strings.Index(rest, "<span>")
+	end := strings.Index(rest, "</span>")
+	if start < 0 || end < start {
+		t.Fatalf("malformed repo selector caption:\n%s", rest[:min(len(rest), 300)])
+	}
+	return rest[start+len("<span>") : end]
+}
+
 // TestEmptyStateWhenNoRepo: with no registered repo the landing renders the
 // actionable empty state, not an error dump (R1: no repos / empty).
 func TestEmptyStateWhenNoRepo(t *testing.T) {
@@ -162,7 +215,7 @@ func TestSwitchUnknownRepoSurfacesError(t *testing.T) {
 	reg := registry.InMemory(registry.Repo{Name: "alpha", Path: "/a"})
 	srv := serverFor(t, reg, map[string]IssueSource{"/a": &stubBD{}})
 	rec := send(t, srv, http.MethodPost, "/repo", "path=/nope")
-	if rec.Header().Get("HX-Refresh") == "true" {
+	if rec.Header().Get("HX-Redirect") != "" {
 		t.Error("a failed switch still requested a reload")
 	}
 	if !strings.Contains(rec.Body.String(), "rm-err") {
