@@ -354,7 +354,7 @@ document.addEventListener("click", (e) => {
   if (dismiss) clearSuggestPreview(dismiss);
 });
 document.body.addEventListener("htmx:afterSwap", (e) => {
-  if (!parkedAssist || e.target?.id !== "drawer") return;
+  if (!parkedAssist || e.detail?.target?.id !== "drawer") return;
   const parked = parkedAssist;
   parkedAssist = null;
   const slot = document.getElementById("dr-assist-preview");
