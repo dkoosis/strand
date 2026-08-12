@@ -254,9 +254,14 @@ func (s *Server) goBackground(timeout time.Duration, fn func(context.Context)) {
 // seconds. A failure is logged, not surfaced: the write itself already
 // succeeded, and a stale count self-heals on the next poll or the next launchd
 // cycle either way.
+//
+// It runs on goBackground's context, not a detached one: a refresh waits on the
+// cross-process counts lock (st-k6z), so without cancellation a slow holder would keep
+// every queued post-write goroutine alive past the 10s timeout and pin Stop's bgWG
+// wait behind it.
 func (s *Server) defaultRefreshCounts(repo registry.Repo) {
-	s.goBackground(10*time.Second, func(_ context.Context) {
-		if err := counts.Run([]string{repo.Path}, Version); err != nil {
+	s.goBackground(10*time.Second, func(ctx context.Context) {
+		if err := counts.RunContext(ctx, []string{repo.Path}, Version); err != nil {
 			log.Printf("strand: post-write counts refresh for %s: %v", repo.Path, err)
 		}
 	})

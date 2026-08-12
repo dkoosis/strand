@@ -18,8 +18,9 @@ const lockName = ".refresh.lock"
 
 // lockWait bounds how long a refresh waits for the holder. A wedged process must not
 // let launchd's every-minute fire pile up blocked refreshers forever; past the wait we
-// give up loudly instead of hanging.
-const lockWait = 2 * time.Minute
+// give up loudly instead of hanging. A var, not a const, so the timeout test can shrink
+// it rather than sleep for two minutes.
+var lockWait = 2 * time.Minute
 
 // lockPoll is the retry interval while another process holds the lock.
 const lockPoll = 50 * time.Millisecond

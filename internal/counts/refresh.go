@@ -48,6 +48,14 @@ type config struct {
 //	strand counts --all        # every discovered repo, unconditionally
 //	strand counts <dir>...      # only the named repo roots
 func Run(args []string, version string) error {
+	return RunContext(context.Background(), args, version) //nolint:forbidigo // CLI subcommand root: `strand counts` is a one-shot command, not request-scoped
+}
+
+// RunContext is Run for an in-process caller that owns a lifetime — the server's
+// post-write refresh, which runs under goBackground's 10s timeout and dies with
+// Server.Stop. Cancelling ctx aborts both the bd reads and the wait for the refresh
+// lock, so a slow holder cannot pin a shutdown behind lockWait (st-k6z review).
+func RunContext(ctx context.Context, args []string, version string) error {
 	fs := flag.NewFlagSet("counts", flag.ContinueOnError)
 	all := fs.Bool("all", false, "refresh every discovered repo unconditionally")
 	bin := fs.String("bd", "bd", "path to the bd binary")
@@ -70,7 +78,7 @@ func Run(args []string, version string) error {
 	case *all:
 		cfg.mode = modeAll
 	}
-	return refresh(context.Background(), &cfg) //nolint:forbidigo // CLI subcommand root: `strand counts` is a one-shot command, not request-scoped
+	return refresh(ctx, &cfg)
 }
 
 // refresh visits the run's repos, recomputes each row, and writes counts.json. It is

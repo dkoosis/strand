@@ -2,6 +2,7 @@ package counts
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,30 +98,62 @@ func TestRefreshSerializesConcurrentRuns(t *testing.T) {
 	}
 }
 
-// TestRefreshLockTimesOutOnWedgedHolder: a holder that never releases must not hang a
-// refresh forever — past the wait the run fails loudly so launchd's next fire does not
-// pile up blocked refreshers behind it.
-func TestRefreshLockTimesOutOnWedgedHolder(t *testing.T) {
-	cache := t.TempDir()
+// holdLock parks an exclusive holder on dir and returns once it is held; the cleanup
+// releases it.
+func holdLock(t *testing.T, dir string) {
+	t.Helper()
 	held := make(chan struct{})
 	holding := make(chan struct{})
+	done := make(chan struct{})
 	go func() {
-		_ = withLock(context.Background(), cache, func() error {
+		defer close(done)
+		_ = withLock(context.Background(), dir, func() error {
 			close(holding)
 			<-held
 			return nil
 		})
 	}()
 	<-holding
-	defer close(held)
+	t.Cleanup(func() {
+		close(held)
+		<-done
+	})
+}
+
+// TestRefreshLockGivesUpOnWedgedHolder: a holder that never releases must not hang a
+// refresh forever — past lockWait the run fails with errLockBusy, so launchd's next
+// fire does not pile up blocked refreshers behind it.
+func TestRefreshLockGivesUpOnWedgedHolder(t *testing.T) {
+	cache := t.TempDir()
+	holdLock(t, cache)
+
+	orig := lockWait
+	lockWait = 150 * time.Millisecond // the real 2 minutes, without a 2-minute test
+	t.Cleanup(func() { lockWait = orig })
+
+	err := withLock(context.Background(), cache, func() error {
+		t.Error("fn ran while another holder had the lock")
+		return nil
+	})
+	if !errors.Is(err, errLockBusy) {
+		t.Fatalf("withLock error = %v, want errLockBusy", err)
+	}
+}
+
+// TestRefreshLockHonorsContextCancel: the wait for the lock ends when the caller's
+// context does — the server's post-write refresh runs under goBackground's 10s
+// timeout and Server.Stop, neither of which may be pinned behind lockWait.
+func TestRefreshLockHonorsContextCancel(t *testing.T) {
+	cache := t.TempDir()
+	holdLock(t, cache)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // stands in for the lockWait deadline, without a 2-minute test
+	cancel()
 	err := withLock(ctx, cache, func() error {
 		t.Error("fn ran while another holder had the lock")
 		return nil
 	})
-	if err == nil {
-		t.Fatal("withLock returned nil while the lock was held")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("withLock error = %v, want context.Canceled", err)
 	}
 }
