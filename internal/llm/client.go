@@ -1,8 +1,8 @@
-// Package llm is a thin, key-gated client for strand's Tier-2 Suggest: one
+// Package llm is a thin, key-gated client for strand's drawer assist: one
 // non-streaming Anthropic Messages call to Sonnet 4.6. It is deliberately minimal
 // — no retry loop, no streaming, no multi-model abstraction, no provider
-// indirection (st-suggest.3 SIMPLICITY principle). The caller (st-suggest.3.3)
-// assembles the prompt text; this package just sends text and returns text.
+// indirection (st-suggest.3 SIMPLICITY principle). The caller assembles the prompt
+// text; this package just sends text and returns text.
 package llm
 
 import (
@@ -15,8 +15,8 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
-// model is the server-side Tier-2 model: Sonnet 4.6 (claude-sonnet-4-6). Naming is
-// a judgment task, so Suggest runs on a mid-tier model rather than the Haiku floor.
+// model is the server-side assist model: Sonnet 4.6 (claude-sonnet-4-6). Shaping a
+// bead is a judgment task, so assist runs on a mid-tier model, not the Haiku floor.
 // The id is already version-pinned (4.6, not a floating "latest"), so a default
 // shift can't silently re-route Suggest.
 const model = anthropic.ModelClaudeSonnet4_6
@@ -36,8 +36,8 @@ type Client struct {
 // New builds a Client from ANTHROPIC_API_KEY in the environment. The bool reports
 // availability, mirroring the `bd find-duplicates --ai` gate: key present -> a
 // usable client and true; key absent -> nil and false. Absence is NOT an error —
-// the caller silently falls back to Tier-1, with no log and no degraded UX. The
-// key stays server-side; it never reaches the browser.
+// the caller renders no assist affordance at all. The key stays server-side; it
+// never reaches the browser.
 func New() (*Client, bool) {
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
 		return nil, false
@@ -54,7 +54,7 @@ func New() (*Client, bool) {
 //
 // WithMaxRetries(0) is prepended so the one-call/no-retry contract holds: the SDK
 // retries twice by default on 429/5xx/transient errors, which would let Complete
-// issue up to three Messages calls. A best-effort Suggest fails fast to Tier-1
+// issue up to three Messages calls. A best-effort assist fails fast and says so
 // instead. It is prepended (not appended) so a caller option can still override it.
 func newWithOptions(opts ...option.RequestOption) *Client {
 	opts = append([]option.RequestOption{option.WithMaxRetries(0)}, opts...)

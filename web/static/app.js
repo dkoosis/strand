@@ -310,13 +310,13 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// ---- Suggest (title st-suggest.1, sections st-suggest.2) ----
-// A Suggest button loads a preview into its own .dr-suggest-preview slot — title
-// into the drawer head, sections under Description. Apply copies the proposed text
-// into the editor input named by data-target (.dr-title or .dr-desc) and dispatches
-// its change event, so the normal change→PATCH path commits it via internal/bd —
-// Suggest itself writes nothing. Dismiss just clears the slot. Delegated so both
-// keep working after htmx swaps the drawer or a preview fragment in.
+// ---- Assist (st-rl2) ----
+// One assist button in the drawer head loads a proposal for both bead elements into
+// the .dr-suggest-preview slot. Each proposed element carries its own Apply, which
+// copies the text into the editor input named by data-target (.dr-title or .dr-desc)
+// and dispatches its change event, so the normal change→PATCH path commits it via
+// internal/bd — assist itself writes nothing. Dismiss just clears the slot.
+// Delegated so both keep working after htmx swaps the drawer or the preview in.
 const SUGGEST_TARGETS = { title: ".dr-title", description: ".dr-desc" };
 function clearSuggestPreview(el) {
   const slot = el.closest(".dr-suggest-preview");

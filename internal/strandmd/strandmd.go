@@ -1,5 +1,5 @@
 // Package strandmd resolves the layered STRAND.md grounding context that feeds
-// strand's Tier-2 suggestion call. It mirrors the CLAUDE.md model: a shipped
+// strand's drawer-assist call. It mirrors the CLAUDE.md model: a shipped
 // default at ~/.strand/STRAND.md (the bead-quality rubric + an ## Actors stub,
 // user-managed after first init) overlaid by an optional repo-local
 // ./.strand/STRAND.md (the project's real ## Actors and direction).
@@ -36,7 +36,7 @@ var strandRelPath = filepath.Join(".strand", "STRAND.md")
 // Context is the resolved STRAND.md grounding blob. Text is the composed,
 // @-expanded context (rubric from global, the resolved Actors, and the layered
 // direction). Actors is the resolved ## Actors section on its own — the registry
-// a Tier-2 suggestion must draw its persona from.
+// an assist proposal must draw its persona from.
 type Context struct {
 	Text   string
 	Actors string
