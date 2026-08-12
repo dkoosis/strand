@@ -8,6 +8,11 @@ run:
   tests: true
 
 linters:
+  # bugclasses baseline floor (ccp-sbp.2, decision nug d7ea466a8172): keep
+  # golangci's standard set (errcheck, govet, ineffassign, staticcheck, unused)
+  # under everything strand enables on top.
+  default: standard
+
   enable:
     # Error handling
     - err113
@@ -15,6 +20,7 @@ linters:
     - errorlint
     - nilerr
     - nilnesserr
+    - staticcheck    # floor: the SA correctness suite, named explicitly
     - wrapcheck
 
     # Safety
@@ -94,8 +100,12 @@ linters:
       ignore-interface-regexps:
         - IssueSource
     errcheck:
+      # STRICT (baseline floor): only calls whose dropped error is genuinely
+      # discardable — a Close on a read handle, a printer to a known-good
+      # writer. Never a path/package blanket.
       exclude-functions:
         - (io.Closer).Close
+        - (*os.File).Close
         - fmt.Fprintf
         - fmt.Printf
         - fmt.Print
