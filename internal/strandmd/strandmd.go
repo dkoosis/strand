@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/dkoosis/atomicfile"
 )
 
 // errHomeDirRequired is returned by Load when homeDir is empty, so a default is
@@ -126,7 +128,7 @@ func readOrInit(path, def string) (string, error) {
 		if mkErr := os.MkdirAll(filepath.Dir(path), 0o755); mkErr != nil {
 			return "", fmt.Errorf("strandmd: mkdir .strand: %w", mkErr)
 		}
-		if wErr := os.WriteFile(path, []byte(def), 0o600); wErr != nil {
+		if wErr := atomicfile.WriteFile(path, []byte(def), 0o600); wErr != nil {
 			return "", fmt.Errorf("strandmd: write default STRAND.md: %w", wErr)
 		}
 		return def, nil

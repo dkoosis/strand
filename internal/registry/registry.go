@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dkoosis/atomicfile"
 )
 
 // ErrUnknownRepo means a switch targeted a path the registry doesn't hold.
@@ -300,7 +302,7 @@ func (r *Registry) saveLocked() error {
 	if err != nil {
 		return fmt.Errorf("marshal registry: %w", err)
 	}
-	if err := os.WriteFile(r.file, data, 0o600); err != nil {
+	if err := atomicfile.WriteFile(r.file, data, 0o600); err != nil {
 		return fmt.Errorf("write registry: %w", err)
 	}
 	return nil
