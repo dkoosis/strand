@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dkoosis/atomicfile"
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/bdcounts"
 )
@@ -208,6 +209,13 @@ func readRows(path string) map[string]Row {
 // file + rename, so a concurrent reader never sees a half-written file. The meta rides
 // under bdcounts.MetaKey — a reserved key no repo path collides with — so keyed readers
 // (bdcounts.Reader.Lookup, the status line's `.[$repo]`) are untouched by its presence.
+//
+// NOTE (RMW race, not fixed by atomic write): two concurrent refreshes (the
+// launchd --all run and a manual `strand counts`) each read-compute-write the
+// whole rows set independently. atomicfile.WriteFile stops either write from
+// being torn, but it does not serialize the two writers — whichever finishes
+// last wins wholesale, silently dropping the other's rows. Follow-up: a lock
+// around the refresh, or a merge-on-write like writeState's.
 func writeRowsAtomic(path string, rows map[string]Row, meta bdcounts.Meta) error {
 	out := make(map[string]any, len(rows)+1)
 	for k, v := range rows {
@@ -218,22 +226,10 @@ func writeRowsAtomic(path string, rows map[string]Row, meta bdcounts.Meta) error
 	if err != nil {
 		return fmt.Errorf("counts: marshal: %w", err)
 	}
-	tmp := tmpPath(path)
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
+	if err := atomicfile.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 		return fmt.Errorf("counts: write: %w", err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("counts: rename: %w", err)
-	}
 	return nil
-}
-
-// tmpPath is a per-process temp name for the atomic write. The pid suffix keeps two
-// concurrent refreshes (the launchd --all and a manual `strand counts`) off one
-// shared tmp, where they would clobber each other's write and race the rename to a
-// spurious ENOENT — the same guard the shell got from `$OUT.$$`.
-func tmpPath(path string) string {
-	return fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
 }
 
 // repoState is one repo's carry-forward bookkeeping between refresh runs: the
@@ -283,6 +279,12 @@ func readState(path string) map[string]repoState {
 // changed-mode run would then find no prior mtime for those repos and cold-recompute
 // them all (st-dd9). Reading the prior state and overlaying keeps the untouched repos'
 // gate entries intact.
+//
+// NOTE (RMW race, not fixed by atomic write): the read-merge-write above is not
+// serialized against a concurrent writer — two refreshes racing this function can
+// each read the same prior state, merge their own entries on top, and whichever
+// atomicfile.WriteFile finishes last wins wholesale, silently dropping the other's
+// merged entries. Same follow-up as writeRowsAtomic.
 func writeState(path string, state map[string]repoState) error {
 	merged := readState(path)
 	maps.Copy(merged, state)
@@ -295,12 +297,8 @@ func writeState(path string, state map[string]repoState) error {
 		}
 		fmt.Fprintf(&b, "%s\t%d\t%s\n", root, st.mtime, pendingField)
 	}
-	tmp := tmpPath(path)
-	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
+	if err := atomicfile.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		return fmt.Errorf("counts: write state: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("counts: rename state: %w", err)
 	}
 	return nil
 }
