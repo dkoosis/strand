@@ -48,6 +48,14 @@ type config struct {
 //	strand counts --all        # every discovered repo, unconditionally
 //	strand counts <dir>...      # only the named repo roots
 func Run(args []string, version string) error {
+	return RunContext(context.Background(), args, version) //nolint:forbidigo // CLI subcommand root: `strand counts` is a one-shot command, not request-scoped
+}
+
+// RunContext is Run for an in-process caller that owns a lifetime — the server's
+// post-write refresh, which runs under goBackground's 10s timeout and dies with
+// Server.Stop. Cancelling ctx aborts both the bd reads and the wait for the refresh
+// lock, so a slow holder cannot pin a shutdown behind lockWait (st-k6z review).
+func RunContext(ctx context.Context, args []string, version string) error {
 	fs := flag.NewFlagSet("counts", flag.ContinueOnError)
 	all := fs.Bool("all", false, "refresh every discovered repo unconditionally")
 	bin := fs.String("bd", "bd", "path to the bd binary")
@@ -70,7 +78,7 @@ func Run(args []string, version string) error {
 	case *all:
 		cfg.mode = modeAll
 	}
-	return refresh(context.Background(), &cfg) //nolint:forbidigo // CLI subcommand root: `strand counts` is a one-shot command, not request-scoped
+	return refresh(ctx, &cfg)
 }
 
 // refresh visits the run's repos, recomputes each row, and writes counts.json. It is
@@ -89,7 +97,20 @@ func Run(args []string, version string) error {
 // this cycle always schedules exactly one guaranteed follow-up derive next cycle
 // (regardless of whether the mtime moves again), by which time bd's commit has
 // settled. See repoState.next for the exact carry-forward rule.
+// The whole sequence runs under one cross-process lock (st-k6z): the reads below are
+// the R of a read-modify-write, so the lock opens before them, not just around the
+// writes. Without it, the launchd `--all` run, a manual `strand counts`, and the
+// server's per-write `strand counts <repo>` spawns each read the same base and replace
+// the file — last writer wins wholesale, dropping the others' rows.
 func refresh(ctx context.Context, cfg *config) error {
+	if err := os.MkdirAll(cfg.cacheDir, 0o755); err != nil {
+		return fmt.Errorf("counts: cache dir: %w", err)
+	}
+	return withLock(ctx, cfg.cacheDir, func() error { return refreshLocked(ctx, cfg) })
+}
+
+// refreshLocked is refresh's body, run with the cache-dir lock held.
+func refreshLocked(ctx context.Context, cfg *config) error {
 	targets := cfg.targets
 	if cfg.mode != modeExplicit {
 		targets = discover(cfg.projects)
@@ -120,9 +141,6 @@ func refresh(ctx context.Context, cfg *config) error {
 		nextState[root] = repoState{mtime: cur, pending: nextPending(cfg.mode, mtimeChanged, err)}
 	}
 
-	if err := os.MkdirAll(cfg.cacheDir, 0o755); err != nil {
-		return fmt.Errorf("counts: cache dir: %w", err)
-	}
 	// counts.json is rewritten every run, even when no row changed: the write stamps a
 	// fresh liveness meta (last-run time + binary version) so a dead or wedged refresher
 	// shows a stale flag in the masthead instead of freezing the file indistinguishably
@@ -210,12 +228,9 @@ func readRows(path string) map[string]Row {
 // under bdcounts.MetaKey — a reserved key no repo path collides with — so keyed readers
 // (bdcounts.Reader.Lookup, the status line's `.[$repo]`) are untouched by its presence.
 //
-// NOTE (RMW race, not fixed by atomic write): two concurrent refreshes (the
-// launchd --all run and a manual `strand counts`) each read-compute-write the
-// whole rows set independently. atomicfile.WriteFile stops either write from
-// being torn, but it does not serialize the two writers — whichever finishes
-// last wins wholesale, silently dropping the other's rows. Follow-up: a lock
-// around the refresh, or a merge-on-write like writeState's.
+// The atomic write protects concurrent *readers* from a half-written file; concurrent
+// *writers* are handled a level up, by refresh's cache-dir lock (st-k6z) — this
+// function assumes the caller holds it.
 func writeRowsAtomic(path string, rows map[string]Row, meta bdcounts.Meta) error {
 	out := make(map[string]any, len(rows)+1)
 	for k, v := range rows {
@@ -278,13 +293,8 @@ func readState(path string) map[string]repoState {
 // a plain overwrite would truncate every other repo's gate entry — the next launchd
 // changed-mode run would then find no prior mtime for those repos and cold-recompute
 // them all (st-dd9). Reading the prior state and overlaying keeps the untouched repos'
-// gate entries intact.
-//
-// NOTE (RMW race, not fixed by atomic write): the read-merge-write above is not
-// serialized against a concurrent writer — two refreshes racing this function can
-// each read the same prior state, merge their own entries on top, and whichever
-// atomicfile.WriteFile finishes last wins wholesale, silently dropping the other's
-// merged entries. Same follow-up as writeRowsAtomic.
+// gate entries intact. The merge is a within-run concern; cross-run serialization of
+// this read-merge-write is refresh's cache-dir lock (st-k6z), which the caller holds.
 func writeState(path string, state map[string]repoState) error {
 	merged := readState(path)
 	maps.Copy(merged, state)
