@@ -135,19 +135,18 @@ type Server struct {
 	// suggestLLM seam style already used in this file).
 	refreshCounts func(repo registry.Repo)
 
-	// Tier-2 Suggest seams (st-suggest.3.3). suggestLLM builds the key-gated model
-	// client (default defaultSuggestLLM over llm.New); tests swap it for a stub so
-	// the namer never touches the network. homeDir roots the global STRAND.md load
-	// (default os.UserHomeDir); tests point it at a temp dir so a Suggest call never
-	// initializes the real ~/.strand. Both are read only inside the keyed Tier-2
-	// branch, so the unkeyed Tier-1 path touches neither.
+	// Drawer-assist seams. suggestLLM builds the key-gated model client (default
+	// defaultSuggestLLM over llm.New); tests swap it for a stub so assist never
+	// touches the network. It is also the gate that decides whether the drawer
+	// renders an assist button at all. homeDir roots both the global STRAND.md load
+	// and the canonical bead-fmt prompt lookup (default os.UserHomeDir); tests point
+	// it at a temp dir so an assist call never initializes the real ~/.strand.
 	suggestLLM func() (suggest.Completer, bool)
 	homeDir    string
-	// noKeyOnce logs the "Tier-2 disabled — no API key" warning a single time, the
-	// first time an unkeyed Suggest falls to Tier-1. Without it the incident this seam
-	// exists to surface (server running with no ANTHROPIC_API_KEY, so every title comes
-	// from the deterministic floor) stays as silent as a thin bead — but logging it per
-	// request would spam every drawer open, so it fires once per process.
+	// noKeyOnce logs the "assist disabled — no API key" warning a single time. Without
+	// it, a server running with no ANTHROPIC_API_KEY looks identical to a run of
+	// already-conformant beads — but logging per request would spam every drawer open,
+	// so it fires once per process.
 	noKeyOnce sync.Once
 
 	// Lifecycle for detached background work (the Insights deps prefetch). bgCtx
@@ -213,11 +212,11 @@ func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, sta
 // so construction-only tests do not leak goroutines; production calls it once.
 func (s *Server) Start() { s.startOnce.Do(func() { s.goBackground(0, s.reconcileLoop) }) }
 
-// defaultSuggestLLM is the production Tier-2 model gate: it builds the key-gated
-// llm client, reporting unavailable (so Suggest stays Tier-1) when no API key is
-// set. It adapts *llm.Client to the suggest.Completer seam and returns a nil
-// interface — not a typed-nil — when unavailable, so the caller's ok-check is the
-// only gate (mirrors `bd find-duplicates --ai`).
+// defaultSuggestLLM is the production model gate: it builds the key-gated llm
+// client, reporting unavailable (so the drawer renders no assist button) when no
+// API key is set. It adapts *llm.Client to the suggest.Completer seam and returns a
+// nil interface — not a typed-nil — when unavailable, so the caller's ok-check is
+// the only gate (mirrors `bd find-duplicates --ai`).
 func defaultSuggestLLM() (suggest.Completer, bool) {
 	c, ok := llm.New()
 	if !ok {
@@ -409,7 +408,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /board", s.handleBoard)
 	mux.HandleFunc("GET /insights", s.handleInsights)
 	mux.HandleFunc("GET /bead/{id}", s.handleBead)
-	mux.HandleFunc("GET /bead/{id}/suggest", s.handleSuggest)
+	mux.HandleFunc("GET /bead/{id}/assist", s.handleAssist)
 	s.mutate(mux, "PATCH /bead/{id}", s.handleEdit)
 	s.mutate(mux, "POST /bead/{id}/move", s.handleMove)
 	s.mutate(mux, "POST /bead/{id}/rank", s.handleRank)
@@ -1386,6 +1385,10 @@ type drawerData struct {
 	Comments []bd.Comment
 	Blockers []string // ids this bead depends on (its in-bd "blocks" blockers)
 	Err      string
+	// Assist reports whether a model key is configured. It gates the assist button
+	// out of the markup entirely on an unkeyed strand — there is no deterministic
+	// tier beneath the model, so a dead button would be the only alternative (st-rl2).
+	Assist bool
 }
 
 func (s *Server) handleBead(w http.ResponseWriter, r *http.Request) {
@@ -1404,32 +1407,31 @@ func (s *Server) handleBead(w http.ResponseWriter, r *http.Request) {
 	s.renderDrawer(ctx, w, src, issue, nil)
 }
 
-// suggestPreview is the title Suggest slot's data: the bead id (so Apply/Dismiss
-// act on the right drawer), the current title, and the deterministic proposal.
-// S.None drives the "nothing to suggest" branch; otherwise the template renders
-// current-vs-proposed with Apply/Dismiss controls.
-type suggestPreview struct {
-	ID      string
-	Current string
-	S       suggest.Suggestion
+// assistPreview is the drawer's assist slot data: the bead id (so Apply/Dismiss act
+// on the right drawer), its current title and body for the current-vs-proposed
+// rows, and the model's proposal. R.None drives the "nothing to suggest" branch and
+// Err the failure branch; otherwise the template renders an Apply per element the
+// model actually proposed.
+type assistPreview struct {
+	ID           string
+	CurrentTitle string
+	CurrentBody  string
+	R            suggest.Result
+	Err          string
 }
 
-// sectionPreview is the body Suggest slot's data: the bead id and the deterministic
-// section-gap suggestion. S.None drives the "nothing to suggest" branch; otherwise
-// the template lists each missing section's draft with an Apply that copies the
-// augmented description into the editor's change→PATCH path.
-type sectionPreview struct {
-	ID string
-	S  suggest.SectionSuggestion
-}
-
-// handleSuggest renders a deterministic suggestion for the bead as a preview slot.
-// Read-only by design: it loads the bead, runs the namer, and renders the preview
-// — no bd write. Apply is the user's gesture in the browser, which copies the
-// proposal into the matching editor input and fires its change→PATCH path; Suggest
-// itself writes nothing. ?kind=body proposes the missing description sections
-// (st-suggest.2); any other kind serves the Tier-1 title namer (st-suggest.1).
-func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request) {
+// handleAssist proposes a title and body for the bead as a preview slot. Read-only
+// by design: it loads the bead, runs the model, and renders the preview — no bd
+// write. Apply is the user's gesture in the browser, which copies a proposal into
+// the matching editor input and fires its change→PATCH path; assist itself writes
+// nothing.
+//
+// The whole affordance is key-gated. With no model key there is no proposal and no
+// button (drawerData.Assist keeps it out of the markup), because there is no
+// deterministic tier to fall back to — a rule-based namer could only restate
+// bead-fmt in Go, which is the drift the canonical prompts exist to kill (st-rl2).
+// A model failure surfaces in the slot rather than degrading to a worse proposal.
+func (s *Server) handleAssist(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
 	src, repo, ok := s.source(r)
@@ -1446,58 +1448,48 @@ func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, errNoIssue)
 		return
 	}
-	if r.URL.Query().Get("kind") == "body" {
-		sg := suggest.Sections(suggest.SectionInput{Body: issue.Description, Type: issue.IssueType})
-		s.render(w, "sectionPreview", sectionPreview{ID: issue.ID, S: sg})
+	c, keyed := s.suggestLLM()
+	if !keyed {
+		// The button is not rendered unkeyed, so this is a hand-rolled or stale request.
+		// Surface the disabled state once — an unkeyed strand that silently returns
+		// nothing is indistinguishable from a run of already-conformant beads (PR #61).
+		s.noKeyOnce.Do(func() {
+			log.Printf("strand: drawer assist disabled (ANTHROPIC_API_KEY not set)")
+		})
+		s.render(w, "assistPreview", assistPreview{ID: issue.ID, R: suggest.Result{None: true}})
 		return
 	}
-	// Tier-2: when a model key is present, ground the title in the resolved
-	// STRAND.md + north star + graph. Any failure (strand load or model call) falls
-	// through to the Tier-1 deterministic namer below — Suggest is advisory and never
-	// errors on the model path; an absent key keeps the whole branch dark, so the
-	// unkeyed path costs no STRAND.md load and no network (st-suggest.3.3).
-	if c, keyed := s.suggestLLM(); keyed {
-		sg, terr := s.tier2Title(ctx, src, repo, issue, c)
-		if terr == nil {
-			s.render(w, "suggestPreview", suggestPreview{ID: issue.ID, Current: issue.Title, S: sg})
+	res, aerr := s.assist(ctx, src, repo, issue, c)
+	if aerr != nil {
+		// A cancelled request (drawer closed, navigated away) is expected, not an
+		// incident — don't log it, or the noise drowns the real failures (PR #61,
+		// gemini). Either way the slot says so; assist never invents a proposal.
+		if errors.Is(aerr, context.Canceled) {
 			return
 		}
-		// Tier-2 is best-effort; fall through to the Tier-1 floor below. Log the cause
-		// so a dead/invalid key or model error surfaces instead of silently degrading to
-		// worse titles (a 401 from a wrong-typed key looks identical to a thin bead). A
-		// cancelled request (drawer closed, navigated away) is expected, not an incident
-		// — don't log it, or the noise drowns the real failures (PR #61, gemini).
-		if !errors.Is(terr, context.Canceled) {
-			log.Printf("strand: suggest tier-2 fell back to tier-1 for %s: %v", issue.ID, terr)
-		}
-	} else {
-		// No API key: Tier-2 is never attempted, so the keyed branch above can't log it.
-		// Surface the disabled state once — this is the actual incident dk hit (PR #61,
-		// codex), otherwise indistinguishable from a run of thin beads.
-		s.noKeyOnce.Do(func() {
-			log.Printf("strand: Tier-2 Suggest disabled (ANTHROPIC_API_KEY not set); titles use the deterministic Tier-1 floor")
-		})
+		log.Printf("strand: drawer assist failed for %s: %v", issue.ID, aerr)
+		s.render(w, "assistPreview", assistPreview{ID: issue.ID, Err: "Assist unavailable — " + aerr.Error()})
+		return
 	}
-	sg := suggest.Title(suggest.TitleInput{
-		Title:  issue.Title,
-		Body:   issue.Description,
-		Type:   issue.IssueType,
-		Parent: parentTitle(ctx, src, issue.Parent),
+	s.render(w, "assistPreview", assistPreview{
+		ID:           issue.ID,
+		CurrentTitle: issue.Title,
+		CurrentBody:  issue.Description,
+		R:            res,
 	})
-	s.render(w, "suggestPreview", suggestPreview{ID: issue.ID, Current: issue.Title, S: sg})
 }
 
-// tier2Title builds the model-grounded title suggestion: it resolves the layered
-// STRAND.md, gathers the per-call grounding (north star, parent, children, and an
-// inline-cited job only when the page already references one), and runs the Tier-2
-// namer. A strand-load or model error is returned so handleSuggest falls back to
-// Tier-1 — the model path never breaks Suggest (st-suggest.3.3).
-func (s *Server) tier2Title(ctx context.Context, src IssueSource, repo registry.Repo, issue *bd.Issue, c suggest.Completer) (suggest.Suggestion, error) {
+// assist builds the model-grounded proposal: it loads the canonical bead-fmt
+// prompts, resolves the layered STRAND.md, gathers the per-call grounding (north
+// star, parent, children, and an inline-cited job only when the page already
+// references one), and runs the assist call.
+func (s *Server) assist(ctx context.Context, src IssueSource, repo registry.Repo, issue *bd.Issue, c suggest.Completer) (suggest.Result, error) {
 	sc, err := strandmd.Load(s.homeDir, repo.Path)
 	if err != nil {
-		return suggest.Suggestion{}, fmt.Errorf("tier2: load strand: %w", err)
+		return suggest.Result{}, fmt.Errorf("assist: load strand: %w", err)
 	}
-	sg, err := suggest.Tier2(ctx, c, &suggest.Tier2Input{
+	res, err := suggest.Assist(ctx, c, &suggest.Input{
+		Prompts:   suggest.LoadPrompts(s.homeDir),
 		Strand:    sc.Text,
 		Actors:    sc.Actors,
 		NorthStar: s.northStarFor(repo),
@@ -1509,9 +1501,9 @@ func (s *Server) tier2Title(ctx context.Context, src IssueSource, repo registry.
 		Job:       citedJob(repo.Path, issue.Description),
 	})
 	if err != nil {
-		return suggest.Suggestion{}, fmt.Errorf("tier2: %w", err)
+		return suggest.Result{}, fmt.Errorf("assist: %w", err)
 	}
-	return sg, nil
+	return res, nil
 }
 
 // parentTitle returns the parent bead's title, or "" on no parent or a read miss.
@@ -1578,7 +1570,8 @@ func (s *Server) renderDrawer(ctx context.Context, w http.ResponseWriter, src re
 		s.renderError(w, errNoIssue)
 		return
 	}
-	data := drawerData{Issue: issue, Priority: strand.NewBead(issue).Priority}
+	_, keyed := s.suggestLLM()
+	data := drawerData{Issue: issue, Priority: strand.NewBead(issue).Priority, Assist: keyed}
 	if writeErr != nil {
 		data.Err = writeErr.Error()
 	}

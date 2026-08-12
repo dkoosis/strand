@@ -482,15 +482,19 @@ func newTestServer(t *testing.T, src IssueSource) *Server {
 }
 
 // fakeCompleter is the server-side model stub: it satisfies suggest.Completer with
-// a canned reply (or error), so the Tier-2 escalation is exercised with no network.
+// a canned reply (or error) and records the prompts it was handed, so the assist
+// path — including what grounding reached the model — is exercised with no network.
 type fakeCompleter struct {
-	reply string
-	err   error
-	calls int
+	reply  string
+	err    error
+	calls  int
+	system string
+	user   string
 }
 
-func (f *fakeCompleter) Complete(context.Context, string, string) (string, error) {
+func (f *fakeCompleter) Complete(_ context.Context, system, user string) (string, error) {
 	f.calls++
+	f.system, f.user = system, user
 	return f.reply, f.err
 }
 
@@ -1667,203 +1671,233 @@ func TestEditFieldReflects(t *testing.T) {
 	}
 }
 
-// TestDrawerHasSuggestAffordance: the drawer renders the Suggest button wired to
-// the read-only suggest endpoint and the preview slot it targets (st-suggest.1).
-func TestDrawerHasSuggestAffordance(t *testing.T) {
+// TestDrawerHasAssistAffordanceWhenKeyed: with a model key configured the drawer
+// renders one assist button wired to the read-only assist endpoint, plus the
+// preview slot it targets — and neither of the two retired per-element buttons
+// (st-rl2).
+func TestDrawerHasAssistAffordanceWhenKeyed(t *testing.T) {
 	srv := newTestServer(t, oneBead(&bd.Issue{
 		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "story",
 		Description: "Add a suggest preview slot to the drawer.",
 	}))
+	srv.suggestLLM = func() (suggest.Completer, bool) { return &fakeCompleter{}, true }
+
 	body := do(t, srv, "/bead/demo-x").Body.String()
 	for _, want := range []string{
 		`class="dr-suggest-btn"`,
-		`hx-get="/bead/demo-x/suggest?kind=title"`,
-		`id="dr-suggest-preview"`,
+		`hx-get="/bead/demo-x/assist"`,
+		`id="dr-assist-preview"`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("drawer missing suggest affordance %q", want)
+			t.Errorf("keyed drawer missing assist affordance %q", want)
+		}
+	}
+	if n := strings.Count(body, `class="dr-suggest-btn"`); n != 1 {
+		t.Errorf("drawer rendered %d assist buttons, want exactly 1 (the two per-element buttons are retired)", n)
+	}
+	for _, gone := range []string{"kind=title", "kind=body", "Suggest sections"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("drawer still carries the retired per-element affordance %q", gone)
 		}
 	}
 }
 
-// TestSuggestPreviewRenders: GET suggest on an inert-titled bead renders a
-// current-vs-proposed preview with Apply/Dismiss, drawn from the body, and writes
-// nothing — the endpoint is read-side (st-suggest.1).
-func TestSuggestPreviewRenders(t *testing.T) {
+// TestDrawerHasNoAssistAffordanceWhenUnkeyed: with no model key the drawer shows no
+// assist affordance at all. There is no deterministic tier beneath the model, so
+// the button is absent rather than dead (st-rl2 acceptance).
+func TestDrawerHasNoAssistAffordanceWhenUnkeyed(t *testing.T) {
+	srv := newTestServer(t, oneBead(&bd.Issue{
+		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "story",
+		Description: "Add a suggest preview slot to the drawer.",
+	})) // default model gate reports unavailable
+
+	body := do(t, srv, "/bead/demo-x").Body.String()
+	for _, gone := range []string{`class="dr-suggest-btn"`, "/assist", `id="dr-assist-preview"`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("unkeyed drawer still carries %q; the assist affordance must be absent", gone)
+		}
+	}
+}
+
+// TestAssistPreviewRendersBothElements: GET assist on a keyed server renders the
+// model's title and body proposals in one preview, each with its own Apply, and
+// writes nothing — the endpoint is read-side (st-rl2).
+func TestAssistPreviewRendersBothElements(t *testing.T) {
 	stub := oneBead(&bd.Issue{
 		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "task",
-		Description: "Add a suggest preview slot to the drawer.",
+		Description: "old body",
 	})
 	srv := newTestServer(t, stub)
-	rec := do(t, srv, "/bead/demo-x/suggest?kind=title")
+	srv.homeDir = t.TempDir() // STRAND.md initializes here, never the real ~/.strand
+	fc := &fakeCompleter{reply: "TITLE: Render the drawer assist preview slot\nBODY:\nThe drawer proposes both bead elements in one slot.\n\n## Acceptance Criteria\n- one button"}
+	srv.suggestLLM = func() (suggest.Completer, bool) { return fc, true }
+
+	rec := do(t, srv, "/bead/demo-x/assist")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET suggest = %d, want 200", rec.Code)
+		t.Fatalf("GET assist = %d, want 200", rec.Code)
+	}
+	if fc.calls != 1 {
+		t.Errorf("model called %d times, want exactly 1 (one button, one round-trip)", fc.calls)
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"current", "proposed", "Phase 2", // current-vs-proposed framing + the live title
-		"Add a suggest preview slot",                  // the Verb-object proposal from the body
-		`class="dr-suggest-apply"`, `data-value="Add`, // Apply carries the proposal
+		"Render the drawer assist preview slot",          // the proposed title
+		"The drawer proposes both bead elements",         // the proposed body
+		"Acceptance Criteria",                            // the body prompt's required section, from the model
+		`data-target="title"`, `data-target="descriptio`, // one Apply per proposed element
+		"Anchored to the north star", // the Why cites the north star
 		`class="dr-suggest-dismiss"`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("preview missing %q:\n%s", want, body)
+			t.Errorf("assist preview missing %q:\n%s", want, body)
 		}
 	}
 	if stub.updateCalls != 0 {
-		t.Errorf("suggest issued %d writes, want 0 (read-only)", stub.updateCalls)
+		t.Errorf("assist issued %d writes, want 0 (read-only, never auto-applies)", stub.updateCalls)
+	}
+	// Applying one element commits through a PATCH that re-renders the whole drawer.
+	// app.js carries the unapplied element across that swap, which it can only do if
+	// each proposal is its own removable block tagged with the bead it belongs to.
+	for _, want := range []string{`data-bead="demo-x"`, `data-el="title"`, `data-el="description"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("assist preview missing %q — the other proposal cannot survive the drawer swap:\n%s", want, body)
+		}
 	}
 }
 
-// TestSuggestSharpTitleNothing: a title that already reads as Verb-object yields
-// the "nothing to suggest" preview with no Apply control (st-suggest.1).
-func TestSuggestSharpTitleNothing(t *testing.T) {
-	stub := oneBead(&bd.Issue{
-		ID: "demo-x", Title: "Add the waiting-on-you lane", Status: "open",
-		IssueType: "story", Description: "Body text.",
-	})
-	srv := newTestServer(t, stub)
-	rec := do(t, srv, "/bead/demo-x/suggest?kind=title")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET suggest = %d, want 200", rec.Code)
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "nothing to suggest") {
-		t.Errorf("sharp title did not yield the nothing-to-suggest preview:\n%s", body)
-	}
-	if strings.Contains(body, `class="dr-suggest-apply"`) {
-		t.Error("sharp-title preview offered an Apply control")
-	}
-	if stub.updateCalls != 0 {
-		t.Errorf("suggest issued %d writes, want 0 (read-only)", stub.updateCalls)
+// TestAssistGroundsPromptInCanonicalRules: the system prompt strand sends carries
+// the canonical bead-fmt rules — the ones strand used to hand-copy into
+// tier2Instruction and requiredSections — so the model returns conformant text
+// with no Go-side post-processing (st-rl2).
+func TestAssistGroundsPromptInCanonicalRules(t *testing.T) {
+	srv := newTestServer(t, oneBead(&bd.Issue{
+		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "task", Description: "old body",
+	}))
+	srv.homeDir = t.TempDir()
+	fc := &fakeCompleter{reply: "TITLE: Render the assist slot"}
+	srv.suggestLLM = func() (suggest.Completer, bool) { return fc, true }
+
+	do(t, srv, "/bead/demo-x/assist")
+	for _, want := range []string{
+		"TITLE PROMPT", "BODY PROMPT", // both canonical prompts reach the model
+		"Acceptance Criteria",      // the per-type required sections ride in the body prompt
+		"Steps to Reproduce",       // ...including the bug rule
+		"names the done state",     // the four title tests
+		"phase and version labels", // the banned labels, which is what "Phase 2" trips
+	} {
+		if !strings.Contains(strings.ToLower(fc.system), strings.ToLower(want)) {
+			t.Errorf("assist system prompt missing the canonical rule %q", want)
+		}
 	}
 }
 
-// TestSuggestApplyWritesViaExistingEdit: the Apply gesture posts the proposed
-// title through the *existing* PATCH edit path — exactly one Update, and the
-// drawer reflects it. Suggest adds no second write path (st-suggest.1).
-func TestSuggestApplyWritesViaExistingEdit(t *testing.T) {
+// TestAssistApplyWritesViaExistingEdit: the Apply gesture posts the proposed title
+// through the *existing* PATCH edit path — exactly one Update, and the drawer
+// reflects it. Assist adds no second write path (st-rl2).
+func TestAssistApplyWritesViaExistingEdit(t *testing.T) {
 	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "story"})
 	srv := newTestServer(t, stub)
-	rec := send(t, srv, http.MethodPatch, "/bead/demo-x", "field=title&value=Add+the+suggest+preview+slot")
+	rec := send(t, srv, http.MethodPatch, "/bead/demo-x", "field=title&value=Render+the+assist+preview+slot")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH apply = %d, want 200", rec.Code)
 	}
 	if stub.updateCalls != 1 {
 		t.Errorf("apply issued %d Update calls, want exactly 1", stub.updateCalls)
 	}
-	if stub.lastField != "title" || stub.lastValue != "Add the suggest preview slot" {
-		t.Errorf("apply wrote %s=%q, want title=Add the suggest preview slot", stub.lastField, stub.lastValue)
+	if stub.lastField != "title" || stub.lastValue != "Render the assist preview slot" {
+		t.Errorf("apply wrote %s=%q, want title=Render the assist preview slot", stub.lastField, stub.lastValue)
 	}
-	if !strings.Contains(rec.Body.String(), "Add the suggest preview slot") {
+	if !strings.Contains(rec.Body.String(), "Render the assist preview slot") {
 		t.Errorf("drawer missing the applied title:\n%s", rec.Body.String())
 	}
 }
 
-// TestSuggestTier2GroundsTitleWhenKeyed: with a model key present, GET suggest
-// runs the Tier-2 path — the grounded model title and an anchored Why citing the
-// north star render in the same preview slot, through the injected completer (no
-// network), and still writes nothing (st-suggest.3.3).
-func TestSuggestTier2GroundsTitleWhenKeyed(t *testing.T) {
+// TestAssistBodyApplyWritesDescription: applying the proposed body goes through the
+// same PATCH path, writing the description field once (st-rl2).
+func TestAssistBodyApplyWritesDescription(t *testing.T) {
+	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Render the lane", Status: "open", IssueType: "story"})
+	srv := newTestServer(t, stub)
+	rec := send(t, srv, http.MethodPatch, "/bead/demo-x", "field=description&value=%23%23+Acceptance+Criteria%0A-+done")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH apply = %d, want 200", rec.Code)
+	}
+	if stub.updateCalls != 1 {
+		t.Errorf("apply issued %d Update calls, want exactly 1", stub.updateCalls)
+	}
+	if stub.lastField != "description" {
+		t.Errorf("apply wrote field %q, want description", stub.lastField)
+	}
+}
+
+// TestAssistConformantBeadProposesNothing: a bead the model leaves alone yields the
+// "nothing to suggest" preview with no Apply control — assist never pads a bead
+// that already conforms (st-rl2).
+func TestAssistConformantBeadProposesNothing(t *testing.T) {
 	stub := oneBead(&bd.Issue{
-		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "story",
-		Description: "Add a suggest preview slot to the drawer.",
+		ID: "demo-x", Title: "Render the waiting-on-you lane", Status: "open",
+		IssueType: "story", Description: "The lane shows every bead waiting on a human.",
 	})
 	srv := newTestServer(t, stub)
-	srv.homeDir = t.TempDir() // STRAND.md initializes here, never the real ~/.strand
-	fc := &fakeCompleter{reply: "Add the drawer suggest preview slot"}
-	srv.suggestLLM = func() (suggest.Completer, bool) { return fc, true }
+	srv.homeDir = t.TempDir()
+	srv.suggestLLM = func() (suggest.Completer, bool) { return &fakeCompleter{reply: "NONE"}, true }
 
-	rec := do(t, srv, "/bead/demo-x/suggest?kind=title")
+	rec := do(t, srv, "/bead/demo-x/assist")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET suggest = %d, want 200", rec.Code)
-	}
-	if fc.calls != 1 {
-		t.Errorf("model called %d times, want exactly 1 (Tier-2, injected seam)", fc.calls)
+		t.Fatalf("GET assist = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{
-		"Add the drawer suggest preview slot", // the grounded model title
-		"Anchored to the north star",          // the Why cites the north star
-		"remember across sessions",            // the north-star line itself
-		`class="dr-suggest-apply"`,            // Apply remains the only commit gesture
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("Tier-2 preview missing %q:\n%s", want, body)
-		}
+	if !strings.Contains(body, "nothing to suggest") {
+		t.Errorf("conformant bead did not yield the nothing-to-suggest preview:\n%s", body)
+	}
+	if strings.Contains(body, `class="dr-suggest-apply"`) {
+		t.Error("nothing-to-suggest preview offered an Apply control")
 	}
 	if stub.updateCalls != 0 {
-		t.Errorf("suggest issued %d writes, want 0 (read-only, never auto-applies)", stub.updateCalls)
+		t.Errorf("assist issued %d writes, want 0 (read-only)", stub.updateCalls)
 	}
 }
 
-// TestSuggestFallsBackToTier1WhenUnkeyed: with no model key, GET suggest serves the
-// Tier-1 deterministic proposal with no anchor and no error (st-suggest.3.3 gate).
-func TestSuggestFallsBackToTier1WhenUnkeyed(t *testing.T) {
-	stub := oneBead(&bd.Issue{
-		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "task",
-		Description: "Add a suggest preview slot to the drawer.",
-	})
-	srv := newTestServer(t, stub) // default model gate reports unavailable
-	rec := do(t, srv, "/bead/demo-x/suggest?kind=title")
+// TestAssistSurfacesModelError: a model failure surfaces in the slot at 200. With
+// no deterministic tier beneath, there is nothing to degrade to — saying so beats
+// a silent empty preview (st-rl2).
+func TestAssistSurfacesModelError(t *testing.T) {
+	srv := newTestServer(t, oneBead(&bd.Issue{
+		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "task", Description: "old body",
+	}))
+	srv.homeDir = t.TempDir()
+	srv.suggestLLM = func() (suggest.Completer, bool) {
+		return &fakeCompleter{err: errModelDown}, true
+	}
+	rec := do(t, srv, "/bead/demo-x/assist")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET suggest = %d, want 200", rec.Code)
+		t.Fatalf("GET assist = %d, want 200 (surfaced in the slot, not an HTTP error)", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Add a suggest preview slot") {
-		t.Errorf("unkeyed suggest did not fall back to the Tier-1 proposal:\n%s", body)
+	if !strings.Contains(body, "Assist unavailable") {
+		t.Errorf("model error did not surface in the preview slot:\n%s", body)
 	}
-	if strings.Contains(body, "Anchored") {
-		t.Errorf("unkeyed suggest produced an anchored (Tier-2) Why:\n%s", body)
+	if strings.Contains(body, `class="dr-suggest-apply"`) {
+		t.Error("a failed assist still offered an Apply control")
 	}
 }
 
-// TestSuggestTier2DegradesOnModelError: a model failure on the keyed path degrades
-// to the Tier-1 proposal at 200 — Suggest never surfaces the model error
-// (st-suggest.3.3).
-// TestSuggestUnkeyedLogsOnce: with no model key, the first Suggest logs that Tier-2
-// is disabled (the incident that otherwise hides behind Tier-1 output), and only
-// once — not on every drawer open (PR #61, codex feedback).
-func TestSuggestUnkeyedLogsOnce(t *testing.T) {
+// TestAssistUnkeyedLogsOnce: a hand-rolled assist request on an unkeyed strand logs
+// the disabled state once — not on every request (PR #61, codex feedback).
+func TestAssistUnkeyedLogsOnce(t *testing.T) {
 	var buf bytes.Buffer
 	old := log.Writer()
 	log.SetOutput(&buf)
 	defer log.SetOutput(old)
 
-	stub := oneBead(&bd.Issue{
-		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "task",
-		Description: "Add a suggest preview slot to the drawer.",
-	})
-	srv := newTestServer(t, stub) // default model gate reports unavailable
-	do(t, srv, "/bead/demo-x/suggest?kind=title")
-	do(t, srv, "/bead/demo-x/suggest?kind=title")
+	srv := newTestServer(t, oneBead(&bd.Issue{
+		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "task", Description: "old body",
+	})) // default model gate reports unavailable
+	do(t, srv, "/bead/demo-x/assist")
+	do(t, srv, "/bead/demo-x/assist")
 
 	got := buf.String()
-	if n := strings.Count(got, "Tier-2 Suggest disabled"); n != 1 {
+	if n := strings.Count(got, "drawer assist disabled"); n != 1 {
 		t.Errorf("disabled warning logged %d times, want exactly 1:\n%s", n, got)
-	}
-}
-
-func TestSuggestTier2DegradesOnModelError(t *testing.T) {
-	stub := oneBead(&bd.Issue{
-		ID: "demo-x", Title: "Phase 2", Status: "open", IssueType: "task",
-		Description: "Add a suggest preview slot to the drawer.",
-	})
-	srv := newTestServer(t, stub)
-	srv.homeDir = t.TempDir()
-	srv.suggestLLM = func() (suggest.Completer, bool) {
-		return &fakeCompleter{err: errModelDown}, true
-	}
-	rec := do(t, srv, "/bead/demo-x/suggest?kind=title")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET suggest = %d, want 200 (degrade, not error)", rec.Code)
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "Add a suggest preview slot") {
-		t.Errorf("model error did not degrade to the Tier-1 proposal:\n%s", body)
-	}
-	if strings.Contains(body, "Anchored") {
-		t.Errorf("a failed model call still produced an anchored Why:\n%s", body)
 	}
 }
 
@@ -1884,98 +1918,6 @@ func TestCitedJobOnlyWhenReferenced(t *testing.T) {
 	}
 	if got := citedJob(dir, "A body that references no job at all."); got != "" {
 		t.Errorf("citedJob without a citation = %q, want empty (never fetched)", got)
-	}
-}
-
-// TestDrawerHasBodySuggestAffordance: the drawer renders the "Suggest sections"
-// button wired to the body suggest endpoint and the preview slot it targets
-// (st-suggest.2).
-func TestDrawerHasBodySuggestAffordance(t *testing.T) {
-	srv := newTestServer(t, oneBead(&bd.Issue{
-		ID: "demo-x", Title: "Add the lane", Status: "open", IssueType: "story",
-		Description: "## Slice\nBody.",
-	}))
-	body := do(t, srv, "/bead/demo-x").Body.String()
-	for _, want := range []string{
-		`hx-get="/bead/demo-x/suggest?kind=body"`,
-		`id="dr-suggest-body-preview"`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("drawer missing body-suggest affordance %q", want)
-		}
-	}
-}
-
-// TestSuggestBodyPreviewRenders: GET suggest?kind=body on a story missing its
-// Acceptance Criteria renders the gap with a draft scaffold and an Apply that
-// targets the body editor and carries the augmented description — and writes
-// nothing (st-suggest.2).
-func TestSuggestBodyPreviewRenders(t *testing.T) {
-	stub := oneBead(&bd.Issue{
-		ID: "demo-x", Title: "Add the lane", Status: "open", IssueType: "story",
-		Description: "## Slice\nBody quality via section gaps.",
-	})
-	srv := newTestServer(t, stub)
-	rec := do(t, srv, "/bead/demo-x/suggest?kind=body")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET suggest?kind=body = %d, want 200", rec.Code)
-	}
-	body := rec.Body.String()
-	for _, want := range []string{
-		"Acceptance Criteria",                                   // the missing section, named
-		`class="dr-suggest-apply"`, `data-target="description"`, // Apply targets the body editor
-		"## Acceptance Criteria", // augmented proposal carries the scaffold
-		`class="dr-suggest-dismiss"`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("body preview missing %q:\n%s", want, body)
-		}
-	}
-	if stub.updateCalls != 0 {
-		t.Errorf("suggest issued %d writes, want 0 (read-only)", stub.updateCalls)
-	}
-}
-
-// TestSuggestBodyCompleteNothing: a bead that already records its required
-// sections yields the nothing-to-suggest preview with no Apply control — never
-// padding a complete bead (st-suggest.2).
-func TestSuggestBodyCompleteNothing(t *testing.T) {
-	stub := oneBead(&bd.Issue{
-		ID: "demo-x", Title: "Add the lane", Status: "open", IssueType: "story",
-		Description: "## Slice\nBody.\n## Acceptance Criteria\n- It works.",
-	})
-	srv := newTestServer(t, stub)
-	rec := do(t, srv, "/bead/demo-x/suggest?kind=body")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET suggest?kind=body = %d, want 200", rec.Code)
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "nothing to suggest") {
-		t.Errorf("complete bead did not yield the nothing-to-suggest preview:\n%s", body)
-	}
-	if strings.Contains(body, `class="dr-suggest-apply"`) {
-		t.Error("complete-bead preview offered an Apply control")
-	}
-	if stub.updateCalls != 0 {
-		t.Errorf("suggest issued %d writes, want 0 (read-only)", stub.updateCalls)
-	}
-}
-
-// TestSuggestBodyApplyWritesDescription: the body Apply gesture posts the
-// augmented description through the *existing* PATCH edit path — exactly one
-// Update on the description field. Suggest adds no second write path (st-suggest.2).
-func TestSuggestBodyApplyWritesDescription(t *testing.T) {
-	stub := oneBead(&bd.Issue{ID: "demo-x", Title: "Add the lane", Status: "open", IssueType: "story"})
-	srv := newTestServer(t, stub)
-	rec := send(t, srv, http.MethodPatch, "/bead/demo-x", "field=description&value=%23%23+Acceptance+Criteria%0A-+done")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH apply = %d, want 200", rec.Code)
-	}
-	if stub.updateCalls != 1 {
-		t.Errorf("apply issued %d Update calls, want exactly 1", stub.updateCalls)
-	}
-	if stub.lastField != "description" {
-		t.Errorf("apply wrote field %q, want description", stub.lastField)
 	}
 }
 

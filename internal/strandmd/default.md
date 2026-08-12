@@ -1,6 +1,6 @@
 # STRAND context
 
-User-managed grounding for `strand` Tier-2 suggestions, modeled on `~/.claude/CLAUDE.md`.
+User-managed grounding for `strand`'s drawer assist, modeled on `~/.claude/CLAUDE.md`.
 strand ships this default once, then leaves it to you — edit freely. A repo-local
 `./.strand/STRAND.md` overlays this file: your real `## Actors` and project direction win.
 

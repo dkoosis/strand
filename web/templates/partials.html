@@ -370,10 +370,16 @@
     <input type="hidden" name="field" value="title">
     <input class="dr-title" name="value" value="{{.Title}}" aria-label="title">
   </form>
+  {{/* One assist button for the whole bead — it proposes title and body together
+       from the canonical bead-fmt prompts (st-rl2). Rendered only when a model key
+       is configured: there is no deterministic tier beneath it, so an unkeyed
+       drawer shows no assist affordance rather than a dead or worse one. */}}
+  {{if .Assist}}
   <div class="dr-title-tools">
-    <button type="button" class="dr-suggest-btn" hx-get="/bead/{{.ID}}/suggest?kind=title" hx-target="#dr-suggest-preview" hx-swap="innerHTML">Suggest title</button>
+    <button type="button" class="dr-suggest-btn" hx-get="/bead/{{.ID}}/assist" hx-target="#dr-assist-preview" hx-swap="innerHTML" hx-indicator="#dr-assist-preview">Suggest title + body</button>
   </div>
-  <div id="dr-suggest-preview" class="dr-suggest-preview" aria-live="polite"></div>
+  <div id="dr-assist-preview" class="dr-suggest-preview" aria-live="polite"></div>
+  {{end}}
   <div class="dr-shape-row">
     <form class="dr-field dr-field-inline" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change" onsubmit="event.preventDefault();">
       <input type="hidden" name="field" value="priority">
@@ -392,9 +398,7 @@
 <div class="dr-body">
   <div class="dr-desc-head">
     <h3>Description</h3>
-    <button type="button" class="dr-suggest-btn" hx-get="/bead/{{.ID}}/suggest?kind=body" hx-target="#dr-suggest-body-preview" hx-swap="innerHTML">Suggest sections</button>
   </div>
-  <div id="dr-suggest-body-preview" class="dr-suggest-preview" aria-live="polite"></div>
   <form class="dr-field dr-field-primary" hx-patch="/bead/{{.ID}}" hx-target="#drawer" hx-trigger="change" onsubmit="event.preventDefault();">
     <input type="hidden" name="field" value="description">
     <textarea class="dr-desc" name="value" rows="10" placeholder="No description recorded.">{{.Description}}</textarea>
@@ -478,47 +482,41 @@
 </div>
 {{end}}
 
-{{/* suggestPreview is the read-only Suggest slot (st-suggest.1): current-vs-
-     proposed with Apply/Dismiss. Apply copies the proposal into the existing
-     .dr-title input and fires its change event (app.js), so the normal
-     change→PATCH edit path commits it — Suggest writes nothing itself. */}}
-{{define "suggestPreview"}}
-{{if .S.None}}
-<div class="dr-suggest-none" role="status">Title already reads as Verb + object — nothing to suggest.</div>
+{{/* assistPreview is the read-only assist slot (st-rl2): one model proposal for
+     both bead elements, each with its own Apply. Apply copies the proposal into
+     the existing .dr-title input or .dr-desc textarea and fires its change event
+     (app.js), so the normal change→PATCH edit path commits it — assist writes
+     nothing itself. The model proposes only what it would change, so an element
+     it left alone renders no row and no button. Each element sits in its own
+     .dr-suggest-el so app.js can drop the applied one and carry the other across
+     the PATCH's drawer swap — one assist call, both elements appliable. */}}
+{{define "assistPreview"}}
+{{if .Err}}
+<div class="dr-suggest-none" role="alert">{{.Err}}</div>
+{{else if .R.None}}
+<div class="dr-suggest-none" role="status">Title and description already conform — nothing to suggest.</div>
 {{else}}
-<div class="dr-suggest" role="group" aria-label="title suggestion">
-  <div class="dr-suggest-row"><span class="dr-suggest-tag">current</span><span class="dr-suggest-text">{{.Current}}</span></div>
-  <div class="dr-suggest-row"><span class="dr-suggest-tag">proposed</span><span class="dr-suggest-text dr-suggest-proposed">{{.S.Proposed}}</span></div>
-  {{if .S.Why}}<p class="dr-suggest-why">{{.S.Why}}</p>{{end}}
-  <div class="dr-suggest-actions">
-    <button type="button" class="dr-suggest-apply" data-target="title" data-value="{{.S.Proposed}}">Apply</button>
-    <button type="button" class="dr-suggest-dismiss">Dismiss</button>
+<div class="dr-suggest" role="group" aria-label="bead suggestion" data-bead="{{.ID}}">
+  {{if .R.Title}}
+  <div class="dr-suggest-el" data-el="title">
+    <div class="dr-suggest-row"><span class="dr-suggest-tag">title</span><span class="dr-suggest-text">{{.CurrentTitle}}</span></div>
+    <div class="dr-suggest-row"><span class="dr-suggest-tag">proposed</span><span class="dr-suggest-text dr-suggest-proposed">{{.R.Title}}</span></div>
+    <div class="dr-suggest-actions">
+      <button type="button" class="dr-suggest-apply" data-target="title" data-value="{{.R.Title}}">Apply title</button>
+    </div>
   </div>
-</div>
-{{end}}
-{{end}}
-
-{{/* sectionPreview is the body Suggest slot (st-suggest.2): the required sections
-     a bead of this type is missing, each with a draft scaffold. Apply copies the
-     augmented description into the existing .dr-desc textarea and fires its change
-     event (app.js), so the normal change→PATCH path writes it via internal/bd —
-     Suggest writes nothing itself. None says so rather than padding. */}}
-{{define "sectionPreview"}}
-{{if .S.None}}
-<div class="dr-suggest-none" role="status">{{.S.Why}}</div>
-{{else}}
-<div class="dr-suggest" role="group" aria-label="section suggestion">
-  <p class="dr-suggest-why">{{.S.Why}}</p>
-  <ul class="dr-suggest-gaps">
-    {{range .S.Missing}}
-    <li>
-      <div class="dr-suggest-row"><span class="dr-suggest-tag">add</span><span class="dr-suggest-text">{{.Heading}}</span></div>
-      <pre class="dr-suggest-draft">{{.Draft}}</pre>
-    </li>
-    {{end}}
-  </ul>
+  {{end}}
+  {{if .R.Body}}
+  <div class="dr-suggest-el" data-el="description">
+    <div class="dr-suggest-row"><span class="dr-suggest-tag">body</span><span class="dr-suggest-text">proposed description</span></div>
+    <pre class="dr-suggest-draft">{{.R.Body}}</pre>
+    <div class="dr-suggest-actions">
+      <button type="button" class="dr-suggest-apply" data-target="description" data-value="{{.R.Body}}">Apply description</button>
+    </div>
+  </div>
+  {{end}}
+  {{if .R.Why}}<p class="dr-suggest-why">{{.R.Why}}</p>{{end}}
   <div class="dr-suggest-actions">
-    <button type="button" class="dr-suggest-apply" data-target="description" data-value="{{.S.Proposed}}">Apply</button>
     <button type="button" class="dr-suggest-dismiss">Dismiss</button>
   </div>
 </div>
