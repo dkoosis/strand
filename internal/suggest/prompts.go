@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -35,9 +36,8 @@ const refsEnv = "STRAND_BEAD_FMT_REFS"
 
 // bead-fmt's reference file names, and the plugin-cache path segments Prompts
 // probes under a home directory: ~/.claude/plugins/cache/cc-plugins/bdx/<version>/
-// skills/bead-fmt/references. The version segment is globbed and the highest
-// lexical match wins, which is the newest installed bdx for the zero-padded
-// semver-ish directories the plugin cache writes.
+// skills/bead-fmt/references. The version segment is globbed and compared
+// numerically per component, so 0.31.1 outranks 0.9.0.
 const (
 	titleFile   = "title-prompt.md"
 	bodyFile    = "body-prompt.md"
@@ -87,9 +87,40 @@ func promptDirs(homeDir string) []string {
 	if err != nil {
 		return dirs
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(versions)))
+	sort.SliceStable(versions, func(i, j int) bool {
+		return compareVersion(filepath.Base(versions[i]), filepath.Base(versions[j])) > 0
+	})
 	for _, v := range versions {
 		dirs = append(dirs, filepath.Join(v, pluginCacheTail))
 	}
 	return dirs
+}
+
+// compareVersion orders two plugin-cache version directory names newest-first:
+// positive when a is newer, negative when b is. Dotted components compare as
+// numbers, so 0.31.1 beats 0.9.0 and 0.100.0 beats 0.99.0; a component that is
+// not a number (a "dev" or "v0.3.0-rc1" directory) sorts below every numbered
+// one, and equal prefixes break on length so 0.3.1 beats 0.3.
+func compareVersion(a, b string) int {
+	as, bs := strings.Split(strings.TrimPrefix(a, "v"), "."), strings.Split(strings.TrimPrefix(b, "v"), ".")
+	for i := 0; i < len(as) && i < len(bs); i++ {
+		an, aerr := strconv.Atoi(as[i])
+		bn, berr := strconv.Atoi(bs[i])
+		switch {
+		case aerr != nil && berr != nil: // neither is a number — fall back to text
+			if c := strings.Compare(as[i], bs[i]); c != 0 {
+				return c
+			}
+		case aerr != nil: // a's component is not a number, b's is — b is newer
+			return -1
+		case berr != nil:
+			return 1
+		case an != bn:
+			if an > bn {
+				return 1
+			}
+			return -1
+		}
+	}
+	return len(as) - len(bs)
 }

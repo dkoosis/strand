@@ -1755,6 +1755,14 @@ func TestAssistPreviewRendersBothElements(t *testing.T) {
 	if stub.updateCalls != 0 {
 		t.Errorf("assist issued %d writes, want 0 (read-only, never auto-applies)", stub.updateCalls)
 	}
+	// Applying one element commits through a PATCH that re-renders the whole drawer.
+	// app.js carries the unapplied element across that swap, which it can only do if
+	// each proposal is its own removable block tagged with the bead it belongs to.
+	for _, want := range []string{`data-bead="demo-x"`, `data-el="title"`, `data-el="description"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("assist preview missing %q — the other proposal cannot survive the drawer swap:\n%s", want, body)
+		}
+	}
 }
 
 // TestAssistGroundsPromptInCanonicalRules: the system prompt strand sends carries

@@ -71,6 +71,36 @@ func TestAssistPromptCarriesEveryLayer(t *testing.T) {
 	}
 }
 
+// TestAssistOutputProtocolComesLast: each canonical prompt is written for a consumer
+// that asks for ONE element and closes by telling the model to return that element
+// alone, unlabelled. Read last, either would suppress the TITLE:/BODY: markers
+// splitReply needs, and a good proposal would parse as no proposal at all. So the
+// output protocol has to sit after both element prompts and after PROJECT CONTEXT.
+func TestAssistOutputProtocolComesLast(t *testing.T) {
+	in := fullInput()
+	in.Prompts.Title += "\n\nReturn only the title, with no label."
+	in.Prompts.Body += "\n\nReturn only the body as markdown."
+	c := &stubCompleter{reply: "TITLE: Render the drawer preview slot"}
+	if _, err := Assist(context.Background(), c, in); err != nil {
+		t.Fatalf("Assist: %v", err)
+	}
+	out := strings.Index(c.system, "===== OUTPUT =====")
+	if out < 0 {
+		t.Fatalf("system prompt states no closing output protocol:\n%s", c.system)
+	}
+	for _, earlier := range []string{"Return only the title", "Return only the body", "PROJECT CONTEXT"} {
+		if i := strings.LastIndex(c.system, earlier); i > out {
+			t.Errorf("%q appears after the output protocol — it would be the model's last word", earlier)
+		}
+	}
+	// The closing section has to restate the form, not just cite it.
+	for _, want := range []string{"TITLE:", "BODY:", "ignore its output instructions"} {
+		if !strings.Contains(c.system[out:], want) {
+			t.Errorf("output protocol missing %q:\n%s", want, c.system[out:])
+		}
+	}
+}
+
 // TestAssistOmitsBlankLayers: a blank layer leaves no trace in the prompt — most
 // pointedly an uncited JTBD, which must never appear as an empty label the model
 // could try to fill.

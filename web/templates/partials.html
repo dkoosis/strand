@@ -487,26 +487,32 @@
      the existing .dr-title input or .dr-desc textarea and fires its change event
      (app.js), so the normal change→PATCH edit path commits it — assist writes
      nothing itself. The model proposes only what it would change, so an element
-     it left alone renders no row and no button. */}}
+     it left alone renders no row and no button. Each element sits in its own
+     .dr-suggest-el so app.js can drop the applied one and carry the other across
+     the PATCH's drawer swap — one assist call, both elements appliable. */}}
 {{define "assistPreview"}}
 {{if .Err}}
 <div class="dr-suggest-none" role="alert">{{.Err}}</div>
 {{else if .R.None}}
 <div class="dr-suggest-none" role="status">Title and description already conform — nothing to suggest.</div>
 {{else}}
-<div class="dr-suggest" role="group" aria-label="bead suggestion">
+<div class="dr-suggest" role="group" aria-label="bead suggestion" data-bead="{{.ID}}">
   {{if .R.Title}}
-  <div class="dr-suggest-row"><span class="dr-suggest-tag">title</span><span class="dr-suggest-text">{{.CurrentTitle}}</span></div>
-  <div class="dr-suggest-row"><span class="dr-suggest-tag">proposed</span><span class="dr-suggest-text dr-suggest-proposed">{{.R.Title}}</span></div>
-  <div class="dr-suggest-actions">
-    <button type="button" class="dr-suggest-apply" data-target="title" data-value="{{.R.Title}}">Apply title</button>
+  <div class="dr-suggest-el" data-el="title">
+    <div class="dr-suggest-row"><span class="dr-suggest-tag">title</span><span class="dr-suggest-text">{{.CurrentTitle}}</span></div>
+    <div class="dr-suggest-row"><span class="dr-suggest-tag">proposed</span><span class="dr-suggest-text dr-suggest-proposed">{{.R.Title}}</span></div>
+    <div class="dr-suggest-actions">
+      <button type="button" class="dr-suggest-apply" data-target="title" data-value="{{.R.Title}}">Apply title</button>
+    </div>
   </div>
   {{end}}
   {{if .R.Body}}
-  <div class="dr-suggest-row"><span class="dr-suggest-tag">body</span><span class="dr-suggest-text">proposed description</span></div>
-  <pre class="dr-suggest-draft">{{.R.Body}}</pre>
-  <div class="dr-suggest-actions">
-    <button type="button" class="dr-suggest-apply" data-target="description" data-value="{{.R.Body}}">Apply description</button>
+  <div class="dr-suggest-el" data-el="description">
+    <div class="dr-suggest-row"><span class="dr-suggest-tag">body</span><span class="dr-suggest-text">proposed description</span></div>
+    <pre class="dr-suggest-draft">{{.R.Body}}</pre>
+    <div class="dr-suggest-actions">
+      <button type="button" class="dr-suggest-apply" data-target="description" data-value="{{.R.Body}}">Apply description</button>
+    </div>
   </div>
   {{end}}
   {{if .R.Why}}<p class="dr-suggest-why">{{.R.Why}}</p>{{end}}

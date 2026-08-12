@@ -68,6 +68,19 @@ BODY:
 
 Omit an element entirely — its whole line, or the BODY: marker and everything after — when the bead's current version of it already satisfies that element's prompt. Propose only what you would change. If both already satisfy their prompts, reply with the single word NONE.`
 
+// The two canonical prompts are written for a consumer that asks for ONE element
+// and each closes by telling the model to return only that element, unlabelled.
+// Read last, either would suppress the markers splitReply needs — a well-formed
+// proposal would parse as no proposal at all. This closing section restates the
+// reply form after them and names the conflict, so the markers win.
+const outputProtocol = `Each element prompt above ends with instructions for a consumer that asks for that element alone, unlabelled. Those do not apply here: take the RULES from each prompt and ignore its output instructions. The reply form is the TITLE:/BODY: one stated at the top, and nothing else.
+
+TITLE: <one line>
+BODY:
+<markdown to the end of the reply>
+
+Omit either marker to leave that element alone; reply NONE to leave both.`
+
 // Assist proposes a title and body for the bead: it assembles the prompt from in,
 // sends it through the completer, and parses the reply. A completer error is
 // returned rather than swallowed — the caller surfaces it, since with no
@@ -82,15 +95,18 @@ func Assist(ctx context.Context, c Completer, in *Input) (Result, error) {
 }
 
 // buildPrompt assembles the plain-text model input. system is the reply contract,
-// the two canonical element prompts, and the resolved STRAND.md (rubric + ##
-// Actors); user is the per-call grounding — north star, an inline job WHEN
-// present, the bead, its parent, and its children. Read-and-concat, no templating.
+// the two canonical element prompts, the resolved STRAND.md (rubric + ## Actors),
+// and the output protocol last — it has to outrank the single-element output
+// instruction each canonical prompt closes with. user is the per-call grounding —
+// north star, an inline job WHEN present, the bead, its parent, and its children.
+// Read-and-concat, no templating.
 func buildPrompt(in *Input) (system, user string) {
 	var sys strings.Builder
 	sys.WriteString(replyContract)
 	writeSection(&sys, "TITLE PROMPT", in.Prompts.Title)
 	writeSection(&sys, "BODY PROMPT", in.Prompts.Body)
 	writeSection(&sys, "PROJECT CONTEXT", in.Strand)
+	writeSection(&sys, "OUTPUT", outputProtocol) // last word, over each prompt's own
 
 	var u strings.Builder
 	writeField(&u, "North star", in.NorthStar)

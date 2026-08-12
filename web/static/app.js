@@ -317,25 +317,51 @@ document.addEventListener("keydown", (e) => {
 // and dispatches its change event, so the normal change→PATCH path commits it via
 // internal/bd — assist itself writes nothing. Dismiss just clears the slot.
 // Delegated so both keep working after htmx swaps the drawer or the preview in.
+//
+// That commit re-renders the whole #drawer, which would take the preview with it
+// and strand the other proposal from the same call. So Apply drops only its own
+// .dr-suggest-el, parks whatever is left, and restores it into the fresh drawer —
+// one assist call, both elements appliable. The park is keyed by bead id and
+// spent on first use, so a swap to a different bead discards it.
 const SUGGEST_TARGETS = { title: ".dr-title", description: ".dr-desc" };
+let parkedAssist = null; // {bead, html} carried across one drawer swap
 function clearSuggestPreview(el) {
   const slot = el.closest(".dr-suggest-preview");
   if (slot) slot.innerHTML = "";
+  parkedAssist = null;
 }
 document.addEventListener("click", (e) => {
   const apply = e.target.closest(".dr-suggest-apply");
   if (apply) {
+    const group = apply.closest(".dr-suggest");
+    const slot = apply.closest(".dr-suggest-preview");
+    apply.closest(".dr-suggest-el")?.remove();
+    // Park the rest before the change→PATCH swap tears the drawer down.
+    parkedAssist =
+      group && slot && group.querySelector(".dr-suggest-apply")
+        ? { bead: group.getAttribute("data-bead"), html: slot.innerHTML }
+        : null;
+    if (slot) slot.innerHTML = "";
     const sel = SUGGEST_TARGETS[apply.getAttribute("data-target")] || ".dr-title";
     const input = document.querySelector(sel);
     if (input) {
       input.value = apply.getAttribute("data-value") || "";
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }
-    clearSuggestPreview(apply);
     return;
   }
   const dismiss = e.target.closest(".dr-suggest-dismiss");
   if (dismiss) clearSuggestPreview(dismiss);
+});
+document.body.addEventListener("htmx:afterSwap", (e) => {
+  if (!parkedAssist || e.target?.id !== "drawer") return;
+  const parked = parkedAssist;
+  parkedAssist = null;
+  const slot = document.getElementById("dr-assist-preview");
+  // Same bead only — a swap to another drawer spends the park without showing it.
+  if (slot && slot.closest("#drawer")?.querySelector(`[hx-patch="/bead/${parked.bead}"]`)) {
+    slot.innerHTML = parked.html;
+  }
 });
 // Keyboard-activated [role=button] tiles/rows/heads fire htmx on keyup (Enter/Space),
 // but Space's default page-scroll happens on keydown — before the keyup trigger. htmx

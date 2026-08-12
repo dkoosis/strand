@@ -55,6 +55,45 @@ func TestLoadPromptsPicksNewestVersion(t *testing.T) {
 	}
 }
 
+// TestLoadPromptsOrdersVersionsNumerically: version segments compare as numbers, not
+// strings. Lexically "0.9.0" outranks both "0.10.0" and "0.31.1", which would ground
+// every proposal in whatever ancient bdx was left in the cache.
+func TestLoadPromptsOrdersVersionsNumerically(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		older string
+		newer string
+	}{
+		{"single vs double digit minor", "0.9.0", "0.10.0"},
+		{"stale version alongside current", "0.9.0", "0.31.1"},
+		{"double vs triple digit minor", "0.99.0", "0.100.0"},
+		{"patch within a minor", "0.31.2", "0.31.10"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeRefs(t, cacheRefs(home, tt.older), "old title rules", "old body rules")
+			writeRefs(t, cacheRefs(home, tt.newer), "new title rules", "new body rules")
+
+			if got := LoadPrompts(home); got.Title != "new title rules" {
+				t.Errorf("with %s and %s installed, LoadPrompts read %q, want %s's pair",
+					tt.older, tt.newer, got.Title, tt.newer)
+			}
+		})
+	}
+}
+
+// TestLoadPromptsRanksUnnumberedLast: a non-numeric cache directory (a "dev" checkout)
+// sorts below every real version rather than winning the probe.
+func TestLoadPromptsRanksUnnumberedLast(t *testing.T) {
+	home := t.TempDir()
+	writeRefs(t, cacheRefs(home, "dev"), "dev title rules", "dev body rules")
+	writeRefs(t, cacheRefs(home, "0.31.1"), "new title rules", "new body rules")
+
+	if got := LoadPrompts(home); got.Title != "new title rules" {
+		t.Errorf("LoadPrompts read %q, want the numbered version over 'dev'", got.Title)
+	}
+}
+
 // TestLoadPromptsEnvOverride: $STRAND_BEAD_FMT_REFS outranks the plugin cache, so a
 // cc-plugins checkout can be pointed at directly.
 func TestLoadPromptsEnvOverride(t *testing.T) {
