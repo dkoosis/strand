@@ -65,5 +65,9 @@
 # - linear.api_key  → use LINEAR_API_KEY env var instead
 # - github.token    → use GITHUB_TOKEN env var instead
 
+# Fleet contract (conform bd-config rule): tracked declaration checked by
+# `conform`; `conform --local` verifies the live bd config matches.
+issue-prefix: "st"
+custom.plan_dir: /Users/vcto/Projects/dk/Project/strand/plans
 sync:
     remote: "git+https://github.com/dkoosis/strand.git"
