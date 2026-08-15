@@ -23,18 +23,22 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          # Keep in lockstep with the `go` directive in go.mod.
-          go-version: '1.26'
-          check-latest: true
+          go-version-file: go.mod
+          check-latest: false
 
-      - name: vet
-        run: go vet ./...
+      - name: golangci-lint (pinned in .sandbox/project.conf)
+        run: |
+          . ./.sandbox/project.conf
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" "$GOLANGCI_LINT_VERSION"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-      # The -race gate (epic ccp-sbp.4): the race detector is the machine that
-      # catches the concurrency-lifecycle defect class. -count=1 bypasses the
-      # test cache so race runs on every push.
-      - name: test (race)
-        run: go test -race -count=1 ./...
+      # CI = the same gate a developer runs; no verb re-implemented in YAML
+      # (conform ci-gate rule). check runs vet + lint + test + build + conform.
+      - name: check
+        run: make check
 
-      - name: build
-        run: go build ./...
+      # The -race gate (epic ccp-sbp.4) survives as a make verb, not YAML.
+      # -count=1 bypasses the test cache so race runs on every push.
+      - name: race
+        run: make race
