@@ -14,7 +14,7 @@ require (
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
-	github.com/dkoosis/conform v0.1.2 // indirect
+	github.com/dkoosis/conform v0.2.0 // indirect
 	github.com/google/renameio/v2 v2.0.2 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
