@@ -259,20 +259,153 @@ func NorthStar(repoPath string) string {
 	return northStarBlock(string(b))
 }
 
-// Roadmap returns the epic ids listed in NORTH_STAR.md's `## roadmap` section, in
-// route order — the same numbered-line convention the wrap SessionStart hook and
-// the bd-counts refresher parse (epic id = the first token after the number). It
-// is decision-owned route order, not status; strand's station bar walks it against
-// the live epic DAG to find the current phase. A missing file or section yields nil.
+// RoadmapFile is the repo-root file holding the project's destination line and its
+// ordered epic list — the sdlc standard (home/rules/sdlc.md §The standard,
+// .claude/rules/vocabulary.md, ratified 2026-08-17). Resolved before the legacy
+// NorthStarFile pointer.
+const RoadmapFile = "ROADMAP.md"
+
+// Roadmap returns the repo's roadmap-ordered epic ids — the Go twin of
+// roadmap-epics.sh's roadmap_file/roadmap_parse contract
+// (sdlc/plugins/wrap/scripts/lib/roadmap-epics.sh), reduced to that script's two
+// non-kg branches (the kg face page is a shell-only migration rung; resolving it
+// from Go is this bead's explicit non-goal, st-3wp.1). It is decision-owned order,
+// not status; strand's station bar and pickNext walk it against the live epic DAG.
+//
+// Resolution: $repoPath/ROADMAP.md, else the legacy $repoPath/NORTH_STAR.md.
+//
+// ROADMAP.md format: numbered lines carrying an arrow inside a `## Epics` section
+// (legacy `## Milestones`/`## Route` headings tolerated) —
+// `N. [status] <title> → <id>[, <id>...]`. The epic id is the first
+// comma/whitespace-delimited token after the first arrow (a legacy multi-id line:
+// first wins). A numbered line with no arrow is a stray non-epic list item (the
+// page's ## Architecture/## Lifecycle sections number their own rows) and is
+// skipped, not read as a blank id. An indented continuation line folds into its
+// preceding numbered line before parsing — the sd-r59 wrapped-line rule, so a title
+// too long for one line still yields one epic, not a mangled arrow-less row.
+//
+// NORTH_STAR.md, resolved only when ROADMAP.md is absent, keeps its own original
+// `## roadmap` section + id-first-token parse (roadmapIDs below) as the final
+// fallback — no `## Epics` heading, no arrow, unchanged from before this bead.
+//
+// A missing file, missing section, or empty section yields nil.
 func Roadmap(repoPath string) []string {
 	if repoPath == "" {
 		return nil
+	}
+	if b, err := os.ReadFile(filepath.Join(repoPath, RoadmapFile)); err == nil {
+		return roadmapEpicIDs(string(b))
 	}
 	b, err := os.ReadFile(filepath.Join(repoPath, NorthStarFile))
 	if err != nil {
 		return nil
 	}
 	return roadmapIDs(string(b))
+}
+
+// epicSectionHeadings names the H2 headings that open ROADMAP.md's ordered epic
+// list: the current name plus the two size-word names banned 2026-08-19
+// (.claude/rules/vocabulary.md) that a not-yet-conformed page may still carry.
+var epicSectionHeadings = map[string]bool{
+	"epics":      true,
+	"milestones": true,
+	"route":      true,
+}
+
+// roadmapEpicIDs extracts ROADMAP.md's ordered epic ids: fold the epics section's
+// wrapped continuation lines into their numbered row (foldEpicSection), then keep
+// each row's id only if the row carries an arrow (epicLineID).
+func roadmapEpicIDs(s string) []string {
+	var ids []string
+	for _, row := range foldEpicSection(s) {
+		if id, ok := epicLineID(row); ok {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// foldEpicSection returns the epics section's numbered lines as one row apiece,
+// with any immediately following indented continuation lines folded in — the Go
+// twin of roadmap-epics.sh's awk fold (sd-r59). A numbered line starts a new row;
+// an indented line with content extends the current row; anything else (blank line,
+// unindented prose, a heading) ends the current row without extending it. Rows
+// outside the epics section are dropped.
+func foldEpicSection(s string) []string {
+	var rows []string
+	var cur strings.Builder
+	inSection := false
+	flush := func() {
+		if cur.Len() > 0 {
+			rows = append(rows, cur.String())
+			cur.Reset()
+		}
+	}
+	for ln := range strings.SplitSeq(s, "\n") {
+		line := strings.TrimRight(ln, "\r")
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case !inSection:
+			if isH2(trimmed) && epicSectionHeadings[strings.ToLower(h2Name(trimmed))] {
+				inSection = true
+			}
+		case isH2(trimmed):
+			flush()
+			return rows // next heading ends the section
+		case isNumberedLine(trimmed):
+			flush()
+			cur.WriteString(trimmed)
+		case isIndentedContinuation(line):
+			if cur.Len() > 0 {
+				cur.WriteByte(' ')
+				cur.WriteString(trimmed)
+			}
+		default:
+			flush() // blank line or unindented prose: ends the row, folds nothing
+		}
+	}
+	flush()
+	return rows
+}
+
+// isNumberedLine reports whether line starts with a leading integer and a dot
+// (the epic-list row marker: "1.", "10.", …), independent of what follows.
+func isNumberedLine(line string) bool {
+	dot := strings.IndexByte(line, '.')
+	if dot <= 0 {
+		return false
+	}
+	_, err := strconv.Atoi(line[:dot])
+	return err == nil
+}
+
+// isIndentedContinuation reports whether line is a wrapped-title continuation: it
+// starts with leading whitespace AND has non-whitespace content after it. A
+// whitespace-only line does not match (mirrors the awk fold's
+// /^[[:space:]]+[^[:space:]]/, which requires real content), so it falls through
+// to ending the row like any other blank line.
+func isIndentedContinuation(line string) bool {
+	if line == "" || (line[0] != ' ' && line[0] != '\t') {
+		return false
+	}
+	return strings.TrimSpace(line) != ""
+}
+
+// epicLineID extracts a folded epic row's id: the row must carry an arrow (else a
+// stray numbered line, e.g. from another section's own list, is not an epic), and
+// the id is the first comma/whitespace-delimited token after the first arrow — a
+// legacy line with several ids keeps only the first.
+func epicLineID(row string) (string, bool) {
+	_, after, ok := strings.Cut(row, "→")
+	if !ok {
+		return "", false
+	}
+	rest := strings.ReplaceAll(after, ",", " ")
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return "", false
+	}
+	return fields[0], true
 }
 
 // roadmapIDs scans the `## roadmap` section for numbered lines (`N. <epic-id> …`)

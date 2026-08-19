@@ -233,8 +233,8 @@ func readRows(path string) map[string]Row {
 // function assumes the caller holds it.
 func writeRowsAtomic(path string, rows map[string]Row, meta bdcounts.Meta) error {
 	out := make(map[string]any, len(rows)+1)
-	for k, v := range rows {
-		out[k] = v
+	for k := range rows {
+		out[k] = rows[k]
 	}
 	out[bdcounts.MetaKey] = meta
 	data, err := json.Marshal(out)
