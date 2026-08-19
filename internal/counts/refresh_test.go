@@ -407,16 +407,19 @@ func TestRefreshExplicitDirs(t *testing.T) {
 	}
 }
 
-// setStoreMTime builds the embedded-Dolt manifest layout bd.StoreMTime globs for under
-// root and stamps it with mt, so the change key sees a store the way an out-of-band
-// write (a Dolt pull/sync, a direct commit) would leave one. Returns the manifest path.
-func setStoreMTime(t *testing.T, root string, mt time.Time) string {
+// setStoreState builds the embedded-Dolt manifest layout the change-key gate globs
+// for under root and stamps it with content and mt. content is the parameter that
+// matters now: the gate is content-keyed (bd.StoreContentKey, st-3wp.1), not
+// mtime-keyed, so a test proves a "real" out-of-band change by varying content, and
+// proves the gate's immunity to self-churn by varying ONLY mt. Returns the manifest
+// path.
+func setStoreState(t *testing.T, root, content string, mt time.Time) string {
 	t.Helper()
 	manifest := filepath.Join(root, ".beads", "embeddeddolt", "demo", ".dolt", "noms", "manifest")
 	if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
 		t.Fatalf("mkdir store: %v", err)
 	}
-	if err := os.WriteFile(manifest, []byte("root-chunk"), 0o644); err != nil {
+	if err := os.WriteFile(manifest, []byte(content), 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 	if err := os.Chtimes(manifest, mt, mt); err != nil {
@@ -425,17 +428,21 @@ func setStoreMTime(t *testing.T, root string, mt time.Time) string {
 	return manifest
 }
 
-// TestRefreshOutOfBandStoreChangeRefreshes is the st-nm5 guard: the refresh gate is the
-// Dolt store mtime (bd.StoreMTime), not .beads/last-touched. An out-of-band write — a bd
-// dolt pull/sync, a direct Dolt commit, a bd import — moves the store manifest WITHOUT
-// bumping last-touched. Before st-nm5 that repo latched skipped (last-touched unchanged →
-// counts.json stalled while the board stayed fresh). Here we settle a repo, advance ONLY
-// the manifest mtime, and assert the next changed-mode run recomputes it.
+// TestRefreshOutOfBandStoreChangeRefreshes is the st-nm5 guard: the refresh gate is
+// the Dolt store's content key (bd.StoreContentKey), not .beads/last-touched. An
+// out-of-band write — a bd dolt pull/sync, a direct Dolt commit, a bd import — moves
+// the store manifest's CONTENT without bumping last-touched. Before st-nm5 that repo
+// latched skipped (last-touched unchanged → counts.json stalled while the board
+// stayed fresh). Here we settle a repo, change ONLY the manifest's content (a real
+// out-of-band write changes bytes, not just mtime — see
+// TestRefreshConvergesDespiteReadSelfChurn for the mtime-only, content-unchanged
+// case this same gate must NOT react to), and assert the next changed-mode run
+// recomputes it.
 func TestRefreshOutOfBandStoreChangeRefreshes(t *testing.T) {
 	projects := t.TempDir()
 	cache := t.TempDir()
 	root := mkRepo(t, projects, "repo-a")
-	setStoreMTime(t, root, time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC))
+	setStoreState(t, root, "root-chunk-v1", time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC))
 
 	lastTouchedPath := filepath.Join(root, ".beads", "last-touched")
 	fi, err := os.Stat(lastTouchedPath)
@@ -463,19 +470,82 @@ func TestRefreshOutOfBandStoreChangeRefreshes(t *testing.T) {
 		t.Fatalf("after settle calls=%d, want 2", calls)
 	}
 
-	// Out-of-band write: advance ONLY the store manifest; last-touched must not move.
-	setStoreMTime(t, root, time.Date(2026, 7, 25, 13, 0, 0, 0, time.UTC))
+	// Out-of-band write: change the store manifest's CONTENT; last-touched must not move.
+	setStoreState(t, root, "root-chunk-v2", time.Date(2026, 7, 25, 13, 0, 0, 0, time.UTC))
 
 	if err := refresh(context.Background(), &cfg); err != nil {
 		t.Fatalf("refresh #3: %v", err)
 	}
 	if calls != 3 {
-		t.Errorf("out-of-band store change was skipped (calls=%d, want 3) — the gate is not on the Dolt store mtime", calls)
+		t.Errorf("out-of-band store change was skipped (calls=%d, want 3) — the gate is not on the Dolt store content key", calls)
 	}
 
 	if fi, err := os.Stat(lastTouchedPath); err != nil {
 		t.Fatalf("re-stat last-touched: %v", err)
 	} else if !fi.ModTime().Equal(ltBefore) {
 		t.Fatalf("last-touched mtime moved (%v → %v) — the test no longer isolates the store signal", ltBefore, fi.ModTime())
+	}
+}
+
+// selfChurningSource simulates the diagnosed root cause directly: every List call —
+// the read every derive starts with — rewrites the noms manifest with
+// byte-IDENTICAL content at a fresh mtime, exactly what a live `bd stats`/`bd list`
+// does to the real store (st-3wp.1's diagnosis, reproduced live before coding: mtime
+// moved, sha256 stayed constant). Its call counter proves whether that self-churn
+// still fools the refresh gate.
+type selfChurningSource struct {
+	calls    *int
+	manifest string
+}
+
+func (s *selfChurningSource) List(context.Context, bd.ListOpts) ([]bd.Issue, error) {
+	*s.calls++
+	_ = os.WriteFile(s.manifest, []byte("root-chunk"), 0o644) // same bytes...
+	_ = os.Chtimes(s.manifest, time.Now(), time.Now())        // ...fresh mtime: the self-churn
+	return []bd.Issue{{ID: "x", Status: bd.StatusOpen}}, nil
+}
+func (s *selfChurningSource) Deps(context.Context, ...string) ([]bd.DepEdge, error) {
+	return nil, nil
+}
+func (s *selfChurningSource) Stats(context.Context) (bd.Stats, error) { return bd.Stats{}, nil }
+func (s *selfChurningSource) EpicStatus(context.Context) ([]bd.EpicStatus, error) {
+	return nil, nil
+}
+
+// TestRefreshConvergesDespiteReadSelfChurn is the st-3wp.1 regression test: the whole
+// reason the refresh gate moved off bd.StoreMTime onto bd.StoreContentKey. Three
+// runs against a repo whose own derive rewrites the manifest's mtime (identical
+// content) on every read: run 1 is cold (change-triggered, computes), run 2 is the
+// guaranteed st-3p8 follow-up (still computes), and run 3 MUST be skipped — before
+// this bead's fix, a pure-mtime gate saw every run's own self-churn as a fresh
+// change and never let the repo settle (calls would be 3, not 2, and stay climbing
+// forever — the 35.7s-warm bug this bead fixes).
+func TestRefreshConvergesDespiteReadSelfChurn(t *testing.T) {
+	projects := t.TempDir()
+	cache := t.TempDir()
+	root := mkRepo(t, projects, "repo-a")
+	manifest := setStoreState(t, root, "root-chunk", time.Now())
+
+	var calls int
+	cfg := config{cacheDir: cache, projects: projects, mode: modeChanged,
+		newSource: func(string) source { return &selfChurningSource{calls: &calls, manifest: manifest} }}
+
+	if err := refresh(context.Background(), &cfg); err != nil { // run 1: cold, change-triggered
+		t.Fatalf("refresh #1: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("run 1: calls=%d, want 1", calls)
+	}
+	if err := refresh(context.Background(), &cfg); err != nil { // run 2: guaranteed follow-up
+		t.Fatalf("refresh #2: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("run 2: calls=%d, want 2 (the st-3p8 guaranteed follow-up)", calls)
+	}
+	if err := refresh(context.Background(), &cfg); err != nil { // run 3: must settle
+		t.Fatalf("refresh #3: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("run 3: calls=%d, want 2 — the refresher's own read self-churned the manifest's mtime with identical content; a content-keyed gate must not treat that as a change", calls)
 	}
 }

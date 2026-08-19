@@ -401,18 +401,23 @@ func lastTouched(root string) int64 {
 	return fi.ModTime().Unix()
 }
 
-// changeKey is the refresh gate: the Dolt store mtime (unix-nanos) — the SAME signal
-// the server's snapshot cache evicts on, via the one shared helper bd.StoreMTime.
-// last-touched moves only on a local bd write, a strict subset of what changes beads;
-// an out-of-band write (bd dolt pull/sync, a direct Dolt commit, bd import) advances
-// the store manifest without bumping last-touched, so gating counts on the store mtime
-// is what stops the badge stalling while the board stays fresh (st-nm5). Falls back to
-// last-touched for a workspace with no embedded Dolt store (StoreMTime ok=false),
-// preserving the pre-fix behavior there. The row's ts stays lastTouched for DISPLAY —
-// only this gate moved.
+// changeKey is the refresh gate: the Dolt store's CONTENT key (bd.StoreContentKey),
+// not its mtime. It used to be the store mtime — the same signal the server's
+// snapshot cache still evicts on via bd.StoreMTime — but every bd read (including
+// the refresher's own four reads per repo) rewrites the manifest's mtime with
+// byte-identical content, so a mtime-keyed gate never let a repo settle: each cycle
+// re-armed the st-3p8 pending bit for every repo the refresher itself had just
+// visited (st-3wp.1, ~25 repos x 4 execs x ~0.35s ≈ 35s warm). Content only moves on
+// a genuine write — a local bd write, or an out-of-band bd dolt pull/sync/import —
+// so st-nm5's out-of-band-change detection is preserved: last-touched moves only on
+// a local bd write, a strict subset of what changes beads, and an out-of-band write
+// advances the store manifest's content without bumping last-touched. Falls back to
+// last-touched for a workspace with no embedded Dolt store (StoreContentKey
+// ok=false), preserving the pre-fix behavior there. The row's ts stays lastTouched
+// for DISPLAY — only this gate moved.
 func changeKey(root string) int64 {
-	if mt, ok := bd.StoreMTime(root); ok {
-		return mt.UnixNano()
+	if key, ok := bd.StoreContentKey(root); ok {
+		return key
 	}
 	return lastTouched(root)
 }
