@@ -27,3 +27,8 @@
 
 # fo (SARIF/test-json) local cache
 .fo/
+
+# openspec plugin local install (regenerable: openspec init)
+.claude/commands/
+.claude/skills/
+.claude/scheduled_tasks.lock
