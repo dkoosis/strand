@@ -27,28 +27,36 @@ import (
 //
 // Out-of-band staleness — a bd CLI run or another agent editing the same repo's
 // store while strand holds a snapshot — is the case strand's own writes can't
-// catch. The gate for it is storeMTime: putList stamps the snapshot with the Dolt
-// store's manifest mtime at fetch time, and every read drops the snapshot when the
-// store has moved since (freshEntryLocked). Dolt rewrites the noms manifest on
-// every commit, so any writer — bd CLI, another agent, a /team run — advances that
-// mtime and the next view re-fetches. This is view-triggered, not a clock: one
-// stat() per read (~µs), and the bd spawn is paid only when the store actually
-// changed (st-69h). The explicit refresh control (POST /refresh) and the "data as
-// of HH:MM" readout remain the manual backstop.
+// catch. The gate for it is storeKey: every publish stamps the snapshot with the
+// Dolt store's manifest CONTENT key at fetch time, and every read drops the
+// snapshot when that key differs (freshEntryLocked). Dolt rewrites the noms
+// manifest on every commit, so any writer — bd CLI, another agent, a /team run —
+// changes those bytes and the next view re-fetches. This is view-triggered, not a
+// clock: one small read per view, and the bd spawn is paid only when the store
+// actually changed (st-69h). The explicit refresh control (POST /refresh) and the
+// "data as of HH:MM" readout remain the manual backstop.
 //
-// storeMTime is the seam over that stat: it reports the repo's store mtime, or ok
-// false when it can't be read. A false — or a snapshot stamped with a zero mtime
-// (the stat failed at fetch) — degrades to the old behavior: serve until a write
-// invalidates, never falsely stale. Tests inject a fake so staleness is driven off
-// the seam, not real filesystem time (which wouldn't align with the fixed clock).
+// Content, NOT mtime (st-8nn). A pure bd read rewrites the manifest with
+// byte-identical content, bumping its mtime — so an mtime-keyed gate treats the
+// server's own reads as out-of-band writes and evicts the snapshot it just
+// published, the self-churn internal/counts hit and fixed the same way (st-3wp.1).
+// Equality, not ordering, is also the stronger test: a rollback (bd dolt reset)
+// moves content without moving mtime forward.
+//
+// storeKey is the seam over that read: it reports the repo's manifest content key,
+// or ok false when it can't be read. A false — either at stamp time (storeKeyOK
+// false on the entry) or at check time — degrades to the old behavior: serve until
+// a write invalidates, never falsely stale. storeKeyOK carries that separately
+// because 0 is a legal hash value and cannot double as "unset". Tests inject a fake
+// so staleness is driven off the seam, not a real store.
 type snapshotCache struct {
-	mu         sync.Mutex
-	now        func() time.Time
-	storeMTime func(repo string) (time.Time, bool)
-	gen        uint64
-	entries    map[string]*snapshot
-	flights    map[string]*refreshFlight
-	onChange   func(string)
+	mu       sync.Mutex
+	now      func() time.Time
+	storeKey func(repo string) (int64, bool)
+	gen      uint64
+	entries  map[string]*snapshot
+	flights  map[string]*refreshFlight
+	onChange func(string)
 }
 
 type refreshFlight struct {
@@ -69,19 +77,22 @@ type refreshFlight struct {
 // fixed-clock tests still distinguish versions even when every `at` is equal.
 type snapshot struct {
 	at       time.Time
-	storeAt  time.Time // Dolt store mtime observed at fetch; zero when the stat failed (then never gates)
-	gen      uint64
-	list     []bd.Issue
-	deps     []bd.DepEdge
-	depsOK   bool
-	stats    bd.Stats
-	statsOK  bool
-	closed   []bd.Issue // the `--status closed` set bd's default list omits; folded lazily
-	closedOK bool
+	storeKey int64 // Dolt store manifest content key observed at fetch
+	// storeKeyOK reports whether storeKey was actually read. 0 is a legal key, so
+	// it cannot double as "unset"; a false here disables the gate for this entry.
+	storeKeyOK bool
+	gen        uint64
+	list       []bd.Issue
+	deps       []bd.DepEdge
+	depsOK     bool
+	stats      bd.Stats
+	statsOK    bool
+	closed     []bd.Issue // the `--status closed` set bd's default list omits; folded lazily
+	closedOK   bool
 }
 
 func newSnapshotCache(now func() time.Time) *snapshotCache {
-	return &snapshotCache{now: now, storeMTime: bd.StoreMTime, entries: map[string]*snapshot{}, flights: map[string]*refreshFlight{}}
+	return &snapshotCache{now: now, storeKey: bd.StoreContentKey, entries: map[string]*snapshot{}, flights: map[string]*refreshFlight{}}
 }
 
 // refreshList coalesces loads and atomically publishes only complete successful
@@ -148,13 +159,23 @@ func (c *snapshotCache) publishList(repo string, f *refreshFlight, list []bd.Iss
 	defer c.mu.Unlock()
 	changed := false
 	if err == nil {
+		// Stamp the gate on BOTH branches. This is the production publish path —
+		// putList has no non-test caller — so a snapshot published here without a
+		// key left the whole out-of-band gate inert: freshEntryLocked and
+		// checkStale both skip an entry whose key was never read, so strand served
+		// a stale board indefinitely after any bd-CLI write (st-8nn). The unchanged
+		// branch restamps too: the list was just re-validated against bd, so the
+		// entry is current as of the key read now, whatever it was stamped with
+		// before.
+		key, keyOK := c.readStoreKey(repo)
 		old := c.entries[repo]
 		changed = old == nil || !reflect.DeepEqual(old.list, list)
 		if changed {
 			c.gen++
-			c.entries[repo] = &snapshot{at: c.now(), gen: c.gen, list: list}
+			c.entries[repo] = &snapshot{at: c.now(), storeKey: key, storeKeyOK: keyOK, gen: c.gen, list: list}
 		} else {
 			old.at = c.now()
+			old.storeKey, old.storeKeyOK = key, keyOK
 		}
 	}
 	f.err = err
@@ -174,18 +195,20 @@ func (c *snapshotCache) goodList(repo string) []bd.Issue {
 	return nil
 }
 
-// The Dolt-store-mtime computation lives in internal/bd (bd.StoreMTime): the counts
-// refresher gates on the SAME helper, so the board and the badge can't diverge on
-// freshness (st-nm5). newSnapshotCache wires it into the storeMTime seam above.
+// The store-content-key computation lives in internal/bd (bd.StoreContentKey): the
+// counts refresher gates on the SAME helper, so the board and the badge can't
+// diverge on freshness (st-nm5, st-8nn). newSnapshotCache wires it into the
+// storeKey seam above.
 
 // freshEntryLocked returns the repo's snapshot if present and still fresh, else nil
 // (a miss). A snapshot has no time-based expiry: it lives until strand's own write
 // invalidates it, the repo switches, or the Dolt store moves under it. That last
-// case is the out-of-band gate — if the store's manifest mtime has advanced past
-// the mtime stamped at fetch, some other writer changed the beads and the snapshot
-// is dropped so the next read re-fetches bd's truth (st-69h). A zero storeAt (the
-// stat failed at fetch) or a storeMTime that can't read now disables the gate, so a
-// missing signal degrades to "serve until a write invalidates" rather than churning.
+// case is the out-of-band gate — if the store's manifest content key differs from
+// the key stamped at fetch, some other writer changed the beads and the snapshot
+// is dropped so the next read re-fetches bd's truth (st-69h). An entry stamped with
+// storeKeyOK false (the read failed at fetch) or a storeKey that can't read now
+// disables the gate, so a missing signal degrades to "serve until a write
+// invalidates" rather than churning.
 //
 // The caller MUST hold c.mu: putDeps mutates an entry's deps/depsOK in place, so a
 // reader that escapes the lock with the *snapshot races that write (strand-4sd). The
@@ -196,8 +219,8 @@ func (c *snapshotCache) freshEntryLocked(repo string) *snapshot {
 	if e == nil {
 		return nil
 	}
-	if !e.storeAt.IsZero() && c.storeMTime != nil {
-		if mt, ok := c.storeMTime(repo); ok && mt.After(e.storeAt) {
+	if e.storeKeyOK && c.storeKey != nil {
+		if k, ok := c.storeKey(repo); ok && k != e.storeKey {
 			delete(c.entries, repo)
 			return nil
 		}
@@ -214,8 +237,8 @@ func (c *snapshotCache) freshEntryLocked(repo string) *snapshot {
 //
 // No entry yet → false: a cold repo nobody has viewed has nothing to proactively
 // rebuild, so this never turns a lazy miss into an eager fetch. An unreadable or
-// unmoved store mtime → false, same as freshEntryLocked's degrade. Only a moved
-// mtime evicts and reports true.
+// unchanged store key → false, same as freshEntryLocked's degrade. Only a changed
+// key evicts and reports true.
 //
 // Concurrent pollers for the same repo (two open tabs) can each observe true and
 // each kick a rebuild; that's harmless (putList just overwrites the entry twice
@@ -227,11 +250,11 @@ func (c *snapshotCache) checkStale(repo string) bool {
 	if e == nil {
 		return false
 	}
-	if e.storeAt.IsZero() || c.storeMTime == nil {
+	if !e.storeKeyOK || c.storeKey == nil {
 		return false
 	}
-	mt, ok := c.storeMTime(repo)
-	if !ok || !mt.After(e.storeAt) {
+	k, ok := c.storeKey(repo)
+	if !ok || k == e.storeKey {
 		return false
 	}
 	delete(c.entries, repo)
@@ -289,7 +312,7 @@ func (c *snapshotCache) liveStats(repo string) (bd.Stats, bool) {
 // liveClosed returns the repo's closed beads and true only when a live snapshot
 // already holds them (closedOK). bd's default `list` omits closed, so the closed
 // cut fetches this set once and folds it here; every later closed view hits memory
-// until a write or the mtime gate drops the entry. Read under the lock putClosed
+// until a write or the store-key gate drops the entry. Read under the lock putClosed
 // writes under, so the closed/closedOK fields never race; the returned slice is the
 // shared read-only view (see the contract above putList).
 func (c *snapshotCache) liveClosed(repo string) ([]bd.Issue, bool) {
@@ -309,21 +332,28 @@ func (c *snapshotCache) liveClosed(repo string) ([]bd.Issue, bool) {
 // valid, immutable view. Callers must treat the returned slices as read-only.
 
 // putList records a fresh List result, opening the repo's snapshot and stamping it
-// with both the wall time (the "data as of" readout) and the Dolt store mtime the
-// out-of-band gate ages against. A storeMTime that can't read now leaves storeAt
-// zero, which disables the gate for this entry (freshEntryLocked) — the same
-// degrade-to-old-behavior a missing signal gets everywhere else.
+// with both the wall time (the "data as of" readout) and the Dolt store key the
+// out-of-band gate compares against. A storeKey that can't read now leaves
+// storeKeyOK false, which disables the gate for this entry (freshEntryLocked) — the
+// same degrade-to-old-behavior a missing signal gets everywhere else. Kept in step
+// with publishList, which stamps the same pair on the production path.
 func (c *snapshotCache) putList(repo string, list []bd.Issue) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.gen++
-	var storeAt time.Time
-	if c.storeMTime != nil {
-		if mt, ok := c.storeMTime(repo); ok {
-			storeAt = mt
-		}
+	key, keyOK := c.readStoreKey(repo)
+	c.entries[repo] = &snapshot{at: c.now(), storeKey: key, storeKeyOK: keyOK, gen: c.gen, list: list}
+}
+
+// readStoreKey reads the repo's store content key through the seam, reporting ok
+// false when there is no seam or it can't read — the one place the nil-seam and
+// unreadable-store degrades are decided, so publishList and putList stamp
+// identically.
+func (c *snapshotCache) readStoreKey(repo string) (int64, bool) {
+	if c.storeKey == nil {
+		return 0, false
 	}
-	c.entries[repo] = &snapshot{at: c.now(), storeAt: storeAt, gen: c.gen, list: list}
+	return c.storeKey(repo)
 }
 
 func (c *snapshotCache) upsert(repo string, issue *bd.Issue) {
@@ -496,7 +526,7 @@ func (c *cachingSource) Stats(ctx context.Context) (bd.Stats, error) {
 // warm read. It warms the open-list snapshot first when cold so the closed set has a
 // live gen to bind to — a closed-first request (a `?filter=closed` deep-link) then
 // caches instead of re-fetching every switch, and that warm list serves the other
-// views for free. The set drops on the same invalidate (a write) and the same mtime
+// views for free. The set drops on the same invalidate (a write) and the same key
 // gate as every other fold.
 func (c *cachingSource) Closed(ctx context.Context) ([]bd.Issue, error) {
 	if closed, ok := c.cache.liveClosed(c.repo); ok {

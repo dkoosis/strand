@@ -3119,17 +3119,23 @@ func TestSnapshotCacheNoTimeExpiry(t *testing.T) {
 	}
 }
 
-// TestSnapshotCacheStoreMTimeGate proves the out-of-band gate (st-69h): a snapshot
-// serves from memory while the Dolt store is unchanged, but the next read drops it
-// once the store's manifest mtime advances past the fetch stamp — the case strand's
-// own writes can't catch (an agent or bare bd editing the same store). The store
-// mtime is a mutable fake injected over storeMTime, so staleness is driven off the
-// seam, not real filesystem time.
-func TestSnapshotCacheStoreMTimeGate(t *testing.T) {
+// TestSnapshotCacheStoreKeyGate proves the out-of-band gate (st-69h, st-8nn): a
+// snapshot serves from memory while the Dolt store's manifest content is unchanged,
+// and the next read drops it once that content differs from the fetch stamp — the
+// case strand's own writes can't catch (an agent or bare bd editing the same store).
+// The key is a mutable fake injected over storeKey, so staleness is driven off the
+// seam, not a real store.
+//
+// This drives the whole path a browser drives — cachingSource.List → liveList →
+// freshEntryLocked → refreshList → publishList — NOT putList, which has no
+// production caller. The old version of this test asserted one spawn after the
+// store moved and passed for that reason: publishList never stamped the gate, so
+// nothing could ever evict (st-8nn).
+func TestSnapshotCacheStoreKeyGate(t *testing.T) {
 	src := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
 	cache := newSnapshotCache(func() time.Time { return cacheNow })
-	storeMTime := cacheNow
-	cache.storeMTime = func(string) (time.Time, bool) { return storeMTime, true }
+	storeKey := int64(100)
+	cache.storeKey = func(string) (int64, bool) { return storeKey, true }
 	cs := &cachingSource{IssueSource: src, cache: cache, repo: "demo"}
 	ctx := context.Background()
 
@@ -3143,27 +3149,87 @@ func TestSnapshotCacheStoreMTimeGate(t *testing.T) {
 		t.Fatalf("List spawned %d times while the store was unchanged, want 1", src.listCalls.Load())
 	}
 
-	storeMTime = storeMTime.Add(time.Second) // an out-of-band write moves the store
+	storeKey = 200 // an out-of-band write changes the manifest content
 
-	if _, err := cs.List(ctx, bd.ListOpts{}); err != nil { // store moved → miss → fetch #2
+	if _, err := cs.List(ctx, bd.ListOpts{}); err != nil { // key differs → miss → fetch #2
 		t.Fatalf("List: %v", err)
 	}
-	if src.listCalls.Load() != 1 {
-		t.Errorf("List spawned %d times after the store moved, want 1 — filesystem signals are not authoritative", src.listCalls.Load())
+	if src.listCalls.Load() != 2 {
+		t.Errorf("List spawned %d times after the store content changed, want 2 — the out-of-band gate must evict", src.listCalls.Load())
+	}
+}
+
+// TestSnapshotCacheStoreKeyStampedOnPublish is the regression guard for the hole
+// st-8nn found: publishList is the ONLY publish path a request takes, and it used
+// to build its snapshot without reading the store key at all. An entry with
+// storeKeyOK false disables the gate for that entry, so the effect was a
+// permanently inert out-of-band gate — strand served a stale board for as long as
+// the process lived after any bd-CLI write. Assert the stamp directly, so a future
+// edit that drops it fails here rather than silently disarming the gate again.
+func TestSnapshotCacheStoreKeyStampedOnPublish(t *testing.T) {
+	src := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
+	cache := newSnapshotCache(func() time.Time { return cacheNow })
+	cache.storeKey = func(string) (int64, bool) { return 42, true }
+	cs := &cachingSource{IssueSource: src, cache: cache, repo: "demo"}
+
+	if _, err := cs.List(context.Background(), bd.ListOpts{}); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+
+	cache.mu.Lock()
+	e := cache.entries["demo"]
+	cache.mu.Unlock()
+	if e == nil {
+		t.Fatal("no snapshot published by the request path")
+	}
+	if !e.storeKeyOK {
+		t.Fatal("publishList left storeKeyOK false — the out-of-band gate is disarmed for every request-path snapshot")
+	}
+	if e.storeKey != 42 {
+		t.Errorf("storeKey = %d, want 42 — the stamp must come from the seam", e.storeKey)
+	}
+}
+
+// TestSnapshotCacheStoreKeyRestampedWhenListUnchanged covers publishList's second
+// branch: when a refresh returns a byte-identical list, the entry is kept rather
+// than replaced. It must still take the fresh key — the list was just re-validated
+// against bd, so the entry is current as of now. Leaving the old key there would
+// make the very next read evict a snapshot that was just confirmed good.
+func TestSnapshotCacheStoreKeyRestampedWhenListUnchanged(t *testing.T) {
+	src := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
+	cache := newSnapshotCache(func() time.Time { return cacheNow })
+	storeKey := int64(1)
+	cache.storeKey = func(string) (int64, bool) { return storeKey, true }
+	cs := &cachingSource{IssueSource: src, cache: cache, repo: "demo"}
+	ctx := context.Background()
+
+	if _, err := cs.List(ctx, bd.ListOpts{}); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	storeKey = 2 // an out-of-band write that did not change the bead list
+
+	if _, err := cs.List(ctx, bd.ListOpts{}); err != nil { // evicts, refetches, republishes
+		t.Fatalf("List: %v", err)
+	}
+	if _, err := cs.List(ctx, bd.ListOpts{}); err != nil { // must now hit memory
+		t.Fatalf("List: %v", err)
+	}
+	if n := src.listCalls.Load(); n != 2 {
+		t.Errorf("List spawned %d times, want 2 — a republished snapshot must carry the current key, not keep evicting", n)
 	}
 }
 
 // TestSnapshotCacheCheckStale proves checkStale (st-2fy.5): the poll-tick's own
 // staleness peek, independent of any read. A cold repo (no entry) has nothing to
 // rebuild, so it reports false without side effects. A warm entry whose store
-// hasn't moved also reports false. Only a warm entry whose store mtime has
-// advanced past the fetch stamp reports true AND evicts — mirroring
-// freshEntryLocked's own eviction rule, so the lazy (read-triggered) and
-// proactive (poll-triggered) paths agree on what "stale" means.
+// content is unchanged also reports false. Only a warm entry whose store key now
+// differs reports true AND evicts — mirroring freshEntryLocked's own eviction rule,
+// so the lazy (read-triggered) and proactive (poll-triggered) paths agree on what
+// "stale" means.
 func TestSnapshotCacheCheckStale(t *testing.T) {
 	cache := newSnapshotCache(func() time.Time { return cacheNow })
-	storeMTime := cacheNow
-	cache.storeMTime = func(string) (time.Time, bool) { return storeMTime, true }
+	storeKey := int64(7)
+	cache.storeKey = func(string) (int64, bool) { return storeKey, true }
 
 	if cache.checkStale("demo") {
 		t.Error("checkStale on a cold repo (no entry) = true, want false — nothing to rebuild")
@@ -3178,10 +3244,10 @@ func TestSnapshotCacheCheckStale(t *testing.T) {
 		t.Fatal("entry evicted while the store was unchanged — checkStale must not evict a fresh entry")
 	}
 
-	storeMTime = storeMTime.Add(time.Second) // an out-of-band write moves the store
+	storeKey = 8 // an out-of-band write changes the manifest content
 
 	if !cache.checkStale("demo") {
-		t.Error("checkStale after the store moved = false, want true")
+		t.Error("checkStale after the store content changed = false, want true")
 	}
 	if _, _, ok := cache.liveList("demo"); ok {
 		t.Fatal("checkStale reported stale but left the entry live — it must evict like freshEntryLocked")
@@ -3208,39 +3274,39 @@ func TestHandlePulseKicksProactiveRebuild(t *testing.T) {
 	// computePulse never touches the snapshot cache, isolating checkStale as the
 	// only path that can bump listCalls.
 	pointCounts(t, srv, `{"bh":0,"bo":0,"bw":0,"bb":0,"bcl":0,"bdf":0,"ts":1}`)
-	storeMTime := cacheNow
-	srv.cache.storeMTime = func(string) (time.Time, bool) { return storeMTime, true }
+	storeKey := int64(1)
+	srv.cache.storeKey = func(string) (int64, bool) { return storeKey, true }
 	srv.now = func() time.Time { return cacheNow }
 
 	do(t, srv, "/") // warms the snapshot (handleHome's buildStrand → List)
 	srv.bgWG.Wait() // drain handleHome's own detached deps prefetch before mutating
-	// storeMTime below — otherwise that goroutine's read of the
+	// storeKey below — otherwise that goroutine's read of the
 	// closure races the write (test-only race, not a product bug).
 	if n := src.listCalls.Load(); n != 1 {
 		t.Fatalf("List spawned %d times warming the snapshot, want 1", n)
 	}
 
-	storeMTime = storeMTime.Add(time.Second) // an out-of-band write moves the store
+	storeKey = 2 // an out-of-band write changes the manifest content
 
-	do(t, srv, "/pulse") // the poll tick: must notice the move and kick a rebuild
+	do(t, srv, "/pulse") // the poll tick: must notice the change and kick a rebuild
 	srv.Stop()           // drain the background rebuild deterministically
 
-	if n := src.listCalls.Load(); n != 1 {
-		t.Errorf("List spawned %d times after pulse render, want 1 — browser requests must not drive authoritative refresh", n)
+	if n := src.listCalls.Load(); n != 2 {
+		t.Errorf("List spawned %d times after pulse render, want 2 — the poll tick must kick the background rebuild itself", n)
 	}
 	if _, _, ok := srv.cache.liveList(demoRepo.Path); !ok {
 		t.Error("snapshot not warm after the proactive rebuild landed — the next filter switch would still pay a cold spawn")
 	}
 }
 
-// TestSnapshotCacheStoreMTimeUnreadable proves the graceful degrade: when the store
-// mtime can't be read (ok false — a non-bd path, a permissions error), the snapshot
-// stamps a zero storeAt and the gate stays off, so the cache behaves exactly as it
+// TestSnapshotCacheStoreKeyUnreadable proves the graceful degrade: when the store
+// key can't be read (ok false — a non-bd path, a permissions error), the snapshot
+// stamps storeKeyOK false and the gate stays off, so the cache behaves exactly as it
 // did before st-69h — served until an explicit invalidate, never falsely stale.
-func TestSnapshotCacheStoreMTimeUnreadable(t *testing.T) {
+func TestSnapshotCacheStoreKeyUnreadable(t *testing.T) {
 	src := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
 	cache := newSnapshotCache(func() time.Time { return cacheNow })
-	cache.storeMTime = func(string) (time.Time, bool) { return time.Time{}, false }
+	cache.storeKey = func(string) (int64, bool) { return 0, false }
 	cs := &cachingSource{IssueSource: src, cache: cache, repo: "demo"}
 	ctx := context.Background()
 
@@ -3250,7 +3316,7 @@ func TestSnapshotCacheStoreMTimeUnreadable(t *testing.T) {
 		}
 	}
 	if src.listCalls.Load() != 1 {
-		t.Errorf("List spawned %d times with an unreadable store mtime, want 1 — the gate must stay off", src.listCalls.Load())
+		t.Errorf("List spawned %d times with an unreadable store key, want 1 — the gate must stay off", src.listCalls.Load())
 	}
 }
 
