@@ -396,11 +396,11 @@ func isIndentedContinuation(line string) bool {
 // the id is the first comma/whitespace-delimited token after the first arrow — a
 // legacy line with several ids keeps only the first.
 func epicLineID(row string) (string, bool) {
-	arrow := strings.Index(row, "→")
-	if arrow < 0 {
+	_, after, ok := strings.Cut(row, "→")
+	if !ok {
 		return "", false
 	}
-	rest := strings.ReplaceAll(row[arrow+len("→"):], ",", " ")
+	rest := strings.ReplaceAll(after, ",", " ")
 	fields := strings.Fields(rest)
 	if len(fields) == 0 {
 		return "", false

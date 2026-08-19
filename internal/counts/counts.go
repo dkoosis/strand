@@ -55,6 +55,11 @@ type Row struct {
 	Claimed *Ref `json:"claimed"`
 }
 
+// issueTypeEpic is bd's issue_type value for an epic — used to exclude epics
+// themselves from the epic-buckets child count and from every pickNext rung (an
+// epic never IS the next bead to work).
+const issueTypeEpic = "epic"
+
 // EpicRow is one live roadmap epic's ◆○◐● partition over its DIRECT children
 // (Issue.Parent == the epic's id), excluding nested epics (issue_type=="epic"). bw
 // is the raw in_progress status total, overlapping bh for a gated in-progress child
@@ -223,24 +228,25 @@ func epicBuckets(liveEpics []string, issues []bd.Issue, lanes map[string]insight
 		rows[i] = EpicRow{ID: id}
 		idx[id] = i
 	}
-	for _, iss := range issues {
-		if iss.IssueType == "epic" {
+	for i := range issues {
+		iss := &issues[i]
+		if iss.IssueType == issueTypeEpic {
 			continue
 		}
-		i, ok := idx[iss.Parent]
+		ri, ok := idx[iss.Parent]
 		if !ok {
 			continue
 		}
 		if iss.Status == bd.StatusInProgress {
-			rows[i].BW++
+			rows[ri].BW++
 		}
 		switch lanes[iss.ID] {
 		case insight.LaneWaiting:
-			rows[i].BH++
+			rows[ri].BH++
 		case insight.LaneOpen:
-			rows[i].BO++
+			rows[ri].BO++
 		case insight.LaneBlocked:
-			rows[i].BB++
+			rows[ri].BB++
 		case insight.LaneNone:
 		}
 	}
@@ -272,30 +278,30 @@ func epicBuckets(liveEpics []string, issues []bd.Issue, lanes map[string]insight
 // §Non-goals, bead-verbatim) — a LaneOpen bead outside currentEpic and outside
 // every liveEpics[1:] epic is never picked, at any rung.
 func pickNext(issues []bd.Issue, lanes map[string]insight.Lane, currentEpic string, liveEpics []string) (next *Next, claimed *Ref) {
-	if top, ok := pickTop(filterIssues(issues, func(iss bd.Issue) bool {
-		return iss.IssueType != "epic" && iss.Status == bd.StatusInProgress
+	if top, ok := pickTop(filterIssues(issues, func(iss *bd.Issue) bool {
+		return iss.IssueType != issueTypeEpic && iss.Status == bd.StatusInProgress
 	})); ok {
 		return &Next{ID: top.ID, Title: top.Title, Reason: "claimed"}, &Ref{ID: top.ID, Title: top.Title}
 	}
 
 	if currentEpic != "" {
-		if top, ok := pickTop(filterIssues(issues, func(iss bd.Issue) bool {
-			return iss.IssueType != "epic" && iss.Parent == currentEpic && lanes[iss.ID] == insight.LaneOpen
+		if top, ok := pickTop(filterIssues(issues, func(iss *bd.Issue) bool {
+			return iss.IssueType != issueTypeEpic && iss.Parent == currentEpic && lanes[iss.ID] == insight.LaneOpen
 		})); ok {
 			return &Next{ID: top.ID, Title: top.Title, Reason: "epic"}, nil
 		}
 	}
 
-	if top, ok := pickTop(filterIssues(issues, func(iss bd.Issue) bool {
-		return iss.IssueType != "epic" && lanes[iss.ID] == insight.LaneWaiting
+	if top, ok := pickTop(filterIssues(issues, func(iss *bd.Issue) bool {
+		return iss.IssueType != issueTypeEpic && lanes[iss.ID] == insight.LaneWaiting
 	})); ok {
 		return &Next{ID: top.ID, Title: top.Title, Reason: "waiting-on-dk"}, nil
 	}
 
 	if len(liveEpics) > 1 {
 		for _, epicID := range liveEpics[1:] {
-			if top, ok := pickTop(filterIssues(issues, func(iss bd.Issue) bool {
-				return iss.IssueType != "epic" && iss.Parent == epicID && lanes[iss.ID] == insight.LaneOpen
+			if top, ok := pickTop(filterIssues(issues, func(iss *bd.Issue) bool {
+				return iss.IssueType != issueTypeEpic && iss.Parent == epicID && lanes[iss.ID] == insight.LaneOpen
 			})); ok {
 				return &Next{ID: top.ID, Title: top.Title, Reason: "next-epic"}, nil
 			}
@@ -305,13 +311,15 @@ func pickNext(issues []bd.Issue, lanes map[string]insight.Lane, currentEpic stri
 	return nil, nil
 }
 
-// filterIssues returns the issues keep reports true for — a small local helper so
-// pickNext's four rungs read as one predicate each, not a hand-unrolled loop apiece.
-func filterIssues(issues []bd.Issue, keep func(bd.Issue) bool) []bd.Issue {
-	var out []bd.Issue
-	for _, iss := range issues {
-		if keep(iss) {
-			out = append(out, iss)
+// filterIssues returns pointers into issues for every element keep reports true for
+// — a small local helper so pickNext's four rungs read as one predicate each, not a
+// hand-unrolled loop apiece. Pointers (not copies) keep bd.Issue's ~240 bytes from
+// being duplicated through the filter+pick chain.
+func filterIssues(issues []bd.Issue, keep func(*bd.Issue) bool) []*bd.Issue {
+	var out []*bd.Issue
+	for i := range issues {
+		if keep(&issues[i]) {
+			out = append(out, &issues[i])
 		}
 	}
 	return out
@@ -322,9 +330,9 @@ func filterIssues(issues []bd.Issue, keep func(bd.Issue) bool) []bd.Issue {
 // strand.NewBead's default so an omitted priority never sorts as falsely urgent
 // or falsely low), ties broken by the lexicographically smallest id. ok is false
 // for an empty cands.
-func pickTop(cands []bd.Issue) (bd.Issue, bool) {
+func pickTop(cands []*bd.Issue) (*bd.Issue, bool) {
 	if len(cands) == 0 {
-		return bd.Issue{}, false
+		return nil, false
 	}
 	best := cands[0]
 	for _, c := range cands[1:] {
@@ -337,7 +345,7 @@ func pickTop(cands []bd.Issue) (bd.Issue, bool) {
 
 // candPriority is i's cascade priority: its own value, or 2 (P2) when bd omitted
 // the field — the same default strand.NewBead applies.
-func candPriority(i bd.Issue) int {
+func candPriority(i *bd.Issue) int {
 	if i.Priority != nil {
 		return *i.Priority
 	}
@@ -346,7 +354,7 @@ func candPriority(i bd.Issue) int {
 
 // candLess reports whether a outranks b: lower priority number first, then the
 // lexicographically smaller id.
-func candLess(a, b bd.Issue) bool {
+func candLess(a, b *bd.Issue) bool {
 	pa, pb := candPriority(a), candPriority(b)
 	if pa != pb {
 		return pa < pb

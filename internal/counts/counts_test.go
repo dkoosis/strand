@@ -212,7 +212,7 @@ func TestPickNextRung2CurrentEpicOpenChildWins(t *testing.T) {
 		{ID: "e2.gated", Parent: "e2", Status: bd.StatusOpen, Labels: []string{"human"}, Priority: new(0)},
 		{ID: "e2.open-lo", Parent: "e2", Status: bd.StatusOpen, Priority: new(3)},
 		{ID: "e2.open-hi", Parent: "e2", Status: bd.StatusOpen, Priority: new(1)}, // wins: lowest priority open child
-		{ID: "e3.open", Parent: "e3", Status: bd.StatusOpen, Priority: new(0)},   // different epic: must not be picked
+		{ID: "e3.open", Parent: "e3", Status: bd.StatusOpen, Priority: new(0)},    // different epic: must not be picked
 	}
 	lanes := insight.Lanes(issues, nil)
 	next, claimed := pickNext(issues, lanes, "e2", []string{"e2", "e3"})
@@ -370,13 +370,13 @@ func TestPickNextExcludesRepoWideReadyOutsideEveryRung(t *testing.T) {
 func TestEpicBuckets(t *testing.T) {
 	issues := []bd.Issue{
 		{ID: "e1.nested-epic", Parent: "e1", IssueType: "epic", Status: bd.StatusOpen, Priority: new(0)}, // excluded: nested epic
-		{ID: "e1.waiting", Parent: "e1", Status: bd.StatusOpen, Labels: []string{"human"}},                // bh
-		{ID: "e1.open", Parent: "e1", Status: bd.StatusOpen},                                              // bo
-		{ID: "e1.ip-plain", Parent: "e1", Status: bd.StatusInProgress},                                    // bw only
-		{ID: "e1.ip-gated", Parent: "e1", Status: bd.StatusInProgress, Labels: []string{"human"}},         // bw AND bh (overlap)
-		{ID: "e1.blocked", Parent: "e1", Status: bd.StatusBlocked},                                        // bb
-		{ID: "e2.open", Parent: "e2", Status: bd.StatusOpen},                                              // e2's own bucket
-		{ID: "e3.open", Parent: "e3", Status: bd.StatusOpen},                                              // e3 not in liveEpics: must be absent
+		{ID: "e1.waiting", Parent: "e1", Status: bd.StatusOpen, Labels: []string{"human"}},               // bh
+		{ID: "e1.open", Parent: "e1", Status: bd.StatusOpen},                                             // bo
+		{ID: "e1.ip-plain", Parent: "e1", Status: bd.StatusInProgress},                                   // bw only
+		{ID: "e1.ip-gated", Parent: "e1", Status: bd.StatusInProgress, Labels: []string{"human"}},        // bw AND bh (overlap)
+		{ID: "e1.blocked", Parent: "e1", Status: bd.StatusBlocked},                                       // bb
+		{ID: "e2.open", Parent: "e2", Status: bd.StatusOpen},                                             // e2's own bucket
+		{ID: "e3.open", Parent: "e3", Status: bd.StatusOpen},                                             // e3 not in liveEpics: must be absent
 	}
 	lanes := insight.Lanes(issues, nil)
 	got := epicBuckets([]string{"e1", "e2"}, issues, lanes)
