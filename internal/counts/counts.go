@@ -14,7 +14,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 
@@ -26,9 +25,16 @@ import (
 // Row is one repo's counts.json entry. The json tags + field order for root through
 // ts match the object bd-counts-refresh.sh emitted, so every existing consumer (the
 // status line, bdcounts.Reader) reads a strand-written file unchanged: bh=◆ waiting,
-// bo=○ open, bw=◐ in_progress, bb=● blocked, bcl=✓ closed, bdf=❄ deferred; eid/epct =
-// the station bar's phase. Epics/Next/Claimed (st-3wp.1) are additive, appended after
-// ts — no existing key renamed, retyped, or reordered.
+// bo=○ open, bw=◐ in_progress, bb=● blocked, bcl=✓ closed, bdf=❄ deferred.
+// Epics/Next/Claimed (st-3wp.1) are additive, appended after ts.
+//
+// eid/epct are GONE (st-w9v). They carried the station bar's phase for wrap's
+// statusline, whose last reader went away in wrap 0.28.0; nothing has read either
+// key since. Dropping them is safe for the same reason adding epics/next was: every
+// consumer decodes by name into its own struct (bdcounts.Reader, the statusline's
+// jq), so an absent key it never mentions cannot affect it. A station derived from
+// the roadmap could come back as a real feature — it would be new work, not this
+// field.
 type Row struct {
 	Root   string `json:"root"`
 	Prefix string `json:"prefix"`
@@ -38,8 +44,6 @@ type Row struct {
 	BB     int    `json:"bb"`
 	BCl    int    `json:"bcl"`
 	BDf    int    `json:"bdf"`
-	EID    string `json:"eid"`
-	EPct   *int   `json:"epct"` // nil → JSON null: no roadmap id maps to a live epic
 	TS     int64  `json:"ts"`
 	// Epics is one ◆○◐● bucket row per live (non-closed) roadmap epic, roadmap
 	// order, epics[0] = the current epic. nil → JSON null when the repo has no
@@ -98,16 +102,12 @@ type source interface {
 }
 
 // computeRow derives one repo's row: the six buckets from bd reads folded through
-// insight.Lanes, plus the station phase. List/Deps/Stats are load-bearing — an error
-// fails the row so the caller keeps the last-good entry rather than zeroing it. The
-// station is best-effort: a repo with no roadmap epic still open/in-progress degrades
-// to an empty station (eid "", epct null) — that's a real answer, not a failure. An
-// EpicStatus *read* failure is different: it carries prevEID/prevEPct forward (st-2fy.7,
-// the previous row's station) rather than blanking a station a prior successful run
-// already computed — matching the last-good semantics the buckets get from the caller.
-// Only the two station fields are threaded through (not the whole prior Row) to keep
-// the parameter light.
-func computeRow(ctx context.Context, src source, root string, prevEID string, prevEPct *int) (Row, error) {
+// insight.Lanes, plus the epic buckets and the what's-next pick. List/Deps/Stats are
+// load-bearing — an error fails the row so the caller keeps the last-good entry
+// rather than zeroing it. The epic-derived fields are best-effort: an EpicStatus read
+// failure degrades epics to nil and runs the cascade with no epic info, and a
+// transient blank heals next cycle.
+func computeRow(ctx context.Context, src source, root string) (Row, error) {
 	issues, err := src.List(ctx, bd.ListOpts{})
 	if err != nil {
 		return Row{}, fmt.Errorf("list: %w", err)
@@ -130,30 +130,23 @@ func computeRow(ctx context.Context, src source, root string, prevEID string, pr
 	lanes := insight.Lanes(issues, deps)
 	bh, bo, bb := laneCounts(lanes)
 
-	var eid string
-	var epct *int
 	var epicRows []EpicRow
 	var next *Next
 	var claimed *Ref
 	if epics, err := src.EpicStatus(ctx); err == nil {
-		roadmap := strandmd.Roadmap(root)
-		eid, epct = station(roadmap, epics)
-		liveEpics := liveRoadmapEpics(roadmap, epics)
+		liveEpics := liveRoadmapEpics(strandmd.Roadmap(root), epics)
 		epicRows = epicBuckets(liveEpics, issues, lanes)
 		next, claimed = pickNext(issues, lanes, currentEpicID(liveEpics), liveEpics)
 	} else {
-		// EpicStatus read failed: carry the last-good station forward (st-2fy.7,
-		// unchanged), degrade epics to nil (no epic data to bucket), and run the
-		// cascade with no epic info — rungs 1 and 3 don't need it, so next still
-		// resolves from those; a transient blank heals next cycle.
-		eid, epct = prevEID, prevEPct
+		// EpicStatus read failed: degrade epics to nil (no epic data to bucket) and
+		// run the cascade with no epic info — rungs 1 and 3 don't need it, so next
+		// still resolves from those; a transient blank heals next cycle.
 		next, claimed = pickNext(issues, lanes, "", nil)
 	}
 	return Row{
 		Root: root, Prefix: prefix(root),
 		BH: bh, BO: bo, BW: stats.InProgress, BB: bb,
 		BCl: stats.Closed, BDf: stats.Deferred,
-		EID: eid, EPct: epct,
 		Epics: epicRows, Next: next, Claimed: claimed,
 		TS: lastTouched(root),
 	}, nil
@@ -183,11 +176,11 @@ func laneCounts(lanes map[string]insight.Lane) (bh, bo, bb int) {
 
 // liveRoadmapEpics returns the roadmap-ordered epic ids that map to a non-closed
 // epic in the EpicStatus set — the "epics" array's own filter, and the source of
-// currentEpic (its first element). Deliberately literal ("!= closed", not
-// station()'s open/in-progress test): a deferred or blocked epic still counts as
-// live/current here; station()'s own eid/epct rule is untouched (it is NOT
-// redefined by this bead). A ghost id — present in the roadmap but absent from the
-// EpicStatus/DAG set — is skipped, not an error.
+// currentEpic (its first element). Deliberately literal: "!= closed", so a deferred
+// or blocked epic still counts as live and can be the current one. (The retired
+// station() used a narrower open/in-progress test; when it went with eid/epct in
+// st-w9v this became the only live-epic rule in the package.) A ghost id — present
+// in the roadmap but absent from the EpicStatus/DAG set — is skipped, not an error.
 func liveRoadmapEpics(roadmap []string, epics []bd.EpicStatus) []string {
 	byID := make(map[string]bd.EpicStatus, len(epics))
 	for _, e := range epics {
@@ -360,28 +353,6 @@ func candLess(a, b *bd.Issue) bool {
 		return pa < pb
 	}
 	return a.ID < b.ID
-}
-
-// station walks the roadmap ids in route order and returns the first that is still an
-// open/in-progress epic, with its percent-done (closed/total children, rounded). eid
-// "" and epct nil when no roadmap id maps to a live epic — the empty station.
-func station(roadmap []string, epics []bd.EpicStatus) (string, *int) {
-	byID := make(map[string]bd.EpicStatus, len(epics))
-	for _, e := range epics {
-		byID[e.Epic.ID] = e
-	}
-	for _, id := range roadmap {
-		e, ok := byID[id]
-		if !ok || (e.Epic.Status != bd.StatusOpen && e.Epic.Status != bd.StatusInProgress) {
-			continue
-		}
-		pct := 0
-		if e.TotalChildren > 0 {
-			pct = int(math.Round(float64(e.ClosedChildren) / float64(e.TotalChildren) * 100))
-		}
-		return id, &pct
-	}
-	return "", nil
 }
 
 // prefix is the repo's short name: the Dolt database from .beads/metadata.json, or

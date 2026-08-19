@@ -52,46 +52,6 @@ func TestLaneCountsMatchesInsightPartition(t *testing.T) {
 	}
 }
 
-func TestStation(t *testing.T) {
-	epics := []bd.EpicStatus{
-		{Epic: bd.EpicRef{ID: "e1", Status: bd.StatusClosed}, TotalChildren: 4, ClosedChildren: 4},
-		{Epic: bd.EpicRef{ID: "e2", Status: bd.StatusOpen}, TotalChildren: 8, ClosedChildren: 2},
-		{Epic: bd.EpicRef{ID: "e3", Status: bd.StatusInProgress}, TotalChildren: 3, ClosedChildren: 1},
-	}
-	tests := []struct {
-		name     string
-		roadmap  []string
-		epics    []bd.EpicStatus
-		wantEID  string
-		wantPct  int
-		wantNull bool
-	}{
-		{"first live epic wins, rounds pct", []string{"e1", "e2", "e3"}, epics, "e2", 25, false},
-		{"skips closed to next live", []string{"e1", "e3"}, epics, "e3", 33, false},
-		{"skips ids absent from the DAG", []string{"ghost", "e2"}, epics, "e2", 25, false},
-		{"no live epic → empty station", []string{"e1"}, epics, "", 0, true},
-		{"empty roadmap → empty station", nil, epics, "", 0, true},
-		{"zero children → 0 pct, not divide-by-zero", []string{"z"}, []bd.EpicStatus{{Epic: bd.EpicRef{ID: "z", Status: bd.StatusOpen}}}, "z", 0, false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			eid, epct := station(tc.roadmap, tc.epics)
-			if eid != tc.wantEID {
-				t.Errorf("eid = %q, want %q", eid, tc.wantEID)
-			}
-			if tc.wantNull {
-				if epct != nil {
-					t.Errorf("epct = %d, want nil", *epct)
-				}
-				return
-			}
-			if epct == nil || *epct != tc.wantPct {
-				t.Errorf("epct = %v, want %d", epct, tc.wantPct)
-			}
-		})
-	}
-}
-
 // fakeSource is a canned bd read surface for computeRow — no subprocess, no repo.
 type fakeSource struct {
 	issues   []bd.Issue
@@ -114,7 +74,7 @@ func (f *fakeSource) EpicStatus(context.Context) ([]bd.EpicStatus, error) {
 // TestComputeRowAssemblesBuckets pins the full row: lane counts from insight, bw/bcl/
 // bdf straight from Stats (bw is the raw in_progress total, overlapping ◆). The repo
 // path has no .beads, so prefix falls back to the basename and ts is 0 — the row still
-// builds (a station with no roadmap file is empty, not an error).
+// builds (no roadmap file means no epic buckets, not an error).
 func TestComputeRowAssemblesBuckets(t *testing.T) {
 	src := &fakeSource{
 		issues: []bd.Issue{
@@ -124,7 +84,7 @@ func TestComputeRowAssemblesBuckets(t *testing.T) {
 		},
 		stats: bd.Stats{InProgress: 1, Closed: 42, Deferred: 3},
 	}
-	row, err := computeRow(context.Background(), src, "/tmp/not-a-repo-xyz", "", nil)
+	row, err := computeRow(context.Background(), src, "/tmp/not-a-repo-xyz")
 	if err != nil {
 		t.Fatalf("computeRow: %v", err)
 	}
@@ -137,46 +97,8 @@ func TestComputeRowAssemblesBuckets(t *testing.T) {
 	if row.Prefix != "not-a-repo-xyz" {
 		t.Errorf("prefix = %q, want the basename fallback", row.Prefix)
 	}
-	if row.EID != "" || row.EPct != nil {
-		t.Errorf("station should be empty for a repo with no roadmap: eid=%q epct=%v", row.EID, row.EPct)
-	}
-}
-
-// TestComputeRowStationLastGoodOnEpicStatusFailure is the st-2fy.7 fix: a transient
-// EpicStatus error must NOT blank a station that a prior successful run computed. The
-// buckets already get this last-good treatment from refresh() (a repo whose reads fail
-// keeps its previous row); computeRow now extends the same guarantee to its one
-// best-effort sub-read by taking the prior row and carrying its eid/epct forward on
-// EpicStatus failure, rather than degrading to the empty station.
-func TestComputeRowStationLastGoodOnEpicStatusFailure(t *testing.T) {
-	src := &fakeSource{epicsErr: errEpicStatusBoom}
-	prevPct := 42
-
-	row, err := computeRow(context.Background(), src, "/tmp/not-a-repo-xyz", "st-2fy", &prevPct)
-	if err != nil {
-		t.Fatalf("computeRow: %v", err)
-	}
-	if row.EID != "st-2fy" {
-		t.Errorf("eid = %q, want carried-forward %q", row.EID, "st-2fy")
-	}
-	if row.EPct == nil || *row.EPct != prevPct {
-		t.Errorf("epct = %v, want carried-forward %d", row.EPct, prevPct)
-	}
-}
-
-// TestComputeRowStationClearsOnGenuineEmpty proves the carry-forward is scoped to the
-// EpicStatus *failure* path only: a successful EpicStatus call that legitimately finds
-// no live roadmap epic must still clear a stale prior station, not stick forever.
-func TestComputeRowStationClearsOnGenuineEmpty(t *testing.T) {
-	src := &fakeSource{epics: nil} // succeeds, no epics → station() returns "", nil
-	prevPct := 42
-
-	row, err := computeRow(context.Background(), src, "/tmp/not-a-repo-xyz", "st-2fy", &prevPct)
-	if err != nil {
-		t.Fatalf("computeRow: %v", err)
-	}
-	if row.EID != "" || row.EPct != nil {
-		t.Errorf("eid=%q epct=%v, want empty station — a real result must overwrite a stale prior one", row.EID, row.EPct)
+	if row.Epics != nil {
+		t.Errorf("epics = %v, want nil for a repo with no roadmap file", row.Epics)
 	}
 }
 
@@ -406,13 +328,13 @@ func TestEpicBucketsNilForNoLiveEpics(t *testing.T) {
 
 // TestLiveRoadmapEpics pins the epics-array filter: closed excluded, a deferred (or
 // any other non-closed) epic still counts as live — deliberately literal, matching
-// currentEpic's "!= closed" rule rather than station()'s own open/in-progress test —
+// currentEpic's "!= closed" rule, which is deliberately looser than the retired station()'s —
 // a ghost id (absent from the EpicStatus/DAG set) is skipped, and roadmap order is
 // preserved throughout.
 func TestLiveRoadmapEpics(t *testing.T) {
 	epics := []bd.EpicStatus{
 		{Epic: bd.EpicRef{ID: "e1", Status: bd.StatusClosed}},
-		{Epic: bd.EpicRef{ID: "e2", Status: bd.StatusDeferred}}, // deferred: still live/current, not station()'s rule
+		{Epic: bd.EpicRef{ID: "e2", Status: bd.StatusDeferred}}, // deferred: still live/current under the "!= closed" rule
 		{Epic: bd.EpicRef{ID: "e3", Status: bd.StatusOpen}},
 	}
 	tests := []struct {
@@ -467,7 +389,7 @@ func TestComputeRowAssemblesEpicsNextAndClaimed(t *testing.T) {
 		},
 	}
 	root := writeRoadmapDir(t, "## Epics\n1. Title → e2\n")
-	row, err := computeRow(context.Background(), src, root, "", nil)
+	row, err := computeRow(context.Background(), src, root)
 	if err != nil {
 		t.Fatalf("computeRow: %v", err)
 	}
@@ -482,11 +404,11 @@ func TestComputeRowAssemblesEpicsNextAndClaimed(t *testing.T) {
 	}
 }
 
-// TestComputeRowEpicStatusFailureDegradesEpicsAndNext extends the st-2fy.7
-// last-good coverage to the new fields: an EpicStatus read failure yields
-// Epics=nil (no epic data to bucket), while Next still derives from the
-// epic-independent rungs (1 and 3) — a transient blank heals next cycle, matching
-// the plan's "no new last-good threading" call.
+// TestComputeRowEpicStatusFailureDegradesEpicsAndNext pins the whole degrade path:
+// an EpicStatus read failure yields Epics=nil (no epic data to bucket), while Next
+// still derives from the epic-independent rungs (1 and 3) — a transient blank heals
+// next cycle, matching the plan's "no new last-good threading" call. Since st-w9v
+// dropped eid/epct, this is the only last-good behavior computeRow still owns.
 func TestComputeRowEpicStatusFailureDegradesEpicsAndNext(t *testing.T) {
 	src := &fakeSource{
 		issues: []bd.Issue{
@@ -494,7 +416,7 @@ func TestComputeRowEpicStatusFailureDegradesEpicsAndNext(t *testing.T) {
 		},
 		epicsErr: errEpicStatusBoom,
 	}
-	row, err := computeRow(context.Background(), src, "/tmp/not-a-repo-xyz", "st-2fy", nil)
+	row, err := computeRow(context.Background(), src, "/tmp/not-a-repo-xyz")
 	if err != nil {
 		t.Fatalf("computeRow: %v", err)
 	}
@@ -508,9 +430,9 @@ func TestComputeRowEpicStatusFailureDegradesEpicsAndNext(t *testing.T) {
 
 // --- JSON shape: additive fields, explicit null, existing keys untouched ---
 
-// TestRowJSONShapeExplicitNulls: a zero-value Row's new fields marshal as explicit
-// JSON null (no omitempty), matching epct's existing convention — and every
-// pre-existing key is still present, unrenamed.
+// TestRowJSONShapeExplicitNulls: a zero-value Row's nullable fields marshal as
+// explicit JSON null (no omitempty) — and every pre-existing key is still present,
+// unrenamed.
 func TestRowJSONShapeExplicitNulls(t *testing.T) {
 	row := Row{Root: "/r", Prefix: "r"}
 	b, err := json.Marshal(row)
@@ -530,9 +452,16 @@ func TestRowJSONShapeExplicitNulls(t *testing.T) {
 			t.Errorf("%s = %s, want null for a zero-value Row", key, raw)
 		}
 	}
-	for _, key := range []string{"root", "prefix", "bh", "bo", "bw", "bb", "bcl", "bdf", "eid", "epct", "ts"} {
+	for _, key := range []string{"root", "prefix", "bh", "bo", "bw", "bb", "bcl", "bdf", "ts"} {
 		if _, ok := m[key]; !ok {
 			t.Errorf("existing key %q missing from JSON — a key was renamed or dropped", key)
+		}
+	}
+	// eid/epct are deliberately gone (st-w9v): they fed a statusline reader that was
+	// removed in wrap 0.28.0. Assert their ABSENCE so a revert has to be deliberate.
+	for _, key := range []string{"eid", "epct"} {
+		if _, ok := m[key]; ok {
+			t.Errorf("key %q is back in the JSON — st-w9v dropped it as reader-less", key)
 		}
 	}
 }
