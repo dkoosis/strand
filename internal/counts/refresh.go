@@ -133,8 +133,7 @@ func refreshLocked(ctx context.Context, cfg *config) error {
 			continue
 		}
 
-		prev := rows[root]
-		row, err := computeRow(ctx, cfg.newSource(root), root, prev.EID, prev.EPct)
+		row, err := computeRow(ctx, cfg.newSource(root), root)
 		if err == nil {
 			rows[root] = row
 		}
