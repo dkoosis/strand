@@ -91,6 +91,14 @@ type EpicRow struct {
 	BO    int    `json:"bo"`
 	BW    int    `json:"bw"`
 	BB    int    `json:"bb"`
+	// BCl and N are bd's OWN child roll-up for this epic — closed children and
+	// total children, straight from the EpicStatus read. The four lane buckets
+	// above partition only LIVE children (bd list omits closed), so they cannot
+	// express "how far through this epic are we"; these two can, and a consumer
+	// renders ✓/a progress bar from them without a second bd fork. They are bd's
+	// count, not ours: a nested epic child counts here and not in the buckets.
+	BCl int `json:"bcl"`
+	N   int `json:"n"`
 }
 
 // Next is the what's-next cascade's pick: the bead id/title to work next, and which
@@ -154,7 +162,7 @@ func computeRow(ctx context.Context, src source, root string) (Row, error) {
 	var pos *RoadmapPos
 	if epics, err := src.EpicStatus(ctx); err == nil {
 		liveEpics := liveRoadmapEpics(roadmap, epics)
-		epicRows = epicBuckets(liveEpics, epicTitles(epics), issues, lanes)
+		epicRows = epicBuckets(liveEpics, epicMeta(epics), issues, lanes)
 		next, claimed = pickNext(issues, lanes, currentEpicID(liveEpics), liveEpics)
 		pos = roadmapPos(roadmap, currentEpicID(liveEpics))
 	} else {
@@ -225,15 +233,17 @@ func currentEpicID(liveEpics []string) string {
 	return liveEpics[0]
 }
 
-// epicTitles maps epic id → bd's title for the whole EpicStatus set (not only the
-// live ones) — the lookup epicBuckets fills EpicRow.Title from. An epic bd gave no
-// title for maps to "", which renders as an absent title rather than an error.
-func epicTitles(epics []bd.EpicStatus) map[string]string {
-	titles := make(map[string]string, len(epics))
+// epicMeta maps epic id → the EpicStatus facts EpicRow carries beyond its own lane
+// buckets: bd's title and bd's closed/total child roll-up. Built over the WHOLE
+// EpicStatus set, not only the live epics, so a closed epic stays reachable for any
+// consumer that wants to name it. An epic bd reported no title for maps to "",
+// which renders as an absent title rather than an error.
+func epicMeta(epics []bd.EpicStatus) map[string]bd.EpicStatus {
+	meta := make(map[string]bd.EpicStatus, len(epics))
 	for _, e := range epics {
-		titles[e.Epic.ID] = e.Epic.Title
+		meta[e.Epic.ID] = e
 	}
-	return titles
+	return meta
 }
 
 // roadmapPos locates currentEpic among ALL roadmap ids — closed epics included, so
@@ -260,14 +270,15 @@ func roadmapPos(roadmap []string, currentEpic string) *RoadmapPos {
 // children, overlapping bh for a gated in-progress child (mirrors laneCounts' own
 // repo-level bw rule). nil when liveEpics is empty, matching the JSON schema's
 // "epics: null" for a repo with no live roadmap epic.
-func epicBuckets(liveEpics []string, titles map[string]string, issues []bd.Issue, lanes map[string]insight.Lane) []EpicRow {
+func epicBuckets(liveEpics []string, meta map[string]bd.EpicStatus, issues []bd.Issue, lanes map[string]insight.Lane) []EpicRow {
 	if len(liveEpics) == 0 {
 		return nil
 	}
 	rows := make([]EpicRow, len(liveEpics))
 	idx := make(map[string]int, len(liveEpics))
 	for i, id := range liveEpics {
-		rows[i] = EpicRow{ID: id, Title: titles[id]}
+		m := meta[id]
+		rows[i] = EpicRow{ID: id, Title: m.Epic.Title, BCl: m.ClosedChildren, N: m.TotalChildren}
 		idx[id] = i
 	}
 	for i := range issues {
