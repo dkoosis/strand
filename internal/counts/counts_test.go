@@ -301,7 +301,8 @@ func TestEpicBuckets(t *testing.T) {
 		{ID: "e3.open", Parent: "e3", Status: bd.StatusOpen},                                             // e3 not in liveEpics: must be absent
 	}
 	lanes := insight.Lanes(issues, nil)
-	got := epicBuckets([]string{"e1", "e2"}, issues, lanes)
+	titles := map[string]string{"e1": "First epic", "e3": "Not live"}
+	got := epicBuckets([]string{"e1", "e2"}, titles, issues, lanes)
 	if len(got) != 2 {
 		t.Fatalf("epicBuckets returned %d rows, want 2 (roadmap order, e3 excluded): %+v", len(got), got)
 	}
@@ -314,12 +315,20 @@ func TestEpicBuckets(t *testing.T) {
 	if e2 := got[1]; e2.BH != 0 || e2.BO != 1 || e2.BW != 0 || e2.BB != 0 {
 		t.Errorf("e2 buckets = %+v, want bo=1 only", e2)
 	}
+	// Title comes from the EpicStatus lookup, and an epic bd gave no title for
+	// renders as empty — not as a missing row.
+	if got[0].Title != "First epic" {
+		t.Errorf("e1 title = %q, want %q", got[0].Title, "First epic")
+	}
+	if got[1].Title != "" {
+		t.Errorf("e2 title = %q, want empty — no title in the lookup", got[1].Title)
+	}
 }
 
 // TestEpicBucketsNilForNoLiveEpics: nil roadmap (or an all-ghost/all-closed one) →
 // nil, matching the JSON schema's "epics: null" for a repo with no roadmap.
 func TestEpicBucketsNilForNoLiveEpics(t *testing.T) {
-	if got := epicBuckets(nil, nil, nil); got != nil {
+	if got := epicBuckets(nil, nil, nil, nil); got != nil {
 		t.Errorf("epicBuckets(nil roadmap) = %v, want nil", got)
 	}
 }
@@ -378,6 +387,52 @@ func TestCurrentEpicID(t *testing.T) {
 // TestComputeRowAssemblesEpicsNextAndClaimed: a real ROADMAP.md resolves through
 // strandmd.Roadmap, the epic buckets and the cascade both derive from the SAME
 // issues/lanes computeRow already fetched (zero new bd execs).
+// TestRoadmapPos pins K/N against ALL roadmap ids — a closed epic still occupies a
+// slot, which is the whole reason this field exists rather than an epics[] index.
+func TestRoadmapPos(t *testing.T) {
+	roadmap := []string{"e1", "e2", "e3"} // e1 closed: still counted, still shifts e2 to slot 2
+	tests := []struct {
+		name        string
+		roadmap     []string
+		currentEpic string
+		want        *RoadmapPos
+	}{
+		{"current epic mid-roadmap", roadmap, "e2", &RoadmapPos{K: 2, N: 3}},
+		{"first slot", roadmap, "e1", &RoadmapPos{K: 1, N: 3}},
+		{"last slot", roadmap, "e3", &RoadmapPos{K: 3, N: 3}},
+		{"no roadmap", nil, "e2", nil},
+		{"no current epic", roadmap, "", nil},
+		{"current epic off the roadmap", roadmap, "e9", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := roadmapPos(tt.roadmap, tt.currentEpic)
+			switch {
+			case tt.want == nil && got != nil:
+				t.Fatalf("roadmapPos = %+v, want nil", got)
+			case tt.want != nil && got == nil:
+				t.Fatalf("roadmapPos = nil, want %+v", tt.want)
+			case tt.want != nil && (got.K != tt.want.K || got.N != tt.want.N):
+				t.Errorf("roadmapPos = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestEpicTitlesCoversWholeSet: the lookup carries every epic bd reported, not only
+// the live ones — a closed epic's title stays reachable for any consumer that wants
+// to name it.
+func TestEpicTitlesCoversWholeSet(t *testing.T) {
+	got := epicTitles([]bd.EpicStatus{
+		{Epic: bd.EpicRef{ID: "e1", Title: "Closed one", Status: bd.StatusClosed}},
+		{Epic: bd.EpicRef{ID: "e2", Title: "Live one", Status: bd.StatusOpen}},
+		{Epic: bd.EpicRef{ID: "e3", Status: bd.StatusOpen}},
+	})
+	if len(got) != 3 || got["e1"] != "Closed one" || got["e2"] != "Live one" || got["e3"] != "" {
+		t.Errorf("epicTitles = %+v, want all three ids with e3 empty", got)
+	}
+}
+
 func TestComputeRowAssemblesEpicsNextAndClaimed(t *testing.T) {
 	src := &fakeSource{
 		issues: []bd.Issue{
@@ -385,16 +440,24 @@ func TestComputeRowAssemblesEpicsNextAndClaimed(t *testing.T) {
 			{ID: "e2.ip", Parent: "e2", Status: bd.StatusInProgress, Priority: new(0)}, // rung 1 winner
 		},
 		epics: []bd.EpicStatus{
-			{Epic: bd.EpicRef{ID: "e2", Status: bd.StatusOpen}, TotalChildren: 2, ClosedChildren: 0},
+			{Epic: bd.EpicRef{ID: "e2", Title: "Second epic", Status: bd.StatusOpen}, TotalChildren: 2, ClosedChildren: 0},
 		},
 	}
-	root := writeRoadmapDir(t, "## Epics\n1. Title → e2\n")
+	// e1 is on the roadmap but absent from the EpicStatus set (a ghost id), so the
+	// live list starts at e2 while the roadmap position still counts e1: 2 of 2.
+	root := writeRoadmapDir(t, "## Epics\n1. First → e1\n2. Title → e2\n")
 	row, err := computeRow(context.Background(), src, root)
 	if err != nil {
 		t.Fatalf("computeRow: %v", err)
 	}
 	if len(row.Epics) != 1 || row.Epics[0].ID != "e2" || row.Epics[0].BO != 1 {
 		t.Errorf("Epics = %+v, want one e2 row with bo=1", row.Epics)
+	}
+	if len(row.Epics) == 1 && row.Epics[0].Title != "Second epic" {
+		t.Errorf("Epics[0].Title = %q, want %q — carried from the EpicStatus read", row.Epics[0].Title, "Second epic")
+	}
+	if row.Roadmap == nil || row.Roadmap.K != 2 || row.Roadmap.N != 2 {
+		t.Errorf("Roadmap = %+v, want k=2 n=2 — the current epic's slot among ALL roadmap ids", row.Roadmap)
 	}
 	if row.Next == nil || row.Next.ID != "e2.ip" || row.Next.Reason != "claimed" {
 		t.Errorf("Next = %+v, want e2.ip/claimed", row.Next)
@@ -426,6 +489,9 @@ func TestComputeRowEpicStatusFailureDegradesEpicsAndNext(t *testing.T) {
 	if row.Next == nil || row.Next.ID != "b1" || row.Next.Reason != "waiting-on-dk" {
 		t.Errorf("Next = %+v, want b1/waiting-on-dk — rung 3 is still reachable without epic info", row.Next)
 	}
+	if row.Roadmap != nil {
+		t.Errorf("Roadmap = %+v, want nil on EpicStatus failure — no current epic to place", row.Roadmap)
+	}
 }
 
 // --- JSON shape: additive fields, explicit null, existing keys untouched ---
@@ -443,7 +509,7 @@ func TestRowJSONShapeExplicitNulls(t *testing.T) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	for _, key := range []string{"epics", "next", "claimed"} {
+	for _, key := range []string{"epics", "next", "claimed", "roadmap"} {
 		raw, ok := m[key]
 		if !ok {
 			t.Fatalf("key %q missing from JSON, want present as explicit null", key)
@@ -469,9 +535,10 @@ func TestRowJSONShapeExplicitNulls(t *testing.T) {
 // TestRowJSONShapePopulated: a populated Row round-trips epics/next/claimed intact.
 func TestRowJSONShapePopulated(t *testing.T) {
 	row := Row{
-		Epics:   []EpicRow{{ID: "e1", BH: 1}},
+		Epics:   []EpicRow{{ID: "e1", Title: "Epic one", BH: 1}},
 		Next:    &Next{ID: "n1", Title: "t", Reason: "claimed"},
 		Claimed: &Ref{ID: "n1", Title: "t"},
+		Roadmap: &RoadmapPos{K: 2, N: 7},
 	}
 	b, err := json.Marshal(row)
 	if err != nil {
@@ -481,8 +548,11 @@ func TestRowJSONShapePopulated(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(got.Epics) != 1 || got.Epics[0].ID != "e1" {
+	if len(got.Epics) != 1 || got.Epics[0].ID != "e1" || got.Epics[0].Title != "Epic one" {
 		t.Errorf("Epics round-trip = %+v", got.Epics)
+	}
+	if got.Roadmap == nil || got.Roadmap.K != 2 || got.Roadmap.N != 7 {
+		t.Errorf("Roadmap round-trip = %+v, want k=2 n=7", got.Roadmap)
 	}
 	if got.Next == nil || got.Next.Reason != "claimed" {
 		t.Errorf("Next round-trip = %+v", got.Next)
