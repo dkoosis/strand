@@ -246,9 +246,12 @@ type EpicStatus struct {
 	ClosedChildren int     `json:"closed_children"`
 }
 
-// EpicRef is the epic identity inside an EpicStatus row.
+// EpicRef is the epic identity inside an EpicStatus row. Title is bd's own epic
+// title, carried so a consumer naming an epic doesn't re-read the DAG for it —
+// counts' epics[] rows render it (sd-3wp.2).
 type EpicRef struct {
 	ID     string `json:"id"`
+	Title  string `json:"title"`
 	Status Status `json:"status"`
 }
 
