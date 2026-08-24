@@ -32,3 +32,6 @@
 .claude/commands/
 .claude/skills/
 .claude/scheduled_tasks.lock
+
+# bd audit residue: passive re-export, Dolt is source of truth
+.beads/interactions.jsonl
