@@ -235,11 +235,61 @@ func h2Name(ln string) string {
 	return strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(ln), "#"))
 }
 
-// NorthStarFile is the repo-root file strand reads the masthead's North Star
-// from — the same NORTH_STAR.md the wrap SessionStart hook greps its ★ line
-// from (st-y0a: one destination doc, every reader on the same file; supersedes
-// the north-star-mini.md of decision nug 952acad4aca2).
+// NorthStarFile is the file strand reads the masthead's North Star from — the
+// same NORTH_STAR.md the wrap SessionStart hook greps its ★ line from (st-y0a:
+// one destination doc, every reader on the same file; supersedes the
+// north-star-mini.md of decision nug 952acad4aca2). directionDoc says which
+// directory it is read from.
 const NorthStarFile = "NORTH_STAR.md"
+
+// DocsDir is where the sdlc standard keeps a repo's direction docs since
+// decision d9cd0e20868b (2026-09-02): the repo root is minimal, so ROADMAP.md
+// and NORTH_STAR.md live under docs/.
+const DocsDir = "docs"
+
+// directionDoc resolves one direction document for a repo: docs/<name> when that
+// copy is there, the repo root otherwise. The returned path is not promised to
+// exist — with neither copy present it names docs/<name>, the standard location,
+// so a caller rendering a "add this file" hint points at where the file belongs
+// rather than where an old one used to sit.
+//
+// ‡ sd-mzgy.8: the ROOT leg is a TEMPORARY fallback for the fleet sweep in
+// flight. sd-mzgy.3 moves these two files one repo at a time, so a swept repo
+// and an unswept repo must both render. Delete the root leg — and this
+// paragraph — when sd-mzgy.3 closes.
+//
+// Precedence is by file kind first and directory second, matching sdlc's
+// roadmap_file() (plugins/sdlc/scripts/lib/roadmap-epics.sh, sd-mzgy.1): a root
+// ROADMAP.md outranks a docs/NORTH_STAR.md, because the legacy pointer is the
+// last resort in either directory.
+func directionDoc(repoPath, name string) string {
+	docs := filepath.Join(repoPath, DocsDir, name)
+	if exists(docs) {
+		return docs
+	}
+	if root := filepath.Join(repoPath, name); exists(root) {
+		return root
+	}
+	return docs
+}
+
+// exists reports whether path is there at all — a stat, not a read, so an
+// unreadable file still resolves and the caller's own ReadFile owns the error.
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// NorthStarPath is the file NorthStar reads for a repo, resolved through
+// directionDoc. The masthead's empty state renders it as "add <path>", so it
+// names docs/NORTH_STAR.md when the repo carries neither copy. Empty repoPath
+// yields "" — the same no-repo answer NorthStar gives.
+func NorthStarPath(repoPath string) string {
+	if repoPath == "" {
+		return ""
+	}
+	return directionDoc(repoPath, NorthStarFile)
+}
 
 // NorthStar returns the masthead North Star for a repo: the first ★-marked line
 // of NORTH_STAR.md (marker stripped) plus any immediately following lines up to
@@ -252,17 +302,17 @@ func NorthStar(repoPath string) string {
 	if repoPath == "" {
 		return ""
 	}
-	b, err := os.ReadFile(filepath.Join(repoPath, NorthStarFile))
+	b, err := os.ReadFile(NorthStarPath(repoPath))
 	if err != nil {
 		return ""
 	}
 	return northStarBlock(string(b))
 }
 
-// RoadmapFile is the repo-root file holding the project's destination line and its
-// ordered epic list — the sdlc standard (home/rules/sdlc.md §The standard,
+// RoadmapFile is the file holding the project's destination line and its ordered
+// epic list — the sdlc standard (home/rules/sdlc.md §The standard,
 // .claude/rules/vocabulary.md, ratified 2026-08-17). Resolved before the legacy
-// NorthStarFile pointer.
+// NorthStarFile pointer; directionDoc says which directory it is read from.
 const RoadmapFile = "ROADMAP.md"
 
 // Roadmap returns the repo's roadmap-ordered epic ids — the Go twin of
@@ -272,7 +322,8 @@ const RoadmapFile = "ROADMAP.md"
 // from Go is this bead's explicit non-goal, st-3wp.1). It is decision-owned order,
 // not status; strand's station bar and pickNext walk it against the live epic DAG.
 //
-// Resolution: $repoPath/ROADMAP.md, else the legacy $repoPath/NORTH_STAR.md.
+// Resolution: ROADMAP.md, else the legacy NORTH_STAR.md, each read through
+// directionDoc — docs/ first, the repo root as the sweep-window fallback.
 //
 // ROADMAP.md format: numbered lines carrying an arrow inside a `## Epics` section
 // (legacy `## Milestones`/`## Route` headings tolerated) —
@@ -293,10 +344,10 @@ func Roadmap(repoPath string) []string {
 	if repoPath == "" {
 		return nil
 	}
-	if b, err := os.ReadFile(filepath.Join(repoPath, RoadmapFile)); err == nil {
+	if b, err := os.ReadFile(directionDoc(repoPath, RoadmapFile)); err == nil {
 		return roadmapEpicIDs(string(b))
 	}
-	b, err := os.ReadFile(filepath.Join(repoPath, NorthStarFile))
+	b, err := os.ReadFile(directionDoc(repoPath, NorthStarFile))
 	if err != nil {
 		return nil
 	}

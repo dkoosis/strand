@@ -12,7 +12,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -2137,7 +2136,7 @@ func (s *Server) synFor(repo registry.Repo) strand.Synthesis {
 	syn := s.syn
 	syn.Project = repo.Name
 	syn.NorthStar = s.northStarFor(repo)
-	syn.NorthStarPath = filepath.Join(repo.Path, strandmd.NorthStarFile)
+	syn.NorthStarPath = strandmd.NorthStarPath(repo.Path)
 	syn.JTBD = jtbd.Load(repo.Path)
 	return syn
 }
@@ -2147,7 +2146,8 @@ func (s *Server) synFor(repo registry.Repo) strand.Synthesis {
 // docs/jtbd.md read on every call (JTBD stays inline-cited, never fetched). A
 // non-empty s.syn.NorthStar is the --northstar flag and wins; with no flag the
 // active repo's NORTH_STAR.md ★ line is read (st-y0a — one destination doc,
-// shared with the wrap SessionStart hook). Missing file or no ★ line → "".
+// shared with the wrap SessionStart hook) from docs/ or, while the fleet sweep
+// runs, the repo root (sd-mzgy.8). Missing file or no ★ line → "".
 func (s *Server) northStarFor(repo registry.Repo) string {
 	if s.syn.NorthStar != "" {
 		return s.syn.NorthStar

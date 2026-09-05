@@ -47,8 +47,9 @@ type Row struct {
 	TS     int64  `json:"ts"`
 	// Epics is one ◆○◐● bucket row per live (non-closed) roadmap epic, roadmap
 	// order, epics[0] = the current epic. nil → JSON null when the repo has no
-	// roadmap or no live epic (no ROADMAP.md/NORTH_STAR.md, all-ghost ids, or every
-	// roadmap epic closed) — never an error.
+	// roadmap or no live epic (no ROADMAP.md/NORTH_STAR.md in docs/ or at the repo
+	// root — strandmd.Roadmap owns that resolution, sd-mzgy.8 — all-ghost ids, or
+	// every roadmap epic closed) — never an error.
 	Epics []EpicRow `json:"epics"`
 	// Next is the what's-next cascade's pick (pickNext), or nil when every rung is
 	// empty.
