@@ -1,8 +1,10 @@
-// Package bdcounts reads the shared bead-count cache that the off-render launchd
-// agent com.trixi.bd-counts writes (cc-plugins: plugins/wrap/scripts/bd-counts-refresh.sh).
-// That agent is the ONE place bead counts are derived; the Claude Code status line
-// and strand's masthead pulse are both dumb readers of the same file, so the two
-// surfaces can never disagree (st-p1f).
+// Package bdcounts reads the shared bead-count cache that beadwatch (repo
+// github.com/dkoosis/beadwatch, binary ~/go/bin/beadwatch) writes off the render
+// path, run by launchd agent com.trixi.beadwatch. beadwatch is the ONE place bead
+// counts are derived; the Claude Code status line and strand's masthead pulse are
+// both dumb readers of the same file, so the two surfaces can never disagree
+// (st-p1f). History: the writer used to be strand counts via com.trixi.bd-counts
+// (cc-plugins: plugins/wrap/scripts/bd-counts-refresh.sh); both retired 2026-09-06.
 //
 // The file is a JSON object keyed by each repo's absolute root path:
 //
@@ -29,16 +31,16 @@ import (
 // changed."
 const MetaKey = "_meta"
 
-// RefreshInterval is the cadence the launchd agent com.trixi.bd-counts fires `strand
-// counts` at — the ONE source of that number on the strand side, mirroring the plist's
-// StartInterval (cc-plugins: plugins/wrap/scripts/bd-counts-install.sh, <integer>120).
+// RefreshInterval is the cadence the launchd agent com.trixi.beadwatch fires
+// beadwatch at — the ONE source of that number on the strand side, mirroring the
+// plist's StartInterval (beadwatch: scripts/tool-install-launchd.sh, <integer>120).
 // Staleness is judged against 2× this: a single missed tick is normal jitter, two is a
 // refresher that stopped.
 const RefreshInterval = 120 * time.Second
 
 // Meta is the refresher's liveness stamp, written under MetaKey. LastRun is the unix
-// second the last `strand counts` run finished; Version is the binary that wrote it,
-// so a stale ~/go/bin/strand reintroducing predicate drift (B2) is legible in the file.
+// second the last beadwatch run finished; Version is the binary that wrote it, so a
+// stale ~/go/bin/beadwatch reintroducing predicate drift (B2) is legible in the file.
 type Meta struct {
 	LastRun int64  `json:"lastRun"`
 	Version string `json:"version"`
@@ -86,7 +88,7 @@ type Reader struct {
 
 // NewReader points at the production cache: $BD_COUNTS_CACHE_DIR/counts.json, or
 // ~/.cache/cc-dashboard/counts.json when the env var is unset — the same location
-// bd-counts-refresh.sh writes.
+// beadwatch writes.
 func NewReader() *Reader {
 	return &Reader{path: defaultPath()}
 }
