@@ -20,7 +20,7 @@ func TestDefaultRefreshCountsExecsBeadwatchWithRepoPath(t *testing.T) {
 	dir := t.TempDir()
 	argvFile := filepath.Join(dir, "argv.txt")
 	script := "#!/bin/sh\necho \"$@\" > " + argvFile + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "beadwatch"), []byte(script), 0o755); err != nil { //nolint:gosec // test-only executable stub
+	if err := os.WriteFile(filepath.Join(dir, "beadwatch"), []byte(script), 0o755); err != nil {
 		t.Fatalf("write beadwatch stub: %v", err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
