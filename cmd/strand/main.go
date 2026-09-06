@@ -143,6 +143,11 @@ func serve(ctx context.Context, httpSrv *http.Server, ln net.Listener) error {
 	return nil
 }
 
+// errUnknownArgument is the static sentinel behind unexpectedArgs' message —
+// the offending argument is appended dynamically via %w, not baked into a
+// freshly-allocated error each call.
+var errUnknownArgument = errors.New("strand: unknown argument")
+
 // unexpectedArgs rejects a leftover positional argument after flag.Parse — strand
 // takes no subcommands, so a stray word (e.g. the retired `counts`) is a mistake
 // worth failing on rather than silently ignoring.
@@ -150,7 +155,7 @@ func unexpectedArgs(args []string) error {
 	if len(args) == 0 {
 		return nil
 	}
-	return fmt.Errorf("strand: unknown argument %q (strand takes no subcommands)", args[0])
+	return fmt.Errorf("%w: %q (strand takes no subcommands)", errUnknownArgument, args[0])
 }
 
 // seedDir resolves the workspace to seed at launch: the -dir flag if set, else

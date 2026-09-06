@@ -24,10 +24,6 @@ func layout(t *testing.T, files map[string]string) string {
 	return dir
 }
 
-func epicsDoc(id string) string {
-	return "★ destination\n\n## Epics\n\n1. [ ] the epic → " + id + "\n"
-}
-
 // TestNorthStarResolvesDocsDirFirst: the masthead ★ follows the same two
 // locations as the roadmap, so a swept repo keeps its destination line.
 func TestNorthStarResolvesDocsDirFirst(t *testing.T) {
