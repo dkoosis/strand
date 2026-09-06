@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
-	"github.com/dkoosis/strand/internal/counts"
 	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/internal/server"
 	"github.com/dkoosis/strand/internal/strand"
@@ -27,21 +26,19 @@ import (
 var Version = "dev"
 
 func main() {
-	// `strand counts [...]` derives the shared bead-count cache (counts.json) off the
-	// render path and exits — the launchd agent's entry point. It's a subcommand, not
-	// a flag, so it must branch before the server's flag.Parse claims the args.
-	if len(os.Args) > 1 && os.Args[1] == "counts" {
-		if err := counts.Run(os.Args[2:], Version); err != nil {
-			log.Fatalf("strand counts: %v", err)
-		}
-		return
-	}
-
 	addr := flag.String("addr", "127.0.0.1:7777", "address to listen on")
 	dir := flag.String("dir", "", "seed this beads workspace into the registry and make it active")
 	bin := flag.String("bd", "bd", "path to the bd binary")
 	northStar := flag.String("northstar", "", "north-star line shown above the strand")
 	flag.Parse()
+
+	// strand carries no subcommands (the `counts` one was extracted to the standalone
+	// beadwatch binary, bw-onx): a leftover positional argument is a mistake, not a
+	// silent no-op, so it's refused the same way an unrecognized flag would be.
+	if err := unexpectedArgs(flag.Args()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 
 	tmpl, err := web.Templates()
 	if err != nil {
@@ -144,6 +141,16 @@ func serve(ctx context.Context, httpSrv *http.Server, ln net.Listener) error {
 	// goroutine to finish draining before returning, so in-flight requests land.
 	<-shutdownDone
 	return nil
+}
+
+// unexpectedArgs rejects a leftover positional argument after flag.Parse — strand
+// takes no subcommands, so a stray word (e.g. the retired `counts`) is a mistake
+// worth failing on rather than silently ignoring.
+func unexpectedArgs(args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	return fmt.Errorf("strand: unknown argument %q (strand takes no subcommands)", args[0])
 }
 
 // seedDir resolves the workspace to seed at launch: the -dir flag if set, else
