@@ -8,8 +8,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dkoosis/atomicfile v0.0.0-20260811102456-9091c28d4820 h1:x7UDk0isvTYxv8obfKfrancH99VtIJRZ3StZ9izJlvU=
 github.com/dkoosis/atomicfile v0.0.0-20260811102456-9091c28d4820/go.mod h1:6wCWesghtzLYJ0IjlbbddyTCU8ZowoiIUzcy4Qi9fDc=
-github.com/dkoosis/beadwatch v0.0.0-20260906200344-9e78d85256bd h1:9bp9CvJQS0ELXtYpgh+40ILAOQs8F0We8vY/jvaLwXc=
-github.com/dkoosis/beadwatch v0.0.0-20260906200344-9e78d85256bd/go.mod h1:ej/vRzMnCY5bUKpF6jZRDlrpsuIRgsStYDvKcsDzJnI=
+github.com/dkoosis/beadwatch v0.0.0-20260907034816-4486ef37c03f h1:lsIS6Dzb2sdOe4qzlsjZ5Ce5wTFjgIKebKkcKA20e1k=
+github.com/dkoosis/beadwatch v0.0.0-20260907034816-4486ef37c03f/go.mod h1:ej/vRzMnCY5bUKpF6jZRDlrpsuIRgsStYDvKcsDzJnI=
 github.com/dkoosis/conform-to-sdlc v0.3.2 h1:ycK/sz0qkekePD5dRNsH5YbJTmuA463Wh507pZ+boMI=
 github.com/dkoosis/conform-to-sdlc v0.3.2/go.mod h1:p5Nu8EntCJQ1k4yqTlAUDYRpdvpkebWjLcPJCVUgKlM=
 github.com/dnaeon/go-vcr v1.2.0 h1:zHCHvJYTMh1N7xnV7zf1m1GPBF9Ad0Jk/whtQ1663qI=
