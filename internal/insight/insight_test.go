@@ -66,7 +66,7 @@ func insScope(t *testing.T) ([]strand.Bead, map[string]bd.Issue) {
 // in-progress and stale are split out, and Total counts only live beads.
 func TestTriageCounts(t *testing.T) {
 	beads, idx := insScope(t)
-	got := triage(beads, blockerCounts(insightsDeps, idx), idx, insightsNow)
+	got := triage(beads, blockerCounts(insightsDeps, idx), humanGateBlocked(insightsDeps, idx), idx, insightsNow)
 	want := Counts{Total: 5, Open: 4, InProgress: 1, Ready: 2, Blocked: 2, Stale: 1}
 	if got != want {
 		t.Errorf("triage = %+v, want %+v", got, want)
@@ -79,7 +79,7 @@ func TestTriageAbsentBlockerIsResolved(t *testing.T) {
 	beads, idx := insScope(t)
 	deps := append(append([]bd.DepEdge(nil), insightsDeps...),
 		bd.DepEdge{IssueID: "demo-i.1", DependsOnID: "demo-gone", Type: "blocks"})
-	got := triage(beads, blockerCounts(deps, idx), idx, insightsNow)
+	got := triage(beads, blockerCounts(deps, idx), humanGateBlocked(deps, idx), idx, insightsNow)
 	if got.Ready != 2 || got.Blocked != 2 {
 		t.Errorf("absent blocker changed triage: ready=%d blocked=%d, want 2/2", got.Ready, got.Blocked)
 	}
@@ -90,7 +90,7 @@ func TestTriageAbsentBlockerIsResolved(t *testing.T) {
 func TestTriageExplicitlyBlocked(t *testing.T) {
 	beads := []strand.Bead{{ID: "b1", Status: bd.StatusBlocked}}
 	idx := map[string]bd.Issue{"b1": {ID: "b1", Status: bd.StatusBlocked}}
-	got := triage(beads, blockerCounts(nil, idx), idx, insightsNow)
+	got := triage(beads, blockerCounts(nil, idx), humanGateBlocked(nil, idx), idx, insightsNow)
 	if got.Total != 1 || got.Blocked != 1 {
 		t.Errorf("explicitly blocked bead: got %+v, want Total=1 Blocked=1", got)
 	}
@@ -282,7 +282,7 @@ func TestReadyQueue(t *testing.T) {
 	}
 	m := graph.Compute([]string{"demo-i.1", "demo-i.2", "demo-i.3", "demo-i.4", "demo-i.5"}, edges)
 	frees, down := downstreamReach(edges, beads)
-	q := readyQueue(beads, blockerCounts(insightsDeps, idx), idx, m.PageRank, frees, down, insightsNow)
+	q := readyQueue(beads, blockerCounts(insightsDeps, idx), humanGateBlocked(insightsDeps, idx), idx, m.PageRank, frees, down, insightsNow)
 	ids := make([]string, len(q))
 	for i := range q {
 		ids[i] = q[i].ID
@@ -469,24 +469,29 @@ func beadIDs(bs []strand.Bead) []string {
 }
 
 // TestHumanGate pins the classifier: a "human" label is a decision, a string
-// "true" (or bool true) review_needed is a review, and a bead carrying both is a
-// decision (the stronger "needs a human call" signal) so the lane never double-counts.
+// "true" (or bool true) review_needed is a review, an open bd human gate (st-ax8) is
+// a decision even with no label at all, and a bead carrying multiple decision/review
+// signals is a decision (the stronger "needs a human call" signal) so the lane never
+// double-counts it.
 func TestHumanGate(t *testing.T) {
 	cases := []struct {
 		name                     string
 		iss                      bd.Issue
+		gated                    bool
 		wantDecision, wantReview bool
 	}{
-		{"plain", bd.Issue{ID: "a"}, false, false},
-		{"label human", bd.Issue{Labels: []string{"core", "human"}}, true, false},
-		{"review string true", bd.Issue{Metadata: map[string]any{"review_needed": "true"}}, false, true},
-		{"review bool true", bd.Issue{Metadata: map[string]any{"review_needed": true}}, false, true},
-		{"review false", bd.Issue{Metadata: map[string]any{"review_needed": "false"}}, false, false},
-		{"both decision wins", bd.Issue{Labels: []string{"human"}, Metadata: map[string]any{"review_needed": "true"}}, true, false},
+		{"plain", bd.Issue{ID: "a"}, false, false, false},
+		{"label human", bd.Issue{Labels: []string{"core", "human"}}, false, true, false},
+		{"review string true", bd.Issue{Metadata: map[string]any{"review_needed": "true"}}, false, false, true},
+		{"review bool true", bd.Issue{Metadata: map[string]any{"review_needed": true}}, false, false, true},
+		{"review false", bd.Issue{Metadata: map[string]any{"review_needed": "false"}}, false, false, false},
+		{"both decision wins", bd.Issue{Labels: []string{"human"}, Metadata: map[string]any{"review_needed": "true"}}, false, true, false},
+		{"gate alone (no label)", bd.Issue{ID: "b"}, true, true, false},
+		{"gate beats review", bd.Issue{Metadata: map[string]any{"review_needed": "true"}}, true, true, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			d, r := humanGate(&c.iss)
+			d, r := humanGate(&c.iss, c.gated)
 			if d != c.wantDecision || r != c.wantReview {
 				t.Errorf("humanGate = (%v,%v), want (%v,%v)", d, r, c.wantDecision, c.wantReview)
 			}
@@ -494,11 +499,78 @@ func TestHumanGate(t *testing.T) {
 	}
 }
 
+// TestIsHumanGateIssue: only an OPEN gate issue awaiting "human" counts — a closed
+// one has been resolved, a non-gate issue_type or a non-human await_type doesn't
+// qualify, and a nil issue is defensively false.
+func TestIsHumanGateIssue(t *testing.T) {
+	cases := []struct {
+		name string
+		iss  *bd.Issue
+		want bool
+	}{
+		{"nil", nil, false},
+		{"open human gate", &bd.Issue{IssueType: "gate", AwaitType: "human", Status: bd.StatusOpen}, true},
+		{"closed human gate", &bd.Issue{IssueType: "gate", AwaitType: "human", Status: bd.StatusClosed}, false},
+		{"timer gate", &bd.Issue{IssueType: "gate", AwaitType: "timer", Status: bd.StatusOpen}, false},
+		{"non-gate issue", &bd.Issue{IssueType: "task", AwaitType: "human", Status: bd.StatusOpen}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isHumanGateIssue(c.iss); got != c.want {
+				t.Errorf("isHumanGateIssue = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestHumanGateBlockedAndBlockerCounts pins the st-ax8 split: an open human gate
+// blocking a bead routes it to gateBlocked and is EXCLUDED from openBlockers (it's
+// the human's job, not a dependency to wait out); a timer gate and a plain blocker
+// both still count as ordinary blockers; a closed human gate blocks nothing.
+func TestHumanGateBlockedAndBlockerCounts(t *testing.T) {
+	idx := map[string]bd.Issue{
+		"humangate":  {ID: "humangate", IssueType: "gate", AwaitType: "human", Status: bd.StatusOpen},
+		"closedgate": {ID: "closedgate", IssueType: "gate", AwaitType: "human", Status: bd.StatusClosed},
+		"timergate":  {ID: "timergate", IssueType: "gate", AwaitType: "timer", Status: bd.StatusOpen},
+		"plain":      {ID: "plain", Status: bd.StatusOpen},
+	}
+	deps := []bd.DepEdge{
+		{IssueID: "onlygated", DependsOnID: "humangate", Type: "blocks"},
+		{IssueID: "onlyresolved", DependsOnID: "closedgate", Type: "blocks"},
+		{IssueID: "timerblocked", DependsOnID: "timergate", Type: "blocks"},
+		{IssueID: "depblocked", DependsOnID: "plain", Type: "blocks"},
+	}
+
+	gateBlocked := humanGateBlocked(deps, idx)
+	if !gateBlocked["onlygated"] {
+		t.Error("onlygated should carry an open human gate")
+	}
+	for _, id := range []string{"onlyresolved", "timerblocked", "depblocked"} {
+		if gateBlocked[id] {
+			t.Errorf("gateBlocked[%q] = true, want false", id)
+		}
+	}
+
+	open := blockerCounts(deps, idx)
+	if open["onlygated"] != 0 {
+		t.Errorf("open human gate must not count as a blocker, got %d", open["onlygated"])
+	}
+	if open["timerblocked"] != 1 {
+		t.Errorf("timer gate should still count as a blocker, got %d", open["timerblocked"])
+	}
+	if open["depblocked"] != 1 {
+		t.Errorf("plain dependency should still count as a blocker, got %d", open["depblocked"])
+	}
+	if open["onlyresolved"] != 0 {
+		t.Errorf("closed gate should not count as a blocker, got %d", open["onlyresolved"])
+	}
+}
+
 // TestReadyQueueExcludesHumanGated: a human-gated bead (decision or review) is not
 // genuinely claimable, so it must not appear in the dispatch queue; the plain bead does.
 func TestReadyQueueExcludesHumanGated(t *testing.T) {
 	beads, idx := gateScope()
-	q := readyQueue(beads, blockerCounts(nil, idx), idx, map[string]float64{}, nil, nil, insightsNow)
+	q := readyQueue(beads, blockerCounts(nil, idx), humanGateBlocked(nil, idx), idx, map[string]float64{}, nil, nil, insightsNow)
 	if got := rankedIDs(q); !slices.Equal(got, []string{"plain"}) {
 		t.Errorf("ready queue = %v, want [plain] (human-gated excluded)", got)
 	}
@@ -507,7 +579,7 @@ func TestReadyQueueExcludesHumanGated(t *testing.T) {
 // TestWaitingLane: the lane surfaces the excluded beads, sub-grouped decision-vs-review.
 func TestWaitingLane(t *testing.T) {
 	beads, idx := gateScope()
-	w := waitingLane(beads, nil, idx)
+	w := waitingLane(beads, nil, humanGateBlocked(nil, idx), idx)
 	if got := beadIDs(w.Decision); !slices.Equal(got, []string{"decision"}) {
 		t.Errorf("waiting.Decision = %v, want [decision]", got)
 	}
@@ -527,11 +599,12 @@ func TestBlockedHumanGatedStaysBlocked(t *testing.T) {
 	beads := []strand.Bead{{ID: "bg", Status: bd.StatusOpen}}
 	idx := map[string]bd.Issue{"bg": {ID: "bg", Status: bd.StatusOpen, Labels: []string{"human"}}}
 	openBlockers := map[string]int{"bg": 1}
+	gateBlocked := humanGateBlocked(nil, idx)
 
-	if c := triage(beads, openBlockers, idx, insightsNow); c.Blocked != 1 || c.WaitingOnYou != 0 || c.Ready != 0 {
+	if c := triage(beads, openBlockers, gateBlocked, idx, insightsNow); c.Blocked != 1 || c.WaitingOnYou != 0 || c.Ready != 0 {
 		t.Errorf("triage = %+v, want Blocked=1 WaitingOnYou=0 Ready=0", c)
 	}
-	if w := waitingLane(beads, openBlockers, idx); w.Any() {
+	if w := waitingLane(beads, openBlockers, gateBlocked, idx); w.Any() {
 		t.Errorf("waitingLane surfaced a blocked bead: %+v", w)
 	}
 }
@@ -540,7 +613,7 @@ func TestBlockedHumanGatedStaysBlocked(t *testing.T) {
 // count and lands in WaitingOnYou instead — the ready column means claimable work.
 func TestTriageDivertsToWaiting(t *testing.T) {
 	beads, idx := gateScope()
-	got := triage(beads, blockerCounts(nil, idx), idx, insightsNow)
+	got := triage(beads, blockerCounts(nil, idx), humanGateBlocked(nil, idx), idx, insightsNow)
 	if got.Ready != 1 || got.WaitingOnYou != 2 {
 		t.Errorf("triage Ready=%d WaitingOnYou=%d, want 1/2", got.Ready, got.WaitingOnYou)
 	}
@@ -563,6 +636,54 @@ func TestComputeSurfacesWaitingLane(t *testing.T) {
 	}
 	if got.Counts.WaitingOnYou != 2 {
 		t.Errorf("Compute WaitingOnYou count = %d, want 2", got.Counts.WaitingOnYou)
+	}
+}
+
+// TestLanesHumanGate: an open bd human gate routes its target to LaneWaiting with
+// NO "human" label at all — the whole point of the migration (st-ax8) is that the
+// gate alone is sufficient. A closed gate has been resolved and blocks nothing, so
+// its target reverts to LaneOpen.
+func TestLanesHumanGate(t *testing.T) {
+	issues := []bd.Issue{
+		{ID: "gate-open", IssueType: "gate", AwaitType: "human", Status: bd.StatusOpen},
+		{ID: "gate-closed", IssueType: "gate", AwaitType: "human", Status: bd.StatusClosed},
+		{ID: "onlygated", Status: bd.StatusOpen},
+		{ID: "resolved", Status: bd.StatusOpen},
+	}
+	deps := []bd.DepEdge{
+		{IssueID: "onlygated", DependsOnID: "gate-open", Type: "blocks"},
+		{IssueID: "resolved", DependsOnID: "gate-closed", Type: "blocks"},
+	}
+	got := Lanes(issues, deps)
+	if got["onlygated"] != LaneWaiting {
+		t.Errorf("onlygated lane = %v, want LaneWaiting (open human gate, no label)", got["onlygated"])
+	}
+	if got["resolved"] != LaneOpen {
+		t.Errorf("resolved lane = %v, want LaneOpen (gate closed, no longer blocking)", got["resolved"])
+	}
+}
+
+// TestComputeSurfacesGateWaiting drives the public seam end to end with a bead
+// gated ONLY by an open bd human gate (no "human" label, st-ax8): it must leave
+// Ready, land in WaitingOnYou.Decision, and NOT also count as Blocked — the human
+// gate is excluded from openBlockers precisely so it doesn't double-book the lane.
+func TestComputeSurfacesGateWaiting(t *testing.T) {
+	issues := []bd.Issue{
+		{ID: "gate-open", IssueType: "gate", AwaitType: "human", Status: bd.StatusOpen},
+		{ID: "onlygated", Status: bd.StatusOpen, UpdatedAt: insFresh},
+	}
+	beads := []strand.Bead{{ID: "onlygated", Status: bd.StatusOpen}}
+	deps := []bd.DepEdge{{IssueID: "onlygated", DependsOnID: "gate-open", Type: "blocks"}}
+
+	got := Compute(beads, issues, deps, insightsNow)
+	if ids := rankedIDs(got.Ready); slices.Contains(ids, "onlygated") {
+		t.Errorf("Compute ready leaked a gate-blocked bead: %v", ids)
+	}
+	if !slices.Contains(beadIDs(got.WaitingOnYou.Decision), "onlygated") {
+		t.Errorf("Compute waiting lane = %+v, want onlygated in Decision", got.WaitingOnYou)
+	}
+	if got.Counts.Blocked != 0 || got.Counts.WaitingOnYou != 1 {
+		t.Errorf("Compute counts = %+v, want Blocked=0 WaitingOnYou=1", got.Counts)
 	}
 }
 

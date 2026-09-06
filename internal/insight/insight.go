@@ -44,8 +44,9 @@ type Counts struct {
 
 // Waiting is the "Waiting on you" lane: open beads kept out of the ready queue
 // because they're parked on a human (str-xdy), sub-grouped by why — a DECISION the
-// human must make (the "human" label, bdx's decision queue) vs. a REVIEW of done
-// work (metadata.review_needed=="true"). A bead carrying both is a decision.
+// human must make (the "human" label, or an open bd human gate — bdx's decision
+// queue, st-ax8) vs. a REVIEW of done work (metadata.review_needed=="true"). A bead
+// carrying both is a decision.
 type Waiting struct {
 	Decision []strand.Bead // label "human": a call only the human can make
 	Review   []strand.Bead // review_needed=="true": done work awaiting the human's review
@@ -86,24 +87,60 @@ const leaderboardSize = 5
 
 // humanLabel is the bd label marking a bead as parked on a human decision — bdx's
 // DECISION queue convention (the human-gate model, cc-plugins bdx/human-gate.md).
+// Superseded going forward by the formal bd gate primitive (gateAwaitHuman) but
+// kept live for beads created before the migration (st-ax8): the two are OR'd,
+// never replaced outright, so nothing currently open goes dark.
 const humanLabel = "human"
 
 // reviewNeededKey is the bd metadata key marking a bead as awaiting human review —
 // bdx's REVIEW queue. bd emits it as the string "true"; bool is tolerated defensively.
 const reviewNeededKey = "review_needed"
 
-// humanGate classifies a bead's human-gate state from its full issue record: a
-// DECISION (carries the "human" label) or a REVIEW (review_needed=="true"). A bead
-// carrying both is a decision — the stronger "needs a human call" signal — so the
-// waiting lane never double-counts it. A bead with neither is neither (claimable).
-func humanGate(iss *bd.Issue) (decision, review bool) {
-	if iss == nil {
-		return false, false
+// issueTypeGate is bd's issue_type value for a gate issue (bd gate create) — an
+// async wait condition that blocks another issue via an ordinary "blocks" dependency
+// edge until it's resolved and closed.
+const issueTypeGate = "gate"
+
+// gateAwaitHuman is the bd gate await_type value for a human decision gate — bd's
+// formal async-gate primitive (Phase 1) superseding the ad hoc "human" label for
+// new work (st-ax8).
+const gateAwaitHuman = "human"
+
+// isHumanGateIssue reports whether iss is an unresolved bd human gate: a "gate"
+// issue awaiting "human", still open. A closed one has already been resolved (bd
+// gate resolve / manual close) and blocks nothing.
+func isHumanGateIssue(iss *bd.Issue) bool {
+	return iss != nil && iss.IssueType == issueTypeGate && iss.AwaitType == gateAwaitHuman && iss.Status != bd.StatusClosed
+}
+
+// humanGateBlocked marks every bead with an open bd human gate blocking it — the
+// "blocks" edges blockerCounts excludes from ordinary blocking (st-ax8) because
+// they route to the waiting lane instead. Shares the same deps+idx scan
+// blockerCounts runs; kept as its own pass so blockerCounts stays a plain tally.
+func humanGateBlocked(deps []bd.DepEdge, idx map[string]bd.Issue) map[string]bool {
+	gated := map[string]bool{}
+	for _, d := range deps {
+		if d.Type != bd.DepBlocks {
+			continue
+		}
+		if gate, ok := idx[d.DependsOnID]; ok && isHumanGateIssue(&gate) {
+			gated[d.IssueID] = true
+		}
 	}
-	if slices.Contains(iss.Labels, humanLabel) {
+	return gated
+}
+
+// humanGate classifies a bead's human-gate state from its full issue record and
+// whether an open bd human gate blocks it (humanGateBlocked, st-ax8): a DECISION
+// (the "human" label, or a human gate) or a REVIEW (review_needed=="true"). A bead
+// carrying both a decision signal and a review signal is a decision — the stronger
+// "needs a human call" signal — so the waiting lane never double-counts it. A bead
+// with neither is neither (claimable).
+func humanGate(iss *bd.Issue, gated bool) (decision, review bool) {
+	if gated || (iss != nil && slices.Contains(iss.Labels, humanLabel)) {
 		return true, false
 	}
-	if reviewNeeded(iss.Metadata) {
+	if iss != nil && reviewNeeded(iss.Metadata) {
 		return false, true
 	}
 	return false, false
@@ -112,8 +149,9 @@ func humanGate(iss *bd.Issue) (decision, review bool) {
 // isHumanGated reports whether a bead is parked on a human (decision or review) —
 // the test that keeps it out of the ready queue and triage's Ready count, and the
 // gate arm of laneOf (the masthead ◆ and the board's waiting column both route here).
-func isHumanGated(iss *bd.Issue) bool {
-	d, r := humanGate(iss)
+// gated is the bead's humanGateBlocked entry — whether an open bd human gate blocks it.
+func isHumanGated(iss *bd.Issue, gated bool) bool {
+	d, r := humanGate(iss, gated)
 	return d || r
 }
 
@@ -150,9 +188,12 @@ func Compute(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge, now time
 	// One blocker scan per request: triage, the ready queue, and both leaderboards
 	// all read the same open-blocker tallies, so compute once and share the map.
 	openBlockers := blockerCounts(deps, idx)
+	// Which beads an open bd human gate blocks (st-ax8) — shared the same way, since
+	// every human-gate consumer below needs it alongside openBlockers.
+	gateBlocked := humanGateBlocked(deps, idx)
 	frees, down := downstreamReach(compEdges, beads)
 	out := Model{
-		Counts:   triage(beads, openBlockers, idx, now),
+		Counts:   triage(beads, openBlockers, gateBlocked, idx, now),
 		CritPath: beadPath(m.CriticalPath, beadByID(beads)),
 		Labels:   labelHealth(beads, idx),
 		Untagged: untaggedOpen(beads, idx),
@@ -160,12 +201,12 @@ func Compute(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge, now time
 	// The dispatch queue: ready beads ranked by influence, so the count→actionable
 	// gap closes (triage says "2 ready"; this says WHICH, most-impactful first). Ranks
 	// even without edges — every ready bead is dispatchable, ordered by PageRank base.
-	out.Ready = readyQueue(beads, openBlockers, idx, m.PageRank, frees, down, now)
+	out.Ready = readyQueue(beads, openBlockers, gateBlocked, idx, m.PageRank, frees, down, now)
 	// The "Waiting on you" lane: the human-gated beads readyQueue just excluded,
 	// grouped decision-vs-review so the parked work has a distinct home (str-xdy).
 	// Shares openBlockers so a blocked+gated bead stays out of the lane — it's blocked,
 	// not yet waiting on the human (codex P2).
-	out.WaitingOnYou = waitingLane(beads, openBlockers, idx)
+	out.WaitingOnYou = waitingLane(beads, openBlockers, gateBlocked, idx)
 	// The leaderboards rank by graph position; with no dependencies every bead ties
 	// at PageRank's base rank, so a ranking would be noise. Show them only with edges.
 	// crossFlag marks the rows that ALSO sit in the blocked/stale sets — the act-now signal.
@@ -226,10 +267,11 @@ func laneOf(status bd.Status, gated, hasBlocker bool) Lane {
 func Lanes(issues []bd.Issue, deps []bd.DepEdge) map[string]Lane {
 	idx := indexIssues(issues)
 	openBlockers := blockerCounts(deps, idx)
+	gateBlocked := humanGateBlocked(deps, idx)
 	lanes := make(map[string]Lane, len(issues))
 	for i := range issues {
 		iss := &issues[i]
-		if l := laneOf(iss.Status, isHumanGated(iss), openBlockers[iss.ID] > 0); l != LaneNone {
+		if l := laneOf(iss.Status, isHumanGated(iss, gateBlocked[iss.ID]), openBlockers[iss.ID] > 0); l != LaneNone {
 			lanes[iss.ID] = l
 		}
 	}
@@ -248,6 +290,7 @@ func Lanes(issues []bd.Issue, deps []bd.DepEdge) map[string]Lane {
 func Classify(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge) (blocked, waiting map[string]bool) {
 	idx := indexIssues(issues)
 	openBlockers := blockerCounts(deps, idx)
+	gateBlocked := humanGateBlocked(deps, idx)
 	blocked = make(map[string]bool)
 	waiting = make(map[string]bool)
 	for i := range beads {
@@ -257,7 +300,7 @@ func Classify(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge) (blocke
 		// idx-miss just means "not gated", never flips the status-derived lane.
 		gated := false
 		if iss, ok := idx[b.ID]; ok {
-			gated = isHumanGated(&iss)
+			gated = isHumanGated(&iss, gateBlocked[b.ID])
 		}
 		switch laneOf(b.Status, gated, openBlockers[b.ID] > 0) {
 		case LaneBlocked:
@@ -332,7 +375,7 @@ func beadByID(beads []strand.Bead) map[string]strand.Bead {
 // triage counts the scope's queue shape. ready/blocked weigh ALL of a bead's
 // blocks-dependencies (resolved against the full-repo index), since a blocker can
 // live outside the visible scope; stale flags live work untouched past the cut.
-func triage(beads []strand.Bead, openBlockers map[string]int, idx map[string]bd.Issue, now time.Time) Counts {
+func triage(beads []strand.Bead, openBlockers map[string]int, gateBlocked map[string]bool, idx map[string]bd.Issue, now time.Time) Counts {
 	var c Counts
 	for i := range beads {
 		b := &beads[i]
@@ -349,7 +392,7 @@ func triage(beads []strand.Bead, openBlockers map[string]int, idx map[string]bd.
 				// human can act, so a blocked+gated bead is Blocked, not waiting — the
 				// same precedence readyQueue already applies (blocker check first).
 				c.Blocked++
-			case isHumanGated(&iss):
+			case isHumanGated(&iss, gateBlocked[b.ID]):
 				// Parked on a human (decision/review) — not claimable, so it leaves
 				// the Ready count and joins the "Waiting on you" lane (str-xdy).
 				c.WaitingOnYou++
@@ -373,15 +416,21 @@ func triage(beads []strand.Bead, openBlockers map[string]int, idx map[string]bd.
 // unmet — the ones keeping it out of the ready queue. A blocker counts only if it's
 // present in the live index AND not closed; an absent target is treated as resolved,
 // since `bd list` omits closed beads (a done dependency simply isn't in the list).
+// An open bd human gate is excluded here (st-ax8): it's still a "blocks" edge, but
+// it routes to the waiting lane via humanGateBlocked/isHumanGated instead of the
+// blocked lane — a human gate is the human's job, not a dependency to wait out.
+// Any other gate type (timer, gh:run, gh:pr, bead) counts as an ordinary blocker.
 func blockerCounts(deps []bd.DepEdge, idx map[string]bd.Issue) map[string]int {
 	open := map[string]int{}
 	for _, d := range deps {
 		if d.Type != bd.DepBlocks {
 			continue
 		}
-		if iss, ok := idx[d.DependsOnID]; ok && iss.Status != bd.StatusClosed {
-			open[d.IssueID]++
+		iss, ok := idx[d.DependsOnID]
+		if !ok || iss.Status == bd.StatusClosed || isHumanGateIssue(&iss) {
+			continue
 		}
+		open[d.IssueID]++
 	}
 	return open
 }
@@ -435,7 +484,7 @@ func rankBoard(board []RankedBead) []RankedBead {
 // It closes the count→actionable gap — triage says how many are ready, this says which.
 // Rows carry the stale cross-flag (a ready bead can still have gone cold); ready beads
 // are by definition not blocked, so Blocked stays false here.
-func readyQueue(beads []strand.Bead, openBlockers map[string]int, idx map[string]bd.Issue, pr map[string]float64, frees map[string]int, down map[string][]strand.Bead, now time.Time) []RankedBead {
+func readyQueue(beads []strand.Bead, openBlockers map[string]int, gateBlocked map[string]bool, idx map[string]bd.Issue, pr map[string]float64, frees map[string]int, down map[string][]strand.Bead, now time.Time) []RankedBead {
 	ready := make([]RankedBead, 0, len(beads))
 	for i := range beads {
 		b := &beads[i]
@@ -445,7 +494,7 @@ func readyQueue(beads []strand.Bead, openBlockers map[string]int, idx map[string
 		// A bead parked on a human (decision/review) isn't claimable work — it
 		// belongs to the "Waiting on you" lane, not the dispatch queue (str-xdy).
 		iss := idx[b.ID]
-		if isHumanGated(&iss) {
+		if isHumanGated(&iss, gateBlocked[b.ID]) {
 			continue
 		}
 		ready = append(ready, RankedBead{
@@ -481,7 +530,8 @@ func readyQueue(beads []strand.Bead, openBlockers map[string]int, idx map[string
 }
 
 // waitingLane gathers the scope's live beads that are parked on a human and groups
-// them by why (str-xdy): a DECISION (label "human") vs. a REVIEW (review_needed).
+// them by why (str-xdy): a DECISION (label "human", or an open bd human gate,
+// st-ax8) vs. a REVIEW (review_needed).
 // These are the beads readyQueue/triage divert out of the ready view, so the "ready
 // column" means genuinely-claimable work and parked beads still have a home. Only
 // open beads are considered — the same live, not-yet-claimed work the ready view
@@ -489,14 +539,14 @@ func readyQueue(beads []strand.Bead, openBlockers map[string]int, idx map[string
 // scope's bead order (priority-then-id, as the strand sorts), so the lane reads stably.
 // A bead with an unmet blocker is left out — it's blocked, not yet waiting on the
 // human (the dependency must clear first), matching readyQueue's precedence (codex P2).
-func waitingLane(beads []strand.Bead, openBlockers map[string]int, idx map[string]bd.Issue) Waiting {
+func waitingLane(beads []strand.Bead, openBlockers map[string]int, gateBlocked map[string]bool, idx map[string]bd.Issue) Waiting {
 	var w Waiting
 	for i := range beads {
 		if beads[i].Status != bd.StatusOpen || openBlockers[beads[i].ID] > 0 {
 			continue
 		}
 		iss := idx[beads[i].ID]
-		switch decision, review := humanGate(&iss); {
+		switch decision, review := humanGate(&iss, gateBlocked[beads[i].ID]); {
 		case decision:
 			w.Decision = append(w.Decision, beads[i])
 		case review:

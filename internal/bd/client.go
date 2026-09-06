@@ -66,8 +66,12 @@ type Issue struct {
 	// and str-zvh closed. Consumers must nil-check: strand.NewBead maps nil to a
 	// sensible default (P2). This mirrors the write path, where CreateOpts.Priority
 	// is already *int because omission is a real option.
-	Priority        *int      `json:"priority"`
-	IssueType       string    `json:"issue_type"`
+	Priority  *int   `json:"priority"`
+	IssueType string `json:"issue_type"`
+	// AwaitType is set only on a gate issue (IssueType=="gate"): what it waits on —
+	// "human", "timer", "gh:run", "gh:pr", or "bead" (bd gate create). insight reads
+	// it to recognize a formal human gate alongside the legacy "human" label (st-ax8).
+	AwaitType       string    `json:"await_type,omitempty"`
 	Parent          string    `json:"parent,omitempty"`
 	Description     string    `json:"description,omitempty"`
 	Design          string    `json:"design,omitempty"`

@@ -318,9 +318,11 @@ func epicBuckets(liveEpics []string, meta map[string]bd.EpicStatus, issues []bd.
 //  2. Else currentEpic's direct children with a LaneOpen lane — a human-gated
 //     child must NOT win here, it belongs to rung 3.
 //  3. Else any LaneWaiting bead repo-wide — insight's ◆ is the human label UNION
-//     review_needed (the ratified human-gate), broader than a bare "labeled
-//     human" filter would be; using anything narrower would reopen the 5-vs-7
-//     drift class laneCounts already fixed at the repo level.
+//     review_needed UNION an open bd human gate (await_type=human, st-ax8; the
+//     label leg stays live for issues created before the migration), broader
+//     than a bare "labeled human" filter would be; using anything narrower
+//     would reopen the 5-vs-7 drift class laneCounts already fixed at the repo
+//     level.
 //  4. Else walk liveEpics[1:] (liveEpics is roadmap-ordered with liveEpics[0] ==
 //     currentEpic, so this IS "the live epics after currentEpic" — when
 //     currentEpic is "" liveEpics is empty too, so this rung naturally yields
