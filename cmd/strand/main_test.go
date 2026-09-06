@@ -81,3 +81,19 @@ func TestServeDrainsInFlight(t *testing.T) {
 		t.Fatal("serve did not return after drain — handshake leaked")
 	}
 }
+
+// TestUnexpectedArgs is the regression for bw-onx: strand dropped its one
+// subcommand (`counts`, extracted to the beadwatch binary) and now carries
+// none, so a leftover positional argument — "counts" included — must be
+// refused rather than silently ignored.
+func TestUnexpectedArgs(t *testing.T) {
+	if err := unexpectedArgs(nil); err != nil {
+		t.Errorf("unexpectedArgs(nil) = %v, want nil", err)
+	}
+	if err := unexpectedArgs([]string{"counts"}); err == nil {
+		t.Error("unexpectedArgs([\"counts\"]) = nil, want an error — counts is no longer a subcommand")
+	}
+	if err := unexpectedArgs([]string{"whatever"}); err == nil {
+		t.Error("unexpectedArgs([\"whatever\"]) = nil, want an error for any stray argument")
+	}
+}

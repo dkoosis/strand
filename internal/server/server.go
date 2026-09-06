@@ -12,6 +12,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,7 +22,6 @@ import (
 
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/bdcounts"
-	"github.com/dkoosis/strand/internal/counts"
 	"github.com/dkoosis/strand/internal/insight"
 	"github.com/dkoosis/strand/internal/jtbd"
 	"github.com/dkoosis/strand/internal/llm"
@@ -147,6 +148,10 @@ type Server struct {
 	// already-conformant beads — but logging per request would spam every drawer open,
 	// so it fires once per process.
 	noKeyOnce sync.Once
+	// beadwatchOnce logs the "beadwatch binary not found" warning a single time,
+	// mirroring noKeyOnce: a repo with no beadwatch installed would otherwise spam
+	// this on every write instead of once per process.
+	beadwatchOnce sync.Once
 
 	// Lifecycle for detached background work (the Insights deps prefetch). bgCtx
 	// roots every goBackground context so Stop can cancel them; bgWG tracks the
@@ -244,26 +249,53 @@ func (s *Server) goBackground(timeout time.Duration, fn func(context.Context)) {
 	})
 }
 
-// defaultRefreshCounts is the production refreshCounts: it reruns `strand counts`
-// for exactly this repo (modeExplicit — always recomputes, ignoring the
-// mtime-changed skip, since the write that triggered this call just changed the
-// mtime and there's no reason to depend on winning that race) in a goroutine
-// tracked by goBackground, so counts.json — and therefore the masthead's next
-// poll and the status line (st-p1f) — catch up with strand's own write within
-// seconds. A failure is logged, not surfaced: the write itself already
-// succeeded, and a stale count self-heals on the next poll or the next launchd
-// cycle either way.
+// defaultRefreshCounts is the production refreshCounts: it execs the beadwatch
+// binary for exactly this repo (a bare repo root is an explicit target — no
+// --all) in a goroutine tracked by goBackground, so counts.json — and therefore
+// the masthead's next poll and the status line (st-p1f) — catch up with strand's
+// own write within seconds. strand no longer computes the row itself (bw-onx);
+// it only asks the standalone beadwatch binary to. A failure is logged, not
+// surfaced: the write itself already succeeded, and a stale count self-heals on
+// the next poll or the next launchd cycle either way. An unresolvable beadwatch
+// binary logs once per process and skips — the row simply stays last-good until
+// beadwatch is installed.
 //
-// It runs on goBackground's context, not a detached one: a refresh waits on the
-// cross-process counts lock (st-k6z), so without cancellation a slow holder would keep
-// every queued post-write goroutine alive past the 10s timeout and pin Stop's bgWG
-// wait behind it.
+// It runs on goBackground's context, not a detached one: a slow beadwatch process
+// would otherwise keep every queued post-write goroutine alive past the 10s
+// timeout and pin Stop's bgWG wait behind it.
 func (s *Server) defaultRefreshCounts(repo registry.Repo) {
+	bin, ok := beadwatchPath()
+	if !ok {
+		s.beadwatchOnce.Do(func() {
+			log.Printf("strand: beadwatch binary not found (checked PATH and $HOME/go/bin) — counts refresh skipped")
+		})
+		return
+	}
 	s.goBackground(10*time.Second, func(ctx context.Context) {
-		if err := counts.RunContext(ctx, []string{repo.Path}, Version); err != nil {
-			log.Printf("strand: post-write counts refresh for %s: %v", repo.Path, err)
+		cmd := exec.CommandContext(ctx, bin, repo.Path) //nolint:gosec // bin is resolved via LookPath/a fixed path, repo.Path is a registry-known repo root, not user input
+		if out, err := cmd.CombinedOutput(); err != nil {
+			log.Printf("strand: post-write beadwatch refresh for %s: %v: %s", repo.Path, err, out)
 		}
 	})
+}
+
+// beadwatchPath resolves the beadwatch binary: PATH first (exec.LookPath, the
+// normal case once it's installed), else $HOME/go/bin/beadwatch — the `go
+// install` default a machine that built beadwatch from source but never put
+// $HOME/go/bin on PATH would still have. ok is false when neither resolves.
+func beadwatchPath() (string, bool) {
+	if p, err := exec.LookPath("beadwatch"); err == nil {
+		return p, true
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", false
+	}
+	p := filepath.Join(home, "go", "bin", "beadwatch")
+	if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+		return p, true
+	}
+	return "", false
 }
 
 // Stop cancels in-flight background work (goBackground) and waits for it to land.
@@ -531,12 +563,14 @@ type Pulse struct {
 // shared counts.json the off-render agent writes (bdcounts) — the ONE source the
 // status line reads too, so the masthead and the status line can never disagree
 // (st-p1f). Only that miss — a repo the agent hasn't recorded — falls through to
-// the bd-derived spread below: `bd stats` for the raw status counts plus the
-// insight.Lanes partition for the three derived lanes. In the fallback the counts
-// agree with the cut each clicks through to (st-88o, st-x66); reading from
-// counts.json instead trades that internal agreement for agreement with the status
-// line, the coherence dk asked for. A failed read degrades to zero counts rather
-// than failing the whole page — the pulse is ambient, not load-bearing.
+// the bd-derived spread below: `bd stats` for the raw closed/deferred counts plus
+// the insight.Lanes partition for open/in-progress/waiting/blocked — all four now
+// derived, so a gated in-progress bead can't land in both ◐ and ◆ (decision
+// 477486825755, bw-onx). In the fallback the counts agree with the cut each clicks
+// through to (st-88o, st-x66); reading from counts.json instead trades that
+// internal agreement for agreement with the status line, the coherence dk asked
+// for. A failed read degrades to zero counts rather than failing the whole page —
+// the pulse is ambient, not load-bearing.
 func (s *Server) computePulse(ctx context.Context, src IssueSource, repo registry.Repo) Pulse {
 	// Staleness is a property of the shared cache's liveness (its meta stamp), not of any
 	// one repo's row, so it's read the same whether this repo hits counts.json or falls
@@ -555,23 +589,24 @@ func (s *Server) computePulse(ctx context.Context, src IssueSource, repo registr
 	}
 	p := Pulse{Stale: stale}
 	if st, err := src.Stats(ctx); err == nil {
-		// bd stats seeds the degraded (List-failed) baseline for the raw status counts.
-		// ● is deliberately NOT seeded here: bd's blocked_issues is a DIFFERENT metric than
-		// the ● lane — bd counts an in-progress bead with an unmet blocker as blocked (and
-		// again as in_progress), but the ● cut lists only LaneBlocked (stored-blocked +
-		// open-held). Seeding ● from bd stats renders a nonzero ● that clicks through to an
-		// empty pane, so ● is derived from the lane partition below and nowhere else.
-		p.Open, p.InProgress = st.Open, st.InProgress
+		// bd stats seeds the degraded (List-failed) baseline. Only the raw closed/deferred
+		// counts are trusted from it: ◐ and ● are deliberately NOT seeded here. bd's
+		// blocked_issues is a DIFFERENT metric than the ● lane — bd counts an in-progress
+		// bead with an unmet blocker as blocked (and again as in_progress) — and bd's raw
+		// in_progress total doesn't exclude a gated bead the way LaneInProgress does (decision
+		// 477486825755), so seeding either from bd stats would double-count a gated
+		// in-progress bead into both ◐ and ◆, or render a ● that clicks through to an empty
+		// pane. Both are derived from the lane partition below and nowhere else.
 		p.Closed, p.Deferred = st.Closed, st.Deferred
 	}
 	if issues, err := src.List(ctx, bd.ListOpts{}); err == nil {
-		// Every masthead count must agree with the cut it clicks through to, so all three
-		// derived lanes come from the ONE insight.Lanes partition — the same truth the ●,
-		// ○, and ◆ cuts (and the board's Classify) share. Count and list can't drift: both
+		// Every masthead count must agree with the cut it clicks through to, so all four
+		// derived lanes come from the ONE insight.Lanes partition — the same truth the ◐,
+		// ●, ○, and ◆ cuts (and the board's Classify) share. Count and list can't drift: both
 		// derive from Lanes over the same issues+deps (st-88o, st-x66). Deps are read from
 		// the warm cache only — the masthead never pays a deps spawn on the landing path
-		// (str-47z). Cold, no bead is dependency-blocked, so all three lanes show their
-		// best-effort: ○ and ◆ are list-path exact, and ● counts stored-blocked beads (which
+		// (str-47z). Cold, no bead is dependency-blocked, so all four lanes show their
+		// best-effort: ○, ◐ and ◆ are list-path exact, and ● counts stored-blocked beads (which
 		// laneOf classifies without deps) but not yet the open-held ones — a cold undercount,
 		// never an overcount into an empty cut. It does NOT self-heal on its own: the deps
 		// prefetch fires no event. The masthead's one-shot `load` re-fetch of /pulse (page.html,
@@ -579,6 +614,7 @@ func (s *Server) computePulse(ctx context.Context, src IssueSource, repo registr
 		deps, _ := s.cache.liveDeps(repo.Path)
 		lanes := insight.Lanes(issues, deps)
 		p.Open = countLane(lanes, insight.LaneOpen)
+		p.InProgress = countLane(lanes, insight.LaneInProgress)
 		p.Waiting = countLane(lanes, insight.LaneWaiting)
 		p.Blocked = countLane(lanes, insight.LaneBlocked)
 	}
@@ -838,7 +874,7 @@ type closedReader interface {
 
 // pulseCutFor maps a filter token to its cut, or reports false for any other
 // filter (so "bugs" and the empty/scope filters fall through to listViewFor). The
-// three derived lanes carry a Lane and no match; the raw status cuts carry a match.
+// four derived lanes carry a Lane and no match; the raw status cuts carry a match.
 func pulseCutFor(filter string) (pulseCut, bool) {
 	statusIs := func(st bd.Status) func(*bd.Issue) bool {
 		return func(i *bd.Issue) bool { return i.Status == st }
@@ -849,7 +885,10 @@ func pulseCutFor(filter string) (pulseCut, bool) {
 	case "open":
 		return pulseCut{title: "Open", lane: insight.LaneOpen}, true
 	case "in_progress":
-		return pulseCut{title: "In progress", match: statusIs(bd.StatusInProgress)}, true
+		// LaneInProgress (not a raw status match): a gated in-progress bead belongs to
+		// the ◆ cut, not here (decision 477486825755) — matching the masthead ◐ count,
+		// which is now Lanes-derived too (computePulse).
+		return pulseCut{title: "In progress", lane: insight.LaneInProgress}, true
 	case "blocked":
 		return pulseCut{title: "Blocked", lane: insight.LaneBlocked}, true
 	case "closed":

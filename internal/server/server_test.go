@@ -1216,17 +1216,19 @@ func TestPulseCountsMatchCutsForDerivedBlocks(t *testing.T) {
 
 // TestPulseBlockedNeverSeedsFromBdStats pins the cold-pulse bug: bd's blocked_issues
 // counts an in-progress bead with an unmet blocker as blocked, but that bead is NOT
-// LaneBlocked (laneOf sends in_progress to LaneNone), so the ● cut lists nothing. The
-// masthead ● must derive from the lane partition, never from bd stats — otherwise the
-// cold render shows ● 1 clicking through to an empty "No beads in this status" pane.
-// Read on a COLD cache (no prior /board warm) so the pre-fix bd-stats seed would fire.
+// LaneBlocked (laneOf sends an ungated in-progress bead to LaneInProgress, never
+// LaneBlocked — a blocker only matters for a StatusOpen bead), so the ● cut lists
+// nothing. The masthead ● must derive from the lane partition, never from bd stats —
+// otherwise the cold render shows ● 1 clicking through to an empty "No beads in this
+// status" pane. Read on a COLD cache (no prior /board warm) so the pre-fix bd-stats
+// seed would fire.
 func TestPulseBlockedNeverSeedsFromBdStats(t *testing.T) {
 	one := 1
 	stub := &stubBD{
 		issues: []bd.Issue{
 			{ID: "demo-root", Title: "DEMO", IssueType: "epic", Status: "open"},
 			{ID: "blocker", Parent: "demo-root", Title: "The blocker", Status: "open", Priority: new(2)},
-			// in_progress + unmet blocker: bd stats calls this blocked, laneOf calls it ◐ (LaneNone).
+			// in_progress + unmet blocker: bd stats calls this blocked, laneOf calls it ◐ (LaneInProgress).
 			{ID: "wip", Parent: "demo-root", Title: "Held WIP bug", IssueType: "bug", Status: "in_progress", Priority: new(2)},
 		},
 		deps: []bd.DepEdge{{IssueID: "wip", DependsOnID: "blocker", Type: bd.DepBlocks}},
@@ -1252,18 +1254,18 @@ func TestPulseBlockedNeverSeedsFromBdStats(t *testing.T) {
 	}
 }
 
-// TestPulseWaitingExcludesBlockedGated pins st-612's KEY DECISION: the ○/●/◆ lanes
-// are ONE partition, so a bead that is both blocked and human-gated sits in exactly
-// one lane — ● (blocker beats gate, matching the board), not both ● and ◆ as the old
-// WaitingCount spelling double-counted it. Count and list agree by construction: the
-// ◆ count drops the blocked-gated bead and the ◆ cut's list omits it, while ● claims
-// it in both count and list.
+// TestPulseWaitingExcludesBlockedGated pins decision 477486825755 (human wins
+// every overlap, ported from beadwatch bw-onx — supersedes st-612's "blocker beats
+// gate"): the ○/●/◆ lanes are ONE partition, so a bead that is both blocked and
+// human-gated sits in exactly one lane — ◆, not ● and not both. Count and list
+// agree by construction: the ◆ count claims the blocked-gated bead and the ◆ cut's
+// list includes it, while ● count and list both omit it.
 func TestPulseWaitingExcludesBlockedGated(t *testing.T) {
 	stub := &stubBD{
 		issues: []bd.Issue{
 			{ID: "demo-root", Title: "DEMO", IssueType: "epic", Status: "open"},
 			{ID: "blocker", Parent: "demo-root", Title: "The blocker", Status: "open", Priority: new(2)},
-			// open + unmet blocker + human-gated: blocker beats gate → ● only (was ● AND ◆).
+			// open + unmet blocker + human-gated: gate wins → ◆ only (was ●, st-612).
 			{ID: "blkgated", Parent: "demo-root", Title: "Held + gated", Status: "open", Priority: new(2), Labels: []string{"human"}},
 			// open + human-gated, no blocker → ◆.
 			{ID: "gated", Parent: "demo-root", Title: "Parked on you", Status: "open", Priority: new(2), Labels: []string{"human"}},
@@ -1274,30 +1276,29 @@ func TestPulseWaitingExcludesBlockedGated(t *testing.T) {
 	do(t, srv, "/board") // warm the deps cache so ● and ◆ read the exact partition
 
 	pulse := do(t, srv, "/pulse").Body.String()
-	// ◆ counts the gated bead alone; the blocked-gated bead moved to ●. The old
-	// double-counting spelling would have rendered "reviews: 2".
-	if !strings.Contains(pulse, "reviews: 1") {
-		t.Errorf("◆ should count only the un-blocked gated bead (want reviews: 1):\n%s", pulse)
+	// ◆ counts both gated beads — the blocked-gated one no longer moves to ●.
+	if !strings.Contains(pulse, "reviews: 2") {
+		t.Errorf("◆ should count both gated beads, blocked or not (want reviews: 2):\n%s", pulse)
 	}
-	if strings.Contains(pulse, "reviews: 2") {
-		t.Errorf("◆ double-counted the blocked-and-gated bead (st-612 regression):\n%s", pulse)
+	if strings.Contains(pulse, "reviews: 1") {
+		t.Errorf("◆ dropped the blocked-and-gated bead (decision 477486825755 regression):\n%s", pulse)
 	}
-	if !strings.Contains(pulse, `title="Blocked: 1"`) {
-		t.Errorf("● should claim the blocked-and-gated bead (want Blocked: 1):\n%s", pulse)
+	if !strings.Contains(pulse, `title="Blocked: 0"`) {
+		t.Errorf("● should not claim the blocked-and-gated bead — the gate wins (want Blocked: 0):\n%s", pulse)
 	}
 
-	// Parity: the ◆ cut lists the gated bead and omits the blocked-gated one.
+	// Parity: the ◆ cut lists both gated beads.
 	waiting := do(t, srv, "/list?filter=waiting").Body.String()
 	if !strings.Contains(waiting, `data-id="gated"`) {
 		t.Errorf("◆ cut dropped the gated bead:\n%s", waiting)
 	}
-	if strings.Contains(waiting, `data-id="blkgated"`) {
-		t.Errorf("◆ cut leaked the blocked-and-gated bead (belongs in ●):\n%s", waiting)
+	if !strings.Contains(waiting, `data-id="blkgated"`) {
+		t.Errorf("◆ cut dropped the blocked-and-gated bead (belongs here now, gate wins):\n%s", waiting)
 	}
-	// Parity: the ● cut claims the blocked-gated bead.
+	// Parity: the ● cut omits the blocked-gated bead.
 	blocked := do(t, srv, "/list?filter=blocked").Body.String()
-	if !strings.Contains(blocked, `data-id="blkgated"`) {
-		t.Errorf("● cut dropped the blocked-and-gated bead:\n%s", blocked)
+	if strings.Contains(blocked, `data-id="blkgated"`) {
+		t.Errorf("● cut wrongly claimed the blocked-and-gated bead (belongs in ◆ now):\n%s", blocked)
 	}
 }
 

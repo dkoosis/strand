@@ -98,9 +98,9 @@ func TestTriageExplicitlyBlocked(t *testing.T) {
 
 // TestClassify pins the board's effective-status sort: an open bead with an unmet
 // blocker is blocked; an open bead parked on a human is waiting; a stored "blocked"
-// bead is blocked; a blocked-AND-gated bead is blocked (blocker beats the gate); a
-// bead whose only blocker is absent (closed) is neither; an in-progress bead is
-// neither.
+// bead is blocked; a blocked-AND-gated bead is waiting (the gate wins every overlap,
+// decision 477486825755); a bead whose only blocker is absent (closed) is neither;
+// an ungated in-progress bead is neither (LaneInProgress isn't a board column).
 func TestClassify(t *testing.T) {
 	beads := []strand.Bead{
 		{ID: "blocker", Status: bd.StatusOpen},
@@ -133,11 +133,11 @@ func TestClassify(t *testing.T) {
 
 	blocked, waiting := Classify(beads, issues, deps)
 
-	// gated and activegated wait (the in-progress one matches the masthead pulse, PR
-	// #62 codex); both is blocked, not waiting (blocker beats gate); active is neither;
-	// ghost (idx-miss) is open/neither.
-	wantBlocked := map[string]bool{"blocked": true, "both": true, "stored": true}
-	wantWaiting := map[string]bool{"gated": true, "activegated": true}
+	// gated, activegated and both all wait — the gate wins every overlap, whatever the
+	// status or blocker (decision 477486825755; the in-progress one also matches the
+	// masthead pulse, PR #62 codex); active is neither; ghost (idx-miss) is open/neither.
+	wantBlocked := map[string]bool{"blocked": true, "stored": true}
+	wantWaiting := map[string]bool{"gated": true, "activegated": true, "both": true}
 	for _, id := range []string{"blocker", "blocked", "gated", "both", "ready", "stored", "active", "activegated", "ghost"} {
 		if blocked[id] != wantBlocked[id] {
 			t.Errorf("blocked[%q] = %v, want %v", id, blocked[id], wantBlocked[id])
@@ -148,20 +148,21 @@ func TestClassify(t *testing.T) {
 	}
 }
 
-// TestLanes proves the disjoint pulse partition: one lane per bead, with
-// blocker > gate > open precedence, and the cold path (nil deps) leaving only
-// dependency-derived blocks unresolved while stored-blocked stays ●.
+// TestLanes proves the disjoint pulse partition: one lane per live bead, with
+// gate > blocker > status precedence (decision 477486825755 — human wins every
+// overlap), and the cold path (nil deps) leaving only dependency-derived blocks
+// unresolved while stored-blocked stays ●.
 func TestLanes(t *testing.T) {
 	issues := []bd.Issue{
 		{ID: "open", Status: bd.StatusOpen},
 		{ID: "gated", Status: bd.StatusOpen, Labels: []string{"human"}},
 		{ID: "depblocked", Status: bd.StatusOpen},
-		{ID: "depblockedgated", Status: bd.StatusOpen, Labels: []string{"human"}}, // ● not ◆
+		{ID: "depblockedgated", Status: bd.StatusOpen, Labels: []string{"human"}}, // ◆ not ●
 		{ID: "storedblocked", Status: bd.StatusBlocked},
-		{ID: "storedblockedgated", Status: bd.StatusBlocked, Labels: []string{"human"}}, // ● not ◆
+		{ID: "storedblockedgated", Status: bd.StatusBlocked, Labels: []string{"human"}}, // ◆ not ●
 		{ID: "blocker", Status: bd.StatusOpen},
 		{ID: "activegated", Status: bd.StatusInProgress, Labels: []string{"human"}}, // ◆
-		{ID: "active", Status: bd.StatusInProgress},                                 // ◐ → None
+		{ID: "active", Status: bd.StatusInProgress},                                 // ◐, not omitted
 		{ID: "closed", Status: bd.StatusClosed},
 		{ID: "deferred", Status: bd.StatusDeferred},
 	}
@@ -177,11 +178,12 @@ func TestLanes(t *testing.T) {
 			"blocker":            LaneOpen,
 			"gated":              LaneWaiting,
 			"activegated":        LaneWaiting,
+			"active":             LaneInProgress,
 			"depblocked":         LaneBlocked,
-			"depblockedgated":    LaneBlocked, // blocker beats gate
+			"depblockedgated":    LaneWaiting, // gate wins over blocker
 			"storedblocked":      LaneBlocked,
-			"storedblockedgated": LaneBlocked, // blocker beats gate
-			// active, closed, deferred → LaneNone, omitted from the map
+			"storedblockedgated": LaneWaiting, // gate wins over stored-blocked status
+			// closed, deferred → LaneNone, omitted from the map
 		}
 		assertLanes(t, got, want, issues)
 		// disjointness is structural: each id maps to exactly one Lane, so no
@@ -195,13 +197,98 @@ func TestLanes(t *testing.T) {
 			"blocker":            LaneOpen,
 			"gated":              LaneWaiting,
 			"activegated":        LaneWaiting,
+			"active":             LaneInProgress,
 			"depblocked":         LaneOpen,    // no deps → not dep-blocked
-			"depblockedgated":    LaneWaiting, // no deps → gate now wins
+			"depblockedgated":    LaneWaiting, // gate wins regardless
 			"storedblocked":      LaneBlocked, // stored status needs no deps
-			"storedblockedgated": LaneBlocked, // stored status still beats gate cold
+			"storedblockedgated": LaneWaiting, // gate wins over stored-blocked status, cold too
 		}
 		assertLanes(t, got, want, issues)
 	})
+}
+
+// TestLaneOfDerivationTable pins the six rows of the beadwatch design's §The
+// derivation table (~/Projects/kg/Project/beadwatch/specs/beadwatch-design.md),
+// "after" column — decision 477486825755: gated beats blocked beats
+// open/in-progress, whatever the status or dependencies. Ported from beadwatch's
+// own TestLaneOfDerivationTable (bw-onx) so strand's laneOf stays provably the
+// same function as the one beadwatch derives counts.json's buckets from.
+func TestLaneOfDerivationTable(t *testing.T) {
+	cases := []struct {
+		name              string
+		status            bd.Status
+		gated, hasBlocker bool
+		want              Lane
+	}{
+		{"open, human label, open dependency -> bh", bd.StatusOpen, true, true, LaneWaiting},
+		{"in_progress, human label -> bh only", bd.StatusInProgress, true, false, LaneWaiting},
+		{"status blocked, human label -> bh", bd.StatusBlocked, true, false, LaneWaiting},
+		{"open, open dependency -> bb", bd.StatusOpen, false, true, LaneBlocked},
+		{"in_progress, no label -> bw", bd.StatusInProgress, false, false, LaneInProgress},
+		{"open, plain -> bo", bd.StatusOpen, false, false, LaneOpen},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := laneOf(c.status, c.gated, c.hasBlocker); got != c.want {
+				t.Errorf("laneOf(%v, gated=%v, hasBlocker=%v) = %v, want %v", c.status, c.gated, c.hasBlocker, got, c.want)
+			}
+		})
+	}
+}
+
+// TestPartitionSumsToLiveBeads is the partition property decision 477486825755
+// promises: bh+bo+bw+bb equals the count of beads whose status is open,
+// in_progress or blocked — nothing live is dropped and nothing is double
+// counted. The fixture carries every gate/status/blocker overlap. Against the
+// pre-change laneOf this is red: a gated-and-blocked bead used to land in bb
+// (blocker beats gate), double-counting it against the masthead's ◆ figure.
+func TestPartitionSumsToLiveBeads(t *testing.T) {
+	issues := []bd.Issue{
+		{ID: "plain-open", Status: bd.StatusOpen},
+		{ID: "blocker", Status: bd.StatusOpen},
+		{ID: "open-blocked", Status: bd.StatusOpen},
+		{ID: "gated-open-blocked", Status: bd.StatusOpen, Labels: []string{"human"}},
+		{ID: "review-open", Status: bd.StatusOpen, Metadata: map[string]any{"review_needed": "true"}},
+		{ID: "plain-inprogress", Status: bd.StatusInProgress},
+		{ID: "gated-inprogress", Status: bd.StatusInProgress, Labels: []string{"human"}},
+		{ID: "plain-blocked-status", Status: bd.StatusBlocked},
+		{ID: "gated-blocked-status", Status: bd.StatusBlocked, Labels: []string{"human"}},
+		{ID: "closed", Status: bd.StatusClosed},
+		{ID: "deferred", Status: bd.StatusDeferred},
+	}
+	deps := []bd.DepEdge{
+		{IssueID: "open-blocked", DependsOnID: "blocker", Type: bd.DepBlocks},
+		{IssueID: "gated-open-blocked", DependsOnID: "blocker", Type: bd.DepBlocks},
+	}
+
+	lanes := Lanes(issues, deps)
+	var bh, bo, bw, bb int
+	for _, l := range lanes {
+		switch l {
+		case LaneWaiting:
+			bh++
+		case LaneOpen:
+			bo++
+		case LaneInProgress:
+			bw++
+		case LaneBlocked:
+			bb++
+		case LaneNone:
+		}
+	}
+
+	var wantTotal int
+	for i := range issues {
+		switch issues[i].Status {
+		case bd.StatusOpen, bd.StatusInProgress, bd.StatusBlocked:
+			wantTotal++
+		}
+	}
+
+	if got := bh + bo + bw + bb; got != wantTotal {
+		t.Errorf("bh+bo+bw+bb = %d (bh=%d bo=%d bw=%d bb=%d), want %d — the count of open/in_progress/blocked beads",
+			got, bh, bo, bw, bb, wantTotal)
+	}
 }
 
 func assertLanes(t *testing.T, got, want map[string]Lane, issues []bd.Issue) {
