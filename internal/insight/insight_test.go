@@ -249,9 +249,10 @@ func TestPulseConstantParity(t *testing.T) {
 // TestPartitionSumsToLiveBeads is the partition property decision 477486825755
 // promises: bh+bo+bw+bb equals the count of beads whose status is open,
 // in_progress or blocked — nothing live is dropped and nothing is double
-// counted. The fixture carries every gate/status/blocker overlap. Against the
-// pre-change laneOf this is red: a gated-and-blocked bead used to land in bb
-// (blocker beats gate), double-counting it against the masthead's ◆ figure.
+// counted. The fixture carries every gate/status/blocker overlap. It runs through
+// Lanes, so it grades the bd→pulse adapter as well as the partition: a conversion
+// that dropped Labels or misspelled a status would land beads in LaneNone and
+// break the sum here.
 func TestPartitionSumsToLiveBeads(t *testing.T) {
 	issues := []bd.Issue{
 		{ID: "plain-open", Status: bd.StatusOpen},

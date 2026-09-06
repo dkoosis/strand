@@ -118,7 +118,10 @@ func humanGate(iss *bd.Issue) (decision, review bool) {
 
 // isHumanGated reports whether a bead is parked on a human (decision or review) —
 // the test that keeps it out of the ready queue and triage's Ready count, and the
-// gate arm of laneOf (the masthead ◆ and the board's waiting column both route here).
+// gate this package feeds pulse.LaneOf in Classify. pulse derives the same signal
+// internally for Lanes but does not export it, so this reading stays here — it also
+// carries the decision-vs-review split (humanGate) that the waiting lane needs and
+// the lane partition has no use for.
 func isHumanGated(iss *bd.Issue) bool {
 	d, r := humanGate(iss)
 	return d || r
