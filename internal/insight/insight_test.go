@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dkoosis/beadwatch/pulse"
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/graph"
 	"github.com/dkoosis/strand/internal/strand"
@@ -207,32 +208,41 @@ func TestLanes(t *testing.T) {
 	})
 }
 
-// TestLaneOfDerivationTable pins the six rows of the beadwatch design's §The
-// derivation table (~/Projects/kg/Project/beadwatch/specs/beadwatch-design.md),
-// "after" column — decision 477486825755: gated beats blocked beats
-// open/in-progress, whatever the status or dependencies. Ported from beadwatch's
-// own TestLaneOfDerivationTable (bw-onx) so strand's laneOf stays provably the
-// same function as the one beadwatch derives counts.json's buckets from.
-func TestLaneOfDerivationTable(t *testing.T) {
-	cases := []struct {
-		name              string
-		status            bd.Status
-		gated, hasBlocker bool
-		want              Lane
+// TestPulseConstantParity is what makes the unchecked string conversions in
+// pulseIssues/pulseDeps safe. bd.Status and pulse.Status are separate types that
+// happen to share a wire spelling; if either side ever renamed a value, the
+// conversion would keep compiling and every affected bead would silently fall to
+// LaneNone — dropping it out of the masthead instead of failing a build. This
+// test is the tripwire. The derivation itself is not retested here: the six-row
+// table lives once, in beadwatch's pulse package (bw-4id.1).
+func TestPulseConstantParity(t *testing.T) {
+	statuses := []struct {
+		bd    bd.Status
+		pulse pulse.Status
 	}{
-		{"open, human label, open dependency -> bh", bd.StatusOpen, true, true, LaneWaiting},
-		{"in_progress, human label -> bh only", bd.StatusInProgress, true, false, LaneWaiting},
-		{"status blocked, human label -> bh", bd.StatusBlocked, true, false, LaneWaiting},
-		{"open, open dependency -> bb", bd.StatusOpen, false, true, LaneBlocked},
-		{"in_progress, no label -> bw", bd.StatusInProgress, false, false, LaneInProgress},
-		{"open, plain -> bo", bd.StatusOpen, false, false, LaneOpen},
+		{bd.StatusOpen, pulse.StatusOpen},
+		{bd.StatusInProgress, pulse.StatusInProgress},
+		{bd.StatusBlocked, pulse.StatusBlocked},
+		{bd.StatusClosed, pulse.StatusClosed},
+		{bd.StatusDeferred, pulse.StatusDeferred},
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := laneOf(c.status, c.gated, c.hasBlocker); got != c.want {
-				t.Errorf("laneOf(%v, gated=%v, hasBlocker=%v) = %v, want %v", c.status, c.gated, c.hasBlocker, got, c.want)
-			}
-		})
+	for _, c := range statuses {
+		if string(c.bd) != string(c.pulse) {
+			t.Errorf("status spelling drifted: bd %q != pulse %q", c.bd, c.pulse)
+		}
+	}
+	depTypes := []struct {
+		bd    bd.DepType
+		pulse pulse.DepType
+	}{
+		{bd.DepBlocks, pulse.DepBlocks},
+		{bd.DepParentChild, pulse.DepParentChild},
+		{bd.DepRelatesTo, pulse.DepRelatesTo},
+	}
+	for _, c := range depTypes {
+		if string(c.bd) != string(c.pulse) {
+			t.Errorf("dep type spelling drifted: bd %q != pulse %q", c.bd, c.pulse)
+		}
 	}
 }
 

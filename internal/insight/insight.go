@@ -7,6 +7,12 @@
 // internal/insight is the sole importer of internal/graph: the structural
 // metrics (PageRank/betweenness/critical path) are computed here, behind the
 // Compute seam, so the server no longer depends on the graph package directly.
+//
+// The four-way ○/◐/●/◆ lane partition is NOT computed here: it lives in
+// github.com/dkoosis/beadwatch/pulse, the one home for that derivation, and this
+// package is the adapter that converts bd's wire shapes into pulse's plain input
+// types (bw-4id.1, decision 251431366484). That is what keeps the masthead and
+// the counts.json buckets beadwatch writes from ever disagreeing.
 package insight
 
 import (
@@ -14,6 +20,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/dkoosis/beadwatch/pulse"
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/graph"
 	"github.com/dkoosis/strand/internal/strand"
@@ -176,80 +183,69 @@ func Compute(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge, now time
 	return out
 }
 
-// Lane is a bead's disjoint pulse lane — the masthead reads it to orient (○ Open /
-// ◐ InProgress / ● Blocked / ◆ Waiting). Exactly one lane per live bead; LaneNone
-// means the bead is not live work (closed or deferred). Decision 477486825755:
-// human wins every overlap — a gated bead is LaneWaiting whatever its status or
-// dependencies, so LaneInProgress means "in progress and NOT gated" (a gated
-// in-progress bead is LaneWaiting only, never double-counted into both). Ported
-// from beadwatch's own laneOf (bw-onx) so strand's live derivation agrees with the
-// counts.json buckets beadwatch writes for the same repo.
-type Lane uint8
+// Lane is strand's alias for pulse.Lane — the disjoint pulse lane the masthead
+// reads to orient (○ Open / ◐ InProgress / ● Blocked / ◆ Waiting). The partition
+// itself lives in github.com/dkoosis/beadwatch/pulse, the ONE home for the
+// derivation (decision 251431366484): strand imports it rather than keeping a copy,
+// so the masthead and the counts.json buckets beadwatch writes for the same repo
+// cannot drift (bw-4id.1). See pulse.Lane for the full semantics, including
+// decision 477486825755 — human wins every overlap.
+type Lane = pulse.Lane
 
+// The five Lane values, re-exported from pulse so this package's callers
+// (server, the board) never need to import pulse directly.
 const (
-	LaneNone       Lane = iota
-	LaneOpen            // ○ actionable now
-	LaneInProgress      // ◐ claimed, not gated
-	LaneBlocked         // ● held by an unmet blocker (or stored "blocked")
-	LaneWaiting         // ◆ parked on a human
+	LaneNone       = pulse.LaneNone
+	LaneOpen       = pulse.LaneOpen
+	LaneInProgress = pulse.LaneInProgress
+	LaneBlocked    = pulse.LaneBlocked
+	LaneWaiting    = pulse.LaneWaiting
 )
 
-// laneOf is the single precedence kernel shared by the board view (Classify) and
-// the masthead view (Lanes) — decision 477486825755: gated beats blocked beats
-// in-progress beats open, whatever the status or unmet blockers. A gated bead is
-// LaneWaiting regardless of everything else — the human call outranks any other
-// reason a bead could be waiting on. Only once gated is ruled out does
-// status/blocker decide: a stored "blocked" status or an open bead with an unmet
-// blocker is LaneBlocked; an ungated in-progress bead is LaneInProgress; a plain
-// open bead is LaneOpen.
-func laneOf(status bd.Status, gated, hasBlocker bool) Lane {
-	if status == bd.StatusClosed || status == bd.StatusDeferred {
-		return LaneNone // not live work
-	}
-	if gated {
-		return LaneWaiting // human wins every overlap — status and blocker moot
-	}
-	switch status {
-	case bd.StatusBlocked:
-		return LaneBlocked
-	case bd.StatusInProgress:
-		return LaneInProgress
-	case bd.StatusOpen:
-		if hasBlocker {
-			return LaneBlocked
+// pulseIssues converts bd's wire shape into pulse's plain input type — the four
+// fields the lane derivation reads. bd.Status and pulse.Status share a wire
+// spelling, so the conversion is unchecked; TestPulseConstantParity is what turns
+// a future drift in either spelling into a test failure rather than a silent
+// LaneNone.
+func pulseIssues(issues []bd.Issue) []pulse.Issue {
+	out := make([]pulse.Issue, len(issues))
+	for i := range issues {
+		out[i] = pulse.Issue{
+			ID:       issues[i].ID,
+			Status:   pulse.Status(issues[i].Status),
+			Labels:   issues[i].Labels,
+			Metadata: issues[i].Metadata,
 		}
-		return LaneOpen
-	case bd.StatusClosed, bd.StatusDeferred:
-		// unreachable — the guard above already returns for these; named here
-		// only so the switch is exhaustive over bd.Status.
 	}
-	return LaneNone // unknown/future status — defensive
+	return out
 }
 
-// Lanes assigns every issue to its disjoint pulse lane, repo-wide, from the one
-// laneOf precedence. deps carry the blocker signal; nil deps ⇒ no bead is
-// dependency-blocked (the masthead's cold-cache path — the caller keeps a bd-stats
-// fallback for ● until deps warm). LaneNone beads (closed/deferred) are omitted, so
-// a missing key reads back as LaneNone (its zero value); every other live bead —
-// including an ungated in-progress one, now LaneInProgress rather than omitted —
-// gets exactly one lane, so bh+bo+bw+bb sums to the count of beads whose status is
-// open, in_progress or blocked (decision 477486825755).
-func Lanes(issues []bd.Issue, deps []bd.DepEdge) map[string]Lane {
-	idx := indexIssues(issues)
-	openBlockers := blockerCounts(deps, idx)
-	lanes := make(map[string]Lane, len(issues))
-	for i := range issues {
-		iss := &issues[i]
-		if l := laneOf(iss.Status, isHumanGated(iss), openBlockers[iss.ID] > 0); l != LaneNone {
-			lanes[iss.ID] = l
+// pulseDeps converts bd's dependency edges into pulse's plain input type, the
+// same unchecked way as pulseIssues.
+func pulseDeps(deps []bd.DepEdge) []pulse.DepEdge {
+	out := make([]pulse.DepEdge, len(deps))
+	for i := range deps {
+		out[i] = pulse.DepEdge{
+			IssueID:     deps[i].IssueID,
+			DependsOnID: deps[i].DependsOnID,
+			Type:        pulse.DepType(deps[i].Type),
 		}
 	}
-	return lanes
+	return out
+}
+
+// Lanes converts issues and dependency edges from bd's wire shapes into pulse's
+// input types and delegates to pulse.Lanes. deps carry the blocker signal; nil
+// deps ⇒ no bead is dependency-blocked (the masthead's cold-cache path — the
+// caller keeps a bd-stats fallback for ● until deps warm). See pulse.Lanes for
+// the full partition contract.
+func Lanes(issues []bd.Issue, deps []bd.DepEdge) map[string]Lane {
+	return pulse.Lanes(pulseIssues(issues), pulseDeps(deps))
 }
 
 // Classify sorts a scope's beads into the board's two attention states — blocked
-// (held by an unmet blocker) and waiting (parked on a human) — via the shared laneOf
-// precedence: the human gate outranks a blocker outranks plain status (decision
+// (held by an unmet blocker) and waiting (parked on a human) — via the shared
+// pulse.LaneOf precedence: the human gate outranks a blocker outranks plain status (decision
 // 477486825755), so an open blocked-and-gated bead is reported waiting, not blocked;
 // a stored-status "blocked" bead with no gate is still blocked; an in-progress
 // review-needed card carries ◆ just as it counts in the masthead (the board/masthead
@@ -271,7 +267,7 @@ func Classify(beads []strand.Bead, issues []bd.Issue, deps []bd.DepEdge) (blocke
 		if iss, ok := idx[b.ID]; ok {
 			gated = isHumanGated(&iss)
 		}
-		switch laneOf(b.Status, gated, openBlockers[b.ID] > 0) {
+		switch pulse.LaneOf(pulse.Status(b.Status), gated, openBlockers[b.ID] > 0) {
 		case LaneBlocked:
 			blocked[b.ID] = true
 		case LaneWaiting:
