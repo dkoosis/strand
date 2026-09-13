@@ -90,3 +90,6 @@ uninstall: ## Stop + remove the launchd web agent (logs preserved)
 
 clean: ## Remove build artifacts and lint cache
 	rm -rf bin .golangci-cache
+
+cross: ## Cross-compile linux-amd64 and linux-arm64 into .sandbox/bin/
+	for a in amd64 arm64; do mkdir -p .sandbox/bin/linux-$$a && CGO_ENABLED=0 GOOS=linux GOARCH=$$a go build -o .sandbox/bin/linux-$$a/ ./cmd/strand; done
