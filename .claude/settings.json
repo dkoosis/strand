@@ -1,0 +1,7 @@
+{
+  "enabledPlugins": {
+    "lintbrush@cc-plugins": true,
+    "go-bug-audit@cc-plugins": true,
+    "go-test-architect@cc-plugins": true
+  }
+}
