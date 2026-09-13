@@ -35,3 +35,4 @@
 
 # bd audit residue: passive re-export, Dolt is source of truth
 .beads/interactions.jsonl
+.sandbox/bin/
