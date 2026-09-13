@@ -10,8 +10,8 @@ github.com/dkoosis/atomicfile v0.0.0-20260811102456-9091c28d4820 h1:x7UDk0isvTYx
 github.com/dkoosis/atomicfile v0.0.0-20260811102456-9091c28d4820/go.mod h1:6wCWesghtzLYJ0IjlbbddyTCU8ZowoiIUzcy4Qi9fDc=
 github.com/dkoosis/beadwatch v0.0.0-20260906200344-9e78d85256bd h1:9bp9CvJQS0ELXtYpgh+40ILAOQs8F0We8vY/jvaLwXc=
 github.com/dkoosis/beadwatch v0.0.0-20260906200344-9e78d85256bd/go.mod h1:ej/vRzMnCY5bUKpF6jZRDlrpsuIRgsStYDvKcsDzJnI=
-github.com/dkoosis/conform v0.2.1-0.20260905172110-5559869235a1 h1:5daEePJOAHSL8cojK2BszbRUmt/C5HHhSjjFa1WwfSM=
-github.com/dkoosis/conform v0.2.1-0.20260905172110-5559869235a1/go.mod h1:Zq32Tf2c7K8O2MPAja+pJfOWmbika4Wn5qCZoUdcKEQ=
+github.com/dkoosis/conform v0.2.1-0.20260907030945-a05e4f4bd54a h1:a7eoJOP21e3z5P0h4zmnp2BTDVlCWUmlxE3XP+eCsZo=
+github.com/dkoosis/conform v0.2.1-0.20260907030945-a05e4f4bd54a/go.mod h1:Zq32Tf2c7K8O2MPAja+pJfOWmbika4Wn5qCZoUdcKEQ=
 github.com/dnaeon/go-vcr v1.2.0 h1:zHCHvJYTMh1N7xnV7zf1m1GPBF9Ad0Jk/whtQ1663qI=
 github.com/dnaeon/go-vcr v1.2.0/go.mod h1:R4UdLID7HZT3taECzJs4YgbbH6PIGXB6W/sc5OLb6RQ=
 github.com/google/renameio/v2 v2.0.2 h1:qKZs+tfn+arruZZhQ7TKC/ergJunuJicWS6gLDt/dGw=

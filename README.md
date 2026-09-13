@@ -1,8 +1,8 @@
+# strand
+
 <div align="center">
 
 <img src="web/static/icons/logo.png" alt="strand" width="160">
-
-# strand
 
 **A human-friendly planning layer over [beads](https://github.com/steveyegge/beads) (`bd`).**
 
