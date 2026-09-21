@@ -15,7 +15,7 @@ require (
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
-	github.com/dkoosis/conform v0.2.1-0.20260907030945-a05e4f4bd54a // indirect
+	github.com/dkoosis/conform-to-sdlc v0.3.0 // indirect
 	github.com/google/renameio/v2 v2.0.2 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
@@ -30,4 +30,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-tool github.com/dkoosis/conform/cmd/conform
+tool github.com/dkoosis/conform-to-sdlc/cmd/conform-to-sdlc

@@ -1,5 +1,9 @@
 name: check
 
+# Always triggers — never paths/paths-ignore. A skipped workflow never reports
+# the required check context, so a docs-only PR could not merge under branch
+# protection. The detect job decides docs-only; check skips its steps and
+# still reports green. Any changed path outside the docs set runs the full gate.
 on:
   pull_request:
   push:
@@ -13,32 +17,73 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      run_check: ${{ steps.diff.outputs.run_check }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            head="${{ github.event.pull_request.head.sha }}"
+          else
+            base="${{ github.event.before }}"
+            head="${{ github.sha }}"
+          fi
+          # Unknown base (new branch, all-zero SHA) → run the gate.
+          if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "run_check=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The docs-only set is conform-to-sdlc's (ci-docs-skip): drop entries to
+          # narrow it; adding one is a finding.
+          run_check="$(git diff --name-status --no-renames "$base" "$head" | awk -F'\t' '
+            NF < 2 { next }
+            $2 !~ /(\.md$|^docs\/|^\.beads\/|^\.claude\/|^\.gitignore$|^LICENSE$)/ { print "true"; exit }
+          ')"
+          echo "run_check=${run_check:-false}" >> "$GITHUB_OUTPUT"
+
   check:
+    needs: detect
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: docs-only — skip the gate
+        if: needs.detect.outputs.run_check != 'true'
+        run: echo "Only docs changed — reporting check without running the gate."
+
       - uses: actions/checkout@v4
+        if: needs.detect.outputs.run_check == 'true'
         with:
           persist-credentials: false
 
       - uses: actions/setup-go@v5
+        if: needs.detect.outputs.run_check == 'true'
         with:
           go-version-file: go.mod
           check-latest: false
 
-      - name: golangci-lint (pinned in .sandbox/project.conf)
+      - name: install linter (version pinned in .sandbox/project.conf)
+        if: needs.detect.outputs.run_check == 'true'
         run: |
           . ./.sandbox/project.conf
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
             | sh -s -- -b "$(go env GOPATH)/bin" "$GOLANGCI_LINT_VERSION"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-      # CI = the same gate a developer runs; no verb re-implemented in YAML
-      # (conform ci-gate rule). check runs vet + lint + test + build + conform.
+      # CI runs the developer's gate. No step here duplicates what a make
+      # target already owns — that split is what the ci-gate rule protects.
       - name: check
+        if: needs.detect.outputs.run_check == 'true'
         run: make check
 
       # The -race gate (epic ccp-sbp.4) survives as a make verb, not YAML.
       # -count=1 bypasses the test cache so race runs on every push.
       - name: race
+        if: needs.detect.outputs.run_check == 'true'
         run: make race
