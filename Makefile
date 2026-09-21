@@ -43,13 +43,13 @@ vet: ## Run go vet
 tidy: ## Tidy go.mod/go.sum
 	go mod tidy
 
-# Dogfood the fleet gate (sd-th5.16): conform is pinned as a go.mod tool
-# directive, so `go tool conform` runs the go.sum-verified pinned version.
-selfcheck: ## Run conform (fleet SDLC checker) against this repo
-	go tool conform
+# Dogfood the fleet gate (sd-th5.16): conform-to-sdlc is pinned as a go.mod tool
+# directive, so `go tool conform-to-sdlc` runs the go.sum-verified pinned version.
+selfcheck: ## Run conform-to-sdlc (fleet SDLC checker) against this repo
+	go tool conform-to-sdlc
 
-# check is the fast local gate; CI runs the same verb (conform ci-gate rule).
-check: vet lint test build selfcheck ## Full repo: vet + lint + test + build + conform
+# check is the fast local gate; CI runs the same verb (conform-to-sdlc ci-gate rule).
+check: vet lint test build selfcheck ## Full repo: vet + lint + test + build + conform-to-sdlc
 	@echo "=== check pass ==="
 
 # audit is the exhaustive gate (modeled on ../trixi): check + race + dupe +
