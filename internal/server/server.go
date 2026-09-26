@@ -168,8 +168,8 @@ type Server struct {
 	// to the channels scoped to the repo that actually changed (st-6i1): a tab
 	// deep-linked to repo B no longer needs repo A to go quiet to get its own
 	// live-refresh signal, and repo A's churn no longer wakes repo B's tab.
-	events    map[chan struct{}]registry.Repo
-	startOnce sync.Once
+	events map[chan struct{}]registry.Repo
+	start  func()
 }
 
 // Version is the strand binary version, stamped into counts.json's liveness meta by
@@ -209,12 +209,13 @@ func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, sta
 	s.cache.onChange = func(repo string) { s.broadcastChange(repo) }
 	s.suggestLLM = defaultSuggestLLM
 	s.homeDir, _ = os.UserHomeDir()
+	s.start = sync.OnceFunc(func() { s.goBackground(0, s.reconcileLoop) })
 	return s
 }
 
 // Start begins the authoritative background reconciler. It is separate from New
 // so construction-only tests do not leak goroutines; production calls it once.
-func (s *Server) Start() { s.startOnce.Do(func() { s.goBackground(0, s.reconcileLoop) }) }
+func (s *Server) Start() { s.start() }
 
 // defaultSuggestLLM is the production model gate: it builds the key-gated llm
 // client, reporting unavailable (so the drawer renders no assist button) when no
@@ -1233,7 +1234,7 @@ func pivotOrDefault(p string) string {
 // exactly one column. pivot must be a known field (callers pass pivotOrDefault).
 func boardColumns(pivot string, beads []strand.Bead) []boardColumn {
 	field := pivotByName(pivot)
-	cols := append([]boardColumn(nil), field.Seeds...)
+	cols := slices.Clone(field.Seeds)
 	idx := make(map[string]int, len(cols))
 	for i := range cols {
 		idx[cols[i].Key] = i

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"sync"
 	"time"
 
@@ -366,7 +367,7 @@ func (c *snapshotCache) upsert(repo string, issue *bd.Issue) {
 		c.mu.Unlock()
 		return
 	}
-	list := append([]bd.Issue(nil), e.list...)
+	list := slices.Clone(e.list)
 	found := false
 	for i := range list {
 		if list[i].ID == issue.ID {

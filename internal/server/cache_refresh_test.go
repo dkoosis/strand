@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func (s *refreshStub) List(ctx context.Context, opts bd.ListOpts) ([]bd.Issue, e
 		close(s.started)
 	}
 	block, err := s.block, s.listErr
-	issues := append([]bd.Issue(nil), s.issues...)
+	issues := slices.Clone(s.issues)
 	s.mu.Unlock()
 	if block != nil {
 		select {
@@ -94,7 +95,7 @@ func TestExternalRefreshPublishesChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	src.mu.Lock()
-	src.issues = append(append([]bd.Issue(nil), sampleIssues...), bd.Issue{ID: "external"})
+	src.issues = slices.Concat(sampleIssues, []bd.Issue{{ID: "external"}})
 	src.mu.Unlock()
 	if _, err := cache.refreshList(context.Background(), "repo", src, true); err != nil {
 		t.Fatal(err)

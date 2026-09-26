@@ -1,4 +1,4 @@
-.PHONY: help build run test race lint vet tidy check selfcheck audit dupe vuln nilcheck install deploy uninstall clean
+.PHONY: help build run test race lint vet tidy check selfcheck audit dupe vuln nilcheck install deploy uninstall clean pack-drift
 
 .DEFAULT_GOAL := check
 
@@ -49,7 +49,7 @@ selfcheck: ## Run conform-to-sdlc (fleet SDLC checker) against this repo
 	go tool conform-to-sdlc
 
 # check is the fast local gate; CI runs the same verb (conform-to-sdlc ci-gate rule).
-check: vet lint test build selfcheck ## Full repo: vet + lint + test + build + conform-to-sdlc
+check: vet lint test build pack-drift selfcheck ## Full repo: vet + lint + test + build + pack-drift + conform-to-sdlc
 	@echo "=== check pass ==="
 
 # audit is the exhaustive gate (modeled on ../trixi): check + race + dupe +
@@ -93,3 +93,6 @@ clean: ## Remove build artifacts and lint cache
 
 cross: ## Cross-compile linux-amd64 and linux-arm64 into .sandbox/bin/
 	for a in amd64 arm64; do mkdir -p .sandbox/bin/linux-$$a && CGO_ENABLED=0 GOOS=linux GOARCH=$$a go build -o .sandbox/bin/linux-$$a/ ./cmd/strand; done
+
+pack-drift: ## Fail if the copied lintbrush pack rules drifted from upstream (network-soft)
+	@.golangci-rules/check-pack-drift.sh

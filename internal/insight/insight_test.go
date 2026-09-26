@@ -78,8 +78,9 @@ func TestTriageCounts(t *testing.T) {
 // list (bd omits closed) must not keep the bead out of ready.
 func TestTriageAbsentBlockerIsResolved(t *testing.T) {
 	beads, idx := insScope(t)
-	deps := append(append([]bd.DepEdge(nil), insightsDeps...),
-		bd.DepEdge{IssueID: "demo-i.1", DependsOnID: "demo-gone", Type: "blocks"})
+	deps := slices.Concat(insightsDeps, []bd.DepEdge{
+		{IssueID: "demo-i.1", DependsOnID: "demo-gone", Type: "blocks"},
+	})
 	got := triage(beads, blockerCounts(deps, idx), idx, insightsNow)
 	if got.Ready != 2 || got.Blocked != 2 {
 		t.Errorf("absent blocker changed triage: ready=%d blocked=%d, want 2/2", got.Ready, got.Blocked)
