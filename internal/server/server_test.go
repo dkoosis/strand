@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1389,7 +1390,7 @@ func rankOf(writes []rankWrite, id string) float64 {
 // in one pass (the SortBeads invariant). Success is 204 — the client keeps its
 // optimistic DOM.
 func TestRankSeedsUntouchedGroup(t *testing.T) {
-	stub := &stubBD{issues: append([]bd.Issue(nil), sampleIssues...)}
+	stub := &stubBD{issues: slices.Clone(sampleIssues)}
 	srv := newTestServer(t, stub)
 	// demo-e1 group is {demo-e1, demo-e1.a, demo-e1.b}; drop b to the front.
 	rec := send(t, srv, http.MethodPost, "/bead/demo-e1.b/rank",
@@ -1413,7 +1414,7 @@ func TestRankSeedsUntouchedGroup(t *testing.T) {
 // yields (closed mid-drag) gets no rank write — only the live survivors are seeded,
 // and they stay dense.
 func TestRankSeedSkipsAbsentID(t *testing.T) {
-	stub := &stubBD{issues: append([]bd.Issue(nil), sampleIssues...)}
+	stub := &stubBD{issues: slices.Clone(sampleIssues)}
 	srv := newTestServer(t, stub)
 	// "ghost" is not in the strand; the live demo-e1 group is the other three.
 	rec := send(t, srv, http.MethodPost, "/bead/demo-e1.b/rank",
@@ -2556,9 +2557,10 @@ func TestInsightsFragmentRenders(t *testing.T) {
 // TestInsightsScopedToStory: the story param narrows the dashboard to one story; a
 // bead from another story must not appear in the critical path or leaderboards.
 func TestInsightsScopedToStory(t *testing.T) {
-	mixed := append(append([]bd.Issue(nil), insightsIssues...),
-		bd.Issue{ID: "demo-z", Parent: "demo-root", Title: "Other story", IssueType: "epic", Status: "open", Priority: new(2), UpdatedAt: insFresh},
-		bd.Issue{ID: "demo-z.1", Parent: "demo-z", Title: "Elsewhere", Status: "open", Priority: new(2), UpdatedAt: insFresh})
+	mixed := slices.Concat(insightsIssues, []bd.Issue{
+		{ID: "demo-z", Parent: "demo-root", Title: "Other story", IssueType: "epic", Status: "open", Priority: new(2), UpdatedAt: insFresh},
+		{ID: "demo-z.1", Parent: "demo-z", Title: "Elsewhere", Status: "open", Priority: new(2), UpdatedAt: insFresh},
+	})
 	srv := newTestServer(t, &stubBD{issues: mixed, deps: insightsDeps})
 	srv.now = func() time.Time { return insightsNow }
 	body := do(t, srv, "/insights?story=demo-i").Body.String()

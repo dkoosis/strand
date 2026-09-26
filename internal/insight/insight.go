@@ -530,7 +530,7 @@ func downstreamReach(edges []graph.Edge, beads []strand.Bead) (map[string]int, m
 	down := make(map[string][]strand.Bead, len(beads))
 	for i := range beads {
 		seen := map[string]bool{}
-		stack := append([]string(nil), adj[beads[i].ID]...)
+		stack := slices.Clone(adj[beads[i].ID])
 		for len(stack) > 0 {
 			n := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
