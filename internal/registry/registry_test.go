@@ -39,6 +39,27 @@ func TestDiscoverFindsWorkspaces(t *testing.T) {
 	}
 }
 
+// TestDiscoverRecursesAndSkips: workspaces are found at any depth, hidden and
+// skipped trees are not entered, and a workspace's own subtree is not scanned.
+func TestDiscoverRecursesAndSkips(t *testing.T) {
+	root := t.TempDir()
+	deep := mkRepo(t, filepath.Join(root, "nugbases", "dk"), "sdlc")
+	mkRepo(t, filepath.Join(root, ".hidden"), "ghost")
+	mkRepo(t, filepath.Join(root, "Library"), "cache")
+	mkRepo(t, filepath.Join(root, "node_modules"), "dep")
+	outer := mkRepo(t, root, "outer")
+	mkRepo(t, outer, "inner")
+
+	found := discover(root)
+	got := map[string]bool{}
+	for _, f := range found {
+		got[f.Path] = true
+	}
+	if len(found) != 2 || !got[deep] || !got[outer] {
+		t.Errorf("discover = %+v, want only %s and %s", found, deep, outer)
+	}
+}
+
 // TestMRUDefaultActive: the most-recently-used repo is active by default and
 // leads the selector order.
 func TestMRUDefaultActive(t *testing.T) {

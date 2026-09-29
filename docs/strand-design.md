@@ -287,7 +287,7 @@ plus, for the graph, dependency edges (`bd dep`/`bd show` relations).
 ### strand-owned
 `Repo { name, path, prefix, last_used }` — the registry, persisted to
 `~/.config/strand/repos.json` (XDG; honor `$XDG_CONFIG_HOME` — O9, locked). Discovered by
-scanning `~/Projects/*/.beads` and/or explicit add. **✗ `os.UserConfigDir()`** — it resolves
+scanning `$HOME` (any depth) and/or explicit add. **✗ `os.UserConfigDir()`** — it resolves
 to `~/Library/Application Support` on macOS (dk's platform), defeating the XDG intent. Roll
 the path by hand: `$XDG_CONFIG_HOME/strand`, else `~/.config/strand`, on every platform.
 
@@ -347,7 +347,7 @@ The system SHALL let the user choose which beads workspace is active.
 
 #### Scenario: Discover repos
 - **WHEN** the user triggers "find repos" (or on first run)
-- **THEN** the system scans `~/Projects/*/.beads` and offers found workspaces to register
+- **THEN** the system scans `$HOME` for `.beads` workspaces at any depth and offers found workspaces to register
 
 #### Scenario: No repos / empty
 - **WHEN** no repo is registered or the active repo has no `.beads`
@@ -516,7 +516,7 @@ Candidate affordances (proposed — dk to cut/keep/add):
 | O3 | Graph rendering (V3/R4) | server-computed vs client lib | client lib over `bv --robot-graph` JSON; pick lib at V3 |
 | O4 | View build order (R0) | — | **RESOLVED**: V1 tabular+detail first, then V2 kanban, V3 graph, V4 stats (R0 table) |
 | O5 | Mutation confirmations (V1/V2) | all / destructive-only / none | destructive-only; delete uses `bd delete` bare-preview as the confirm |
-| O6 | Repo discovery scope (R1) | `~/Projects/*` scan vs explicit-add | scan + add |
+| O6 | Repo discovery scope (R1) | `$HOME` scan vs explicit-add | scan + add |
 | O7 | Status-writeback subcommand (Q5) | `bd update -s` vs `bd set-state` | **RESOLVED**: `bd update -s <status>`; no `set-state` in bd 1.0.5 |
 | O8 | `bv` availability | required vs optional dependency | **decide**: degrade V3/V4 gracefully if `bv` absent, or hard-require? Leaning optional (V1/V2 work without it) |
 | O9 | Registry config path | locked | **RESOLVED**: `~/.config/strand/repos.json` (XDG; honor `$XDG_CONFIG_HOME`). Low-pri follow-ups: detect prefix collisions across registered repos; prune/flag stale paths on load |

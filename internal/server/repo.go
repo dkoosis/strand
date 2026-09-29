@@ -97,7 +97,7 @@ func (s *Server) activateRepo(w http.ResponseWriter, r *http.Request, activate f
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleRescan re-scans ~/Projects for workspaces and re-renders the menu with
+// handleRescan re-scans the home directory for workspaces and re-renders the menu with
 // any newly-found repos. The active selection is untouched, so no reload.
 func (s *Server) handleRescan(w http.ResponseWriter, r *http.Request) {
 	if err := s.reg.Rescan(registry.ScanRoot()); err != nil {
