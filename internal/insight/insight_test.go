@@ -602,14 +602,13 @@ func TestHumanGate(t *testing.T) {
 
 // TestIsHumanGateIssue: only an OPEN gate issue awaiting "human" counts — a closed
 // one has been resolved, a non-gate issue_type or a non-human await_type doesn't
-// qualify, and a nil issue is defensively false.
+// qualify.
 func TestIsHumanGateIssue(t *testing.T) {
 	cases := []struct {
 		name string
 		iss  *bd.Issue
 		want bool
 	}{
-		{"nil", nil, false},
 		{"open human gate", &bd.Issue{IssueType: "gate", AwaitType: "human", Status: bd.StatusOpen}, true},
 		{"closed human gate", &bd.Issue{IssueType: "gate", AwaitType: "human", Status: bd.StatusClosed}, false},
 		{"timer gate", &bd.Issue{IssueType: "gate", AwaitType: "timer", Status: bd.StatusOpen}, false},

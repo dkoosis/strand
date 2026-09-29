@@ -117,7 +117,7 @@ const gateAwaitHuman = "human"
 // issue awaiting "human", still open. A closed one has already been resolved (bd
 // gate resolve / manual close) and blocks nothing.
 func isHumanGateIssue(iss *bd.Issue) bool {
-	return iss != nil && iss.IssueType == issueTypeGate && iss.AwaitType == gateAwaitHuman && iss.Status != bd.StatusClosed
+	return iss.IssueType == issueTypeGate && iss.AwaitType == gateAwaitHuman && iss.Status != bd.StatusClosed
 }
 
 // humanGateBlocked marks every bead with an open bd human gate blocking it — the
@@ -144,10 +144,10 @@ func humanGateBlocked(deps []bd.DepEdge, idx map[string]bd.Issue) map[string]boo
 // "needs a human call" signal — so the waiting lane never double-counts it. A bead
 // with neither is neither (claimable).
 func humanGate(iss *bd.Issue, gated bool) (decision, review bool) {
-	if gated || (iss != nil && slices.Contains(iss.Labels, humanLabel)) {
+	if gated || slices.Contains(iss.Labels, humanLabel) {
 		return true, false
 	}
-	if iss != nil && reviewNeeded(iss.Metadata) {
+	if reviewNeeded(iss.Metadata) {
 		return false, true
 	}
 	return false, false
