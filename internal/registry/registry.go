@@ -333,17 +333,11 @@ func discover(root string) []Repo {
 	}
 	var out []Repo
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || !d.IsDir() {
-			if d != nil && d.IsDir() {
-				return fs.SkipDir
-			}
+		if d == nil || !d.IsDir() {
 			return nil
 		}
-		if path != root {
-			name := d.Name()
-			if strings.HasPrefix(name, ".") || skipScanDir[name] || scanDepth(root, path) > maxScanDepth {
-				return fs.SkipDir
-			}
+		if err != nil || skipScanPath(root, path, d.Name()) {
+			return fs.SkipDir
 		}
 		if hasBeads(path) {
 			out = append(out, Repo{Name: filepath.Base(path), Path: path})
@@ -352,6 +346,16 @@ func discover(root string) []Repo {
 		return nil
 	})
 	return out
+}
+
+// skipScanPath reports whether discovery must not enter the directory at path:
+// hidden, named in skipScanDir, or deeper than maxScanDepth. The root itself is
+// always entered.
+func skipScanPath(root, path, name string) bool {
+	if path == root {
+		return false
+	}
+	return strings.HasPrefix(name, ".") || skipScanDir[name] || scanDepth(root, path) > maxScanDepth
 }
 
 // scanDepth counts path components of path below root.
