@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -57,10 +58,11 @@ func ConfigPath() string {
 	return filepath.Join(base, "strand", "repos.json")
 }
 
-// ScanRoot is the directory tree discovery walks: ~/Projects (spec O6).
+// ScanRoot is the directory tree discovery walks: the user's home directory, so
+// workspaces outside ~/Projects (a nugbase, a scratch repo) are found too.
 func ScanRoot() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Projects")
+	return home
 }
 
 // Open loads the registry from file (a missing file is an empty registry, not an
@@ -308,20 +310,61 @@ func (r *Registry) saveLocked() error {
 	return nil
 }
 
-// discover finds beads workspaces directly under root by globbing root/*/.beads.
-// A missing or unreadable root yields nothing, not an error — discovery is a
-// best-effort convenience over the registry's explicit adds.
+// maxScanDepth bounds how far below the scan root discovery descends.
+const maxScanDepth = 8
+
+// skipScanDir names directories discovery never enters: package and build trees
+// and the macOS user folders that hold no workspaces but many files. Hidden
+// directories (dot-prefixed) are skipped separately.
+var skipScanDir = map[string]bool{
+	"Library": true, "Applications": true, "Movies": true, "Music": true,
+	"Pictures": true, "node_modules": true, "vendor": true,
+}
+
+// discover finds beads workspaces at any depth under root by walking it. A
+// directory holding .beads is a workspace and is not entered further, so its
+// worktrees and vendored trees never register twice. Symlinks are not followed;
+// unreadable directories are skipped. A missing or unreadable root yields
+// nothing, not an error — discovery is a best-effort convenience over the
+// registry's explicit adds.
 func discover(root string) []Repo {
 	if root == "" {
 		return nil
 	}
-	matches, _ := filepath.Glob(filepath.Join(root, "*", ".beads"))
-	out := make([]Repo, 0, len(matches))
-	for _, m := range matches {
-		path := filepath.Dir(m)
-		out = append(out, Repo{Name: filepath.Base(path), Path: path})
-	}
+	var out []Repo
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if d == nil || !d.IsDir() {
+			return nil
+		}
+		if err != nil || skipScanPath(root, path, d.Name()) {
+			return fs.SkipDir
+		}
+		if hasBeads(path) {
+			out = append(out, Repo{Name: filepath.Base(path), Path: path})
+			return fs.SkipDir
+		}
+		return nil
+	})
 	return out
+}
+
+// skipScanPath reports whether discovery must not enter the directory at path:
+// hidden, named in skipScanDir, or deeper than maxScanDepth. The root itself is
+// always entered.
+func skipScanPath(root, path, name string) bool {
+	if path == root {
+		return false
+	}
+	return strings.HasPrefix(name, ".") || skipScanDir[name] || scanDepth(root, path) > maxScanDepth
+}
+
+// scanDepth counts path components of path below root.
+func scanDepth(root, path string) int {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == "." {
+		return 0
+	}
+	return strings.Count(rel, string(filepath.Separator)) + 1
 }
 
 // hasBeads reports whether path holds a .beads workspace (file or directory).

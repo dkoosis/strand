@@ -50,7 +50,7 @@ func main() {
 		log.Fatalf("strand: open registry: %v", err)
 	}
 	// -dir seeds and activates an explicit workspace (handy for a repo outside
-	// the ~/Projects scan); a current-directory .beads is the bare-launch default.
+	// the home-directory scan); a current-directory .beads is the bare-launch default.
 	if seed := seedDir(*dir); seed != "" {
 		if _, err := reg.Add(seed); err != nil {
 			log.Printf("strand: seed %s: %v", seed, err)
