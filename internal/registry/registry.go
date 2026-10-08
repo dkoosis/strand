@@ -368,7 +368,7 @@ func scanDepth(root, path string) int {
 }
 
 // hasWorkspace is the stricter test discovery applies: a .beads directory must
-// hold a bd database (embeddeddolt or dolt). Bare ~/.beads (machine-id and event
+// hold a bd database directory (embeddeddolt, dolt or proxieddb). Bare ~/.beads (machine-id and event
 // data) and a fresh clone whose database was never initialized are not
 // workspaces; registering one made it the active repo and 502'd every view. A
 // .beads file (a redirect) is trusted.
@@ -381,8 +381,8 @@ func hasWorkspace(path string) bool {
 	if !info.IsDir() {
 		return true
 	}
-	for _, db := range []string{"embeddeddolt", "dolt"} {
-		if _, err := os.Stat(filepath.Join(beads, db)); err == nil {
+	for _, db := range []string{"embeddeddolt", "dolt", "proxieddb"} {
+		if info, err := os.Stat(filepath.Join(beads, db)); err == nil && info.IsDir() {
 			return true
 		}
 	}
