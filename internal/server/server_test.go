@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -556,6 +557,50 @@ func TestHomeFilterDeepLink(t *testing.T) {
 	// An unknown filter falls through to the whole strand: empty data-filter.
 	if body := do(t, srv, "/?filter=bogus").Body.String(); !strings.Contains(body, `data-filter=""`) {
 		t.Errorf("unknown filter should render an empty data-filter (whole-strand landing):\n%s", body)
+	}
+}
+
+func TestHomeBeadDeepLinkOpensDrawer(t *testing.T) {
+	srv := newTestServer(t, &stubBD{issues: sampleIssues})
+
+	body := do(t, srv, "/?bead=demo-e1.a").Body.String()
+	if !strings.Contains(body, `id="drawer" hx-get="/bead/demo-e1.a" hx-trigger="load"`) {
+		t.Errorf("?bead= should make #drawer fetch that bead on load:\n%s", body)
+	}
+
+	// A malformed id never reaches the hx-get URL: the drawer stays inert.
+	for _, bad := range []string{"../shutdown", "a b", "-x", ""} {
+		body := do(t, srv, "/?bead="+url.QueryEscape(bad)).Body.String()
+		if strings.Contains(body, `id="drawer" hx-get`) {
+			t.Errorf("?bead=%q should leave #drawer without an hx-get:\n%s", bad, body)
+		}
+	}
+}
+
+func TestBeadNavigationRedirectsToLanding(t *testing.T) {
+	srv := newTestServer(t, oneBead(&bd.Issue{ID: "demo-e1.a", Title: "Wire the thing", Status: "open", IssueType: "task"}))
+
+	// A top-level browser visit to the fragment URL lands on the board instead,
+	// keeping the request's repo scope.
+	req := httptest.NewRequest(http.MethodGet, "/bead/demo-e1.a?repo=%2Ftmp%2Fr", nil)
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("navigate GET /bead/demo-e1.a = %d, want 303", rec.Code)
+	}
+	if got, want := rec.Header().Get("Location"), "/?bead=demo-e1.a&repo=%2Ftmp%2Fr"; got != want {
+		t.Errorf("Location = %q, want %q", got, want)
+	}
+
+	// htmx's own fetch of the fragment is never redirected, even when it navigates.
+	req = httptest.NewRequest(http.MethodGet, "/bead/demo-e1.a", nil)
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("HX-Request", "true")
+	rec = httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `class="dr-head"`) {
+		t.Errorf("htmx GET /bead/demo-e1.a = %d, want the 200 drawer fragment", rec.Code)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -542,6 +543,22 @@ type pageData struct {
 	// matching pulse cell and active-cut chip on cold load, and the List pane below
 	// is already the cut's list. "" for a plain landing (no filter, or an unknown one).
 	ActiveFilter string
+	// OpenBead is the bead a deep-link `/?bead=<id>` asks to open in the drawer. The
+	// page's #drawer fetches it on load, so the link lands on the board with that
+	// bead's drawer already showing. "" when absent or not a well-formed bead id.
+	OpenBead string
+}
+
+// beadIDRE is the shape of a bead id (prefix-hash, with dotted children). A
+// deep-link's ?bead= must match it before it reaches the page's hx-get URL.
+var beadIDRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// deepLinkBead returns the ?bead= id when it is well-formed, else "".
+func deepLinkBead(r *http.Request) string {
+	if id := r.URL.Query().Get("bead"); beadIDRE.MatchString(id) {
+		return id
+	}
+	return ""
 }
 
 // Pulse is the masthead's repo-wide bead-status spread — the bead half of the
@@ -705,6 +722,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		RepoPath:     repo.Path,
 		AsOf:         s.asOf(repo),
 		ActiveFilter: active,
+		OpenBead:     deepLinkBead(r),
 	})
 }
 
@@ -1449,6 +1467,16 @@ type drawerData struct {
 }
 
 func (s *Server) handleBead(w http.ResponseWriter, r *http.Request) {
+	// /bead/<id> is the drawer fragment htmx swaps in. Opened as a page (a pasted
+	// or clicked deep-link), the bare fragment renders unstyled with no board
+	// around it — so a top-level browser navigation is sent to the landing with
+	// the drawer open on this bead instead, keeping ?repo= and any ?filter=.
+	if r.Header.Get("Sec-Fetch-Mode") == "navigate" && r.Header.Get("HX-Request") == "" {
+		q := r.URL.Query()
+		q.Set("bead", r.PathValue("id"))
+		http.Redirect(w, r, "/?"+q.Encode(), http.StatusSeeOther) //nolint:gosec // G710: target is always this origin's "/" path; only the encoded query varies
+		return
+	}
 	ctx, cancel := reqContext(r)
 	defer cancel()
 	src, _, ok := s.source(r)

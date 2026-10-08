@@ -129,7 +129,9 @@
 {{end}}
 
 <div class="scrim" id="scrim"></div>
-<aside class="drawer" id="drawer"></aside>
+{{/* A `/?bead=<id>` deep-link fetches that bead's drawer as the page loads; the
+     drawer's afterSwap hook (app.js) then slides it open. */}}
+<aside class="drawer" id="drawer"{{if .OpenBead}} hx-get="/bead/{{.OpenBead}}" hx-trigger="load"{{end}}></aside>
 </body>
 </html>{{end}}
 

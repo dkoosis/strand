@@ -585,6 +585,13 @@ function openDrawer() {
 function closeDrawer() {
   scrim?.classList.remove("show");
   drawer?.classList.remove("show");
+  // Drop a `?bead=` deep-link from the address bar, so a reload after closing
+  // doesn't slide the drawer back open.
+  const url = new URL(location.href);
+  if (url.searchParams.has("bead")) {
+    url.searchParams.delete("bead");
+    history.replaceState(null, "", url);
+  }
 }
 // htmx swaps the drawer's contents; open it once the fragment lands.
 document.body.addEventListener("htmx:afterSwap", (e) => {

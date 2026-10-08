@@ -8,8 +8,8 @@
    so the browser scales the map with no client-side layout pass.
    ============================================================ */
 :root {
-  --fs-9: 11px; --fs-8: 12px; --fs-base: 13px;
-  --fs-2: 14px; --fs-3: 16px; --fs-4: 18px; --fs-5: 22px; --fs-6: 28px;
+  --fs-9: 12px; --fs-8: 13px; --fs-base: 14px;
+  --fs-2: 15px; --fs-3: 17px; --fs-4: 20px; --fs-5: 24px; --fs-6: 30px;
   --lh-tight: 1.2; --lh: 1.45;
   --s-1: 2px; --s-2: 4px; --s-3: 6px; --s-4: 8px; --s-5: 12px;
   --s-6: 16px; --s-7: 20px; --s-8: 24px; --s-9: 32px; --s-10: 48px;
@@ -122,7 +122,7 @@ header {
 /* refresh: icon + "as of HH:MM" readout — wider than the square icon buttons */
 .refresh-btn {
   display: inline-flex; align-items: center; gap: var(--s-2);
-  width: auto; padding: 0 var(--s-2); font-size: 12px; color: var(--ink-3);
+  width: auto; padding: 0 var(--s-2); font-size: var(--fs-8); color: var(--ink-3);
 }
 .refresh-btn .asof { font-variant-numeric: tabular-nums; }
 .refresh-btn.htmx-request { opacity: .5; }
@@ -390,7 +390,7 @@ tbody tr:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; 
 .story-head:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .r-id { color: var(--ink-4); font-size: var(--fs-9); width: 92px; text-align: right; padding-right: var(--s-6) !important; }
 .r-pri { width: 44px; padding-left: var(--s-6) !important; }
-.pchip { display: inline-block; width: 20px; text-align: center; font-size: 10px; font-weight: 600;
+.pchip { display: inline-block; width: 20px; text-align: center; font-size: 11px; font-weight: 600;
   border-radius: 3px; color: var(--chip-ink); font-variant-numeric: tabular-nums; }
 .p0 { background: var(--p0); } .p1 { background: var(--p1); } .p2 { background: var(--p2); }
 .p3 { background: var(--p3); color: #fff; } .p4 { background: var(--p4); color: #fff; }
@@ -460,20 +460,23 @@ tbody tr:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; 
 .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.38); opacity: 0; pointer-events: none; transition: opacity .16s; z-index: 8; }
 .scrim.show { opacity: 1; pointer-events: auto; }
 .drawer {
-  position: fixed; top: 0; right: 0; bottom: 0; width: clamp(460px, 42vw, 720px); max-width: 92vw;
+  position: fixed; top: 0; right: 0; bottom: 0; width: clamp(560px, 55vw, 960px); max-width: 94vw;
   background: var(--bg-1); border-left: 1px solid var(--line-2); z-index: 9;
   transform: translateX(100%); transition: transform .2s cubic-bezier(.4,0,.2,1);
   display: flex; flex-direction: column; box-shadow: -20px 0 60px rgba(0,0,0,.35);
 }
 .drawer.show { transform: none; }
-.dr-head { padding: var(--s-7) var(--s-7) var(--s-6); border-bottom: 1px solid var(--line); position: relative; }
+.dr-head { padding: var(--s-8) var(--s-9) var(--s-7); border-bottom: 1px solid var(--line); position: relative; }
 .dr-eyebrow { display: flex; align-items: center; gap: var(--s-3); font-size: var(--fs-8); color: var(--ink-3); }
 .dr-title { font-size: var(--fs-4); font-weight: 600; letter-spacing: -.01em; margin: var(--s-4) 0 0; line-height: 1.3; }
 .dr-stat { display: flex; flex-wrap: wrap; gap: var(--s-3) var(--s-6); margin-top: var(--s-5); font-size: var(--fs-8); color: var(--ink-3); }
 .dr-stat b { color: var(--ink); font-weight: 600; }
 .dr-close { position: absolute; top: var(--s-5); right: var(--s-5); }
-.dr-body { flex: 1; overflow: auto; padding: var(--s-6) var(--s-7); color: var(--ink-2); }
-.dr-body h3 { font-size: var(--fs-9); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin: var(--s-6) 0 var(--s-3); }
+.dr-body { flex: 1; overflow: auto; padding: var(--s-7) var(--s-9) var(--s-9); color: var(--ink-2); line-height: 1.6; }
+/* Section heads carry a rule above them so the eye finds each section's start
+   when scanning down a long drawer; the first one sits flush under the head. */
+.dr-body h3 { font-size: var(--fs-8); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); margin: var(--s-8) 0 var(--s-4); padding-top: var(--s-6); border-top: 1px solid var(--line); }
+.dr-body > .dr-desc-head:first-child h3 { margin-top: 0; padding-top: 0; border-top: 0; }
 .dr-body pre { white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: var(--fs-base); margin: 0; color: var(--ink-2); }
 .dr-note { color: var(--ink-3); font-size: var(--fs-8); }
 
@@ -526,7 +529,9 @@ input.dr-title:focus { border-color: var(--st-open); outline: none; background: 
 
 /* description is the loud center of the drawer */
 .dr-field-primary { margin-bottom: var(--s-6); }
-textarea.dr-desc { min-height: 11rem; line-height: 1.5; }
+/* The description grows to its content (field-sizing, where supported) so it reads
+   as a page, not a scroll box; browsers without it keep the min-height. */
+textarea.dr-desc { min-height: 14rem; line-height: 1.6; field-sizing: content; }
 
 /* agent ops demoted behind an overflow disclosure, away from the shaping surface */
 .dr-overflow { margin-top: var(--s-7); padding-top: var(--s-5); border-top: 1px solid var(--line); }
