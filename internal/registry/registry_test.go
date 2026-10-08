@@ -9,14 +9,69 @@ import (
 	"time"
 )
 
-// mkRepo creates dir/.beads under root so discovery and Add see a workspace.
+// mkRepo creates dir/.beads (with an embeddeddolt database dir) under root so
+// discovery and Add see a workspace.
 func mkRepo(t *testing.T, root, name string) string {
 	t.Helper()
 	path := filepath.Join(root, name)
 	if err := os.MkdirAll(filepath.Join(path, ".beads"), 0o755); err != nil {
 		t.Fatalf("mkRepo %s: %v", name, err)
 	}
+	if err := os.MkdirAll(filepath.Join(path, ".beads", "embeddeddolt"), 0o755); err != nil {
+		t.Fatalf("mkRepo %s db: %v", name, err)
+	}
 	return path
+}
+
+// TestDiscoverSkipsBareBeadsDir: a .beads dir with no database (the shape of
+// ~/.beads, or an uninitialized fresh clone) is not a workspace, so discovery
+// must not register its parent.
+func TestDiscoverSkipsBareBeadsDir(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{".beads/eventsData", "fresh/.beads"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mkRepo(t, root, "real")
+	got := discover(root)
+	if len(got) != 1 || got[0].Name != "real" {
+		t.Errorf("discover = %+v, want only [real]", got)
+	}
+}
+
+// TestDiscoverDatabaseShapes: each bd database dir (dolt, proxieddb) and a
+// .beads redirect file make a workspace; a regular file where the database dir
+// belongs does not.
+func TestDiscoverDatabaseShapes(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"dolt-repo/.beads/dolt", "proxied/.beads/proxieddb", "malformed/.beads"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "malformed", ".beads", "dolt"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "redirect"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "redirect", ".beads"), []byte("../elsewhere\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	names := map[string]bool{}
+	for _, r := range discover(root) {
+		names[r.Name] = true
+	}
+	for _, want := range []string{"dolt-repo", "proxied", "redirect"} {
+		if !names[want] {
+			t.Errorf("discover missed %s: %v", want, names)
+		}
+	}
+	if names["malformed"] {
+		t.Errorf("discover registered malformed (a file named dolt is not a database): %v", names)
+	}
 }
 
 // TestDiscoverFindsWorkspaces: a *.beads scan of the root surfaces every child
