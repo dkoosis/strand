@@ -335,6 +335,85 @@ func TestOpenPrunesDeadEntry(t *testing.T) {
 	}
 }
 
+// writePrefix sets issue-prefix in path/.beads/config.yaml, as bd init does.
+func writePrefix(t *testing.T, path, prefix string) {
+	t.Helper()
+	cfg := "# issue-prefix: \"\"\nissue-prefix: \"" + prefix + "\"\n"
+	if err := os.WriteFile(filepath.Join(path, ".beads", "config.yaml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestActiveSkipsRepoDeletedWhileRunning: the active repo's folder is deleted
+// after Open. Active never returns it; the most-recently-used live repo takes
+// over, and the dead entry leaves the list (st-mqj).
+func TestActiveSkipsRepoDeletedWhileRunning(t *testing.T) {
+	root := t.TempDir()
+	doomed := mkRepo(t, root, "doomed")
+	live := mkRepo(t, root, "live")
+	file := filepath.Join(t.TempDir(), "repos.json")
+	reg, err := Open(file, root)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := reg.Switch(doomed); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(doomed); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := reg.Active(); !ok || got.Path != live {
+		t.Errorf("Active = %+v ok=%v, want the live repo", got, ok)
+	}
+	if got, ok := reg.Resolve(""); !ok || got.Path != live {
+		t.Errorf("Resolve(\"\") = %+v ok=%v, want the live repo", got, ok)
+	}
+	for _, repo := range reg.Repos() {
+		if repo.Path == doomed {
+			t.Errorf("dead repo still listed: %+v", reg.Repos())
+		}
+	}
+}
+
+// TestByPrefix: a bead id resolves to the live repo whose config.yaml
+// issue-prefix names it; the longest prefix wins, a deleted repo is skipped,
+// and an unclaimed id reports ok=false.
+func TestByPrefix(t *testing.T) {
+	root := t.TempDir()
+	mn := mkRepo(t, root, "mnemd")
+	writePrefix(t, mn, "mn")
+	st := mkRepo(t, root, "strand")
+	writePrefix(t, st, "st")
+	stx := mkRepo(t, root, "stx")
+	writePrefix(t, stx, "st-x")
+	gone := mkRepo(t, root, "gone")
+	writePrefix(t, gone, "gn")
+	reg, err := Open(filepath.Join(t.TempDir(), "repos.json"), root)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		id, want string
+		ok       bool
+	}{
+		{"mn-x305", mn, true},
+		{"st-abc", st, true},
+		{"st-x-abc", stx, true},
+		{"gn-1", "", false},
+		{"zz-1", "", false},
+		{"mnx-1", "", false},
+	}
+	for _, c := range cases {
+		got, ok := reg.ByPrefix(c.id)
+		if ok != c.ok || got.Path != c.want {
+			t.Errorf("ByPrefix(%q) = %q ok=%v, want %q ok=%v", c.id, got.Path, ok, c.want, c.ok)
+		}
+	}
+}
+
 // TestOpenMissingFileIsEmpty: a registry pointed at a non-existent file with an
 // empty scan root opens clean, with no repos and no active selection.
 func TestOpenMissingFileIsEmpty(t *testing.T) {
