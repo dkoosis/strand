@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -27,8 +28,9 @@ var ErrUnknownRepo = errors.New("repo not registered")
 var ErrNoBeads = errors.New("no .beads workspace")
 
 // Repo is one registered beads workspace. Path is the directory bd runs in; Name
-// is its label in the selector; Prefix is the bead-id prefix (cosmetic, filled
-// best-effort); LastUsed drives the most-recently-used ordering and default.
+// is its label in the selector; Prefix is the bead-id prefix, read best-effort
+// from the workspace's .beads/config.yaml issue-prefix (ByPrefix routes a bare
+// bead id by it); LastUsed drives the most-recently-used ordering and default.
 type Repo struct {
 	Name     string    `json:"name"`
 	Path     string    `json:"path"`
@@ -39,11 +41,15 @@ type Repo struct {
 // Registry holds the known repos and the active selection behind one mutex, so
 // concurrent HTTP requests can read and switch safely. file is the persistence
 // path; an empty file means in-memory (tests), with no disk reads or writes.
+// liveCheck is set by Open: a repo whose folder has gone since Open (deleted
+// while strand runs) is dropped before it can serve as the default. InMemory
+// leaves it off so tests can register paths that are not on disk.
 type Registry struct {
-	mu     sync.Mutex
-	file   string
-	repos  []Repo
-	active string // active repo path; empty = none
+	mu        sync.Mutex
+	file      string
+	repos     []Repo
+	active    string // active repo path; empty = none
+	liveCheck bool
 }
 
 // ConfigPath is the registry file location, honoring $XDG_CONFIG_HOME and falling
@@ -70,12 +76,13 @@ func ScanRoot() string {
 // most-recently-used as active, and persists the merged result. An empty file
 // path yields an in-memory registry that never touches disk.
 func Open(file, scanRoot string) (*Registry, error) {
-	r := &Registry{file: file}
+	r := &Registry{file: file, liveCheck: true}
 	if err := r.load(); err != nil {
 		return nil, err
 	}
 	r.pruneDeadLocked()
 	r.merge(discover(scanRoot))
+	r.fillPrefixesLocked()
 	r.sortLocked()
 	r.pickActiveLocked()
 	if err := r.saveLocked(); err != nil {
@@ -104,10 +111,18 @@ func (r *Registry) Repos() []Repo {
 }
 
 // Active returns the active repo and whether one is selected. No repos (or a
-// stale active path) yields ok=false, which the UI shows as the empty state.
+// stale active path) yields ok=false, which the UI shows as the empty state. An
+// active repo whose folder has gone since Open is never returned: dead entries
+// are dropped (and named in the log) and the most-recently-used live repo takes
+// over, so no view runs bd in a missing directory (st-mqj). The drop is
+// in-memory; the next Open persists it.
 func (r *Registry) Active() (Repo, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.liveCheck && r.active != "" && !dirExists(r.active) {
+		r.pruneDeadLocked()
+		r.pickActiveLocked()
+	}
 	if i := r.indexOf(r.active); i >= 0 {
 		return r.repos[i], true
 	}
@@ -125,6 +140,32 @@ func (r *Registry) Lookup(path string) (Repo, bool) {
 		return r.repos[i], true
 	}
 	return Repo{}, false
+}
+
+// ByPrefix returns the repo whose issue prefix names the bead id: mn-x305 is
+// in the repo with prefix "mn". The longest matching prefix wins, and among
+// repos with the same prefix the most recently used does. A repo whose folder
+// has gone is skipped. ok is false when no repo claims the id, and the caller
+// falls back to Resolve.
+func (r *Registry) ByPrefix(id string) (Repo, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	best := -1
+	for i, repo := range r.repos {
+		if repo.Prefix == "" || !strings.HasPrefix(id, repo.Prefix+"-") {
+			continue
+		}
+		if r.liveCheck && !dirExists(repo.Path) {
+			continue
+		}
+		if best < 0 || len(repo.Prefix) > len(r.repos[best].Prefix) {
+			best = i
+		}
+	}
+	if best < 0 {
+		return Repo{}, false
+	}
+	return r.repos[best], true
 }
 
 // Resolve scopes one request's repo with no side effect on the registry: an
@@ -186,8 +227,9 @@ func (r *Registry) Add(path string) (Repo, error) {
 	defer r.mu.Unlock()
 	if i := r.indexOf(path); i >= 0 {
 		r.repos[i].LastUsed = time.Now()
+		r.repos[i].Prefix = readPrefix(path)
 	} else {
-		r.repos = append(r.repos, Repo{Name: filepath.Base(path), Path: path, LastUsed: time.Now()})
+		r.repos = append(r.repos, Repo{Name: filepath.Base(path), Path: path, Prefix: readPrefix(path), LastUsed: time.Now()})
 	}
 	r.active = path
 	r.sortLocked()
@@ -203,6 +245,7 @@ func (r *Registry) Rescan(scanRoot string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.merge(discover(scanRoot))
+	r.fillPrefixesLocked()
 	r.sortLocked()
 	return r.saveLocked()
 }
@@ -215,6 +258,38 @@ func (r *Registry) merge(found []Repo) {
 			r.repos = append(r.repos, f)
 		}
 	}
+}
+
+// fillPrefixesLocked reads each repo's issue prefix from its workspace config,
+// so ByPrefix sees the prefix bd mints ids with today. A repo whose config names
+// none keeps whatever it had. Callers hold the lock.
+func (r *Registry) fillPrefixesLocked() {
+	for i := range r.repos {
+		if p := readPrefix(r.repos[i].Path); p != "" {
+			r.repos[i].Prefix = p
+		}
+	}
+}
+
+// readPrefix returns the issue-prefix set in path/.beads/config.yaml, or "" when
+// the file is missing or sets none. It reads the one top-level key by line
+// rather than parsing YAML: the key is a flat scalar bd writes itself.
+func readPrefix(path string) string {
+	data, err := os.ReadFile(filepath.Join(path, ".beads", "config.yaml"))
+	if err != nil {
+		return ""
+	}
+	for line := range strings.Lines(string(data)) {
+		v, ok := strings.CutPrefix(line, "issue-prefix:")
+		if !ok {
+			continue
+		}
+		if j := strings.Index(v, " #"); j >= 0 {
+			v = v[:j]
+		}
+		return strings.Trim(strings.TrimSpace(v), `"'`)
+	}
+	return ""
 }
 
 // indexOf returns the position of path in repos, or -1. Callers hold the lock.
@@ -244,15 +319,24 @@ func (r *Registry) sortLocked() {
 // most-recently-used active pick, then 502 every view and make the background
 // reconciler retry `bd list` against a gone dir forever (st-f9o). A missing dir
 // is unambiguous (unlike a transient read error), so pruning here is safe.
-// Callers hold the lock (Open constructs before any goroutine reaches r).
+// Each dropped entry is named in the log, so a vanished repo is visible rather
+// than silently gone. Callers hold the lock.
 func (r *Registry) pruneDeadLocked() {
 	live := r.repos[:0]
 	for _, repo := range r.repos {
-		if _, err := os.Stat(repo.Path); err == nil {
+		if dirExists(repo.Path) {
 			live = append(live, repo)
+			continue
 		}
+		log.Printf("strand: registry: skipping repo %s, its folder %s is gone", repo.Name, repo.Path)
 	}
 	r.repos = live
+}
+
+// dirExists reports whether path is present on disk.
+func dirExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // pickActiveLocked keeps a still-valid active selection, else defaults to the

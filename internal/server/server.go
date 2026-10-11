@@ -418,10 +418,19 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 // param scopes THIS request only — via registry.Resolve, which never mutates
 // the registry or writes repos.json (st-ga4: the deep-link that used to
 // re-point the global active repo on a plain GET). No param falls back to the
-// persistent active repo. ok is false when neither resolves, which the
-// landing renders as the empty state.
+// persistent active repo, except on a /bead/{id} route: there the repo whose
+// issue prefix names the id serves it (mn-x305 opens from the "mn" repo), and
+// the active repo is only the fallback when no prefix matches (st-mqj). ok is
+// false when nothing resolves, which the landing renders as the empty state.
 func (s *Server) source(r *http.Request) (IssueSource, registry.Repo, bool) {
-	repo, ok := s.reg.Resolve(r.URL.Query().Get("repo"))
+	param := r.URL.Query().Get("repo")
+	repo, ok := registry.Repo{}, false
+	if id := r.PathValue("id"); param == "" && id != "" {
+		repo, ok = s.reg.ByPrefix(id)
+	}
+	if !ok {
+		repo, ok = s.reg.Resolve(param)
+	}
 	if !ok {
 		return nil, registry.Repo{}, false
 	}
@@ -1470,10 +1479,15 @@ func (s *Server) handleBead(w http.ResponseWriter, r *http.Request) {
 	// /bead/<id> is the drawer fragment htmx swaps in. Opened as a page (a pasted
 	// or clicked deep-link), the bare fragment renders unstyled with no board
 	// around it — so a top-level browser navigation is sent to the landing with
-	// the drawer open on this bead instead, keeping ?repo= and any ?filter=.
+	// the drawer open on this bead instead, keeping ?repo= and any ?filter=. With
+	// no ?repo=, the repo the id's prefix names scopes the landing, so its drawer
+	// fetch reads the right workspace (st-mqj).
 	if r.Header.Get("Sec-Fetch-Mode") == "navigate" && r.Header.Get("HX-Request") == "" {
 		q := r.URL.Query()
 		q.Set("bead", r.PathValue("id"))
+		if repo, ok := s.reg.ByPrefix(r.PathValue("id")); ok && q.Get("repo") == "" {
+			q.Set("repo", repo.Path)
+		}
 		http.Redirect(w, r, "/?"+q.Encode(), http.StatusSeeOther) //nolint:gosec // G710: target is always this origin's "/" path; only the encoded query varies
 		return
 	}

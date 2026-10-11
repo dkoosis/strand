@@ -1,9 +1,15 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
 	"github.com/dkoosis/strand/internal/registry"
@@ -220,5 +226,70 @@ func TestSwitchUnknownRepoSurfacesError(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "rm-err") {
 		t.Errorf("failed switch did not surface the error:\n%s", rec.Body.String())
+	}
+}
+
+// mkPrefixedRepo creates a beads workspace under root whose config.yaml sets
+// issue-prefix, the shape bd init leaves behind.
+func mkPrefixedRepo(t *testing.T, root, name, prefix string) string {
+	t.Helper()
+	path := filepath.Join(root, name)
+	if err := os.MkdirAll(filepath.Join(path, ".beads", "embeddeddolt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := fmt.Sprintf("# Issue prefix for this repository\n# issue-prefix: \"\"\nissue-prefix: %q\n", prefix)
+	if err := os.WriteFile(filepath.Join(path, ".beads", "config.yaml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestBeadWithNoRepoOpensFromPrefixRepo: the registry's most recently used repo
+// has lost its folder, and GET /bead/<id> with no ?repo= answers 200 from the
+// repo whose issue-prefix matches the id, not from the default (st-mqj).
+func TestBeadWithNoRepoOpensFromPrefixRepo(t *testing.T) {
+	root := t.TempDir()
+	sdloop := mkPrefixedRepo(t, root, "sdloop", "sd")
+	strandDir := mkPrefixedRepo(t, root, "strand", "st")
+	mnemd := mkPrefixedRepo(t, root, "mnemd", "mn")
+	now := time.Now()
+	file := filepath.Join(root, "repos.json")
+	seed := fmt.Sprintf(`[{"name":"sdloop","path":%q,"last_used":%q},{"name":"strand","path":%q,"last_used":%q},{"name":"mnemd","path":%q,"last_used":%q}]`,
+		sdloop, now.Format(time.RFC3339Nano),
+		strandDir, now.Add(-time.Hour).Format(time.RFC3339Nano),
+		mnemd, now.Add(-48*time.Hour).Format(time.RFC3339Nano))
+	if err := os.WriteFile(file, []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := registry.Open(file, "")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	// The folder goes away while strand runs, as sdloop's did.
+	if err := os.RemoveAll(sdloop); err != nil {
+		t.Fatal(err)
+	}
+	srv := serverFor(t, reg, map[string]IssueSource{
+		sdloop:    &stubBD{showErr: fmt.Errorf("chdir %s: %w", sdloop, os.ErrNotExist)},
+		strandDir: &stubBD{showErr: errNoIssue},
+		mnemd:     &stubBD{show: map[string]*bd.Issue{"mn-x305": {ID: "mn-x305", Title: "Mnemd bead title", Status: "open"}}},
+	})
+	rec := do(t, srv, "/bead/mn-x305")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /bead/mn-x305 = %d, want 200:\n%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Mnemd bead title") {
+		t.Errorf("drawer missing mn-x305's title:\n%s", rec.Body.String())
+	}
+
+	// A browser visit lands on the board scoped to that repo, so the page's
+	// drawer fetch (which carries the page's repo) reads the right workspace.
+	req := httptest.NewRequest(http.MethodGet, "/bead/mn-x305", nil)
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	rec = httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	want := "/?" + url.Values{"bead": {"mn-x305"}, "repo": {mnemd}}.Encode()
+	if got := rec.Header().Get("Location"); got != want {
+		t.Errorf("Location = %q, want %q", got, want)
 	}
 }
