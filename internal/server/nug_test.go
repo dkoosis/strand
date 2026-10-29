@@ -191,9 +191,10 @@ func TestRegisteredPathMatchesVaultWithoutCase(t *testing.T) {
 func TestNugLinkStalePathFollowsMove(t *testing.T) {
 	vault := t.TempDir()
 	moved := writeNug(t, vault, "projects/new/n.md", "bbbbbbbbbbbb")
+	// An older nug left old/n.md first; the latest to leave it is the one the link means.
 	ledger := `{"verb":"correct","id":"bbbbbbbbbbbb","path":"old/n.md"}
+{"verb":"move","id":"aaaaaaaaaaaa","path":"first/n.md","from":"old/n.md"}
 {"verb":"move","id":"bbbbbbbbbbbb","path":"projects/new/n.md","from":"old/n.md"}
-{"verb":"move","id":"cccccccccccc","path":"elsewhere/n.md","from":"projects/new/n.md"}
 `
 	writeLedger(t, vault, ledger)
 	srv, opened := nugServer(t)

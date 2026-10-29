@@ -213,14 +213,16 @@ func registeredPath(path string, vaults []string) string {
 	return root + path[len(root):]
 }
 
-// movedTo follows mnemd's write ledger from a vault-relative path through every
-// move that renamed it, and returns the id of the nug that left, "" when none.
+// movedTo reads mnemd's write ledger for the nug that most recently left the
+// vault-relative path rel by a move, and returns its id, "" when none did. A
+// later nug that took the path and left it is the likelier target of a link
+// made while it lived there; the id, not the path, is what mnemd then resolves.
 func movedTo(ledger, rel string) string {
 	b, err := os.ReadFile(ledger) //nolint:gosec // the ledger inside a registered vault
 	if err != nil {
 		return ""
 	}
-	cur, id := rel, ""
+	id := ""
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for sc.Scan() {
@@ -231,13 +233,11 @@ func movedTo(ledger, rel string) string {
 		var e struct {
 			Verb string `json:"verb"`
 			ID   string `json:"id"`
-			Path string `json:"path"`
 			From string `json:"from"`
 		}
-		if json.Unmarshal(line, &e) != nil || e.Verb != "move" || !strings.EqualFold(e.From, cur) || (id != "" && e.ID != id) {
-			continue // a later nug that took the path is not the one that left it
+		if json.Unmarshal(line, &e) == nil && e.Verb == "move" && strings.EqualFold(e.From, rel) {
+			id = e.ID
 		}
-		cur, id = e.Path, e.ID
 	}
 	return id
 }
