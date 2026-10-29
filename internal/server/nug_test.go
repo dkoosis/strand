@@ -230,15 +230,16 @@ func TestNugLinkMnemdFailureIsNotNotFound(t *testing.T) {
 // A path no nug answers to gets a page saying so, never an obsidian:// link.
 func TestNugLinkNotFoundIsAPageNotARedirect(t *testing.T) {
 	srv, opened := nugServer(t)
-	for _, target := range []string{
-		"/nug?path=" + url.QueryEscape("/Users/dk/nugbases/dk/nowhere.md"),
-		"/nug/000000000000",
+	for _, tt := range []struct{ target, subject string }{
+		{"/nug?path=" + url.QueryEscape("/Users/dk/nugbases/dk/nowhere.md"), "/Users/dk/nugbases/dk/nowhere.md"},
+		{"/nug/000000000000", "000000000000"},
 	} {
+		target := tt.target
 		code, body, _ := openPath(t, srv, opened, target)
 		if code != http.StatusNotFound {
 			t.Errorf("%s: status = %d, want 404", target, code)
 		}
-		if !strings.Contains(body, "Nug not found") || strings.Contains(body, "obsidian://") {
+		if !strings.Contains(body, "<p>Nug not found: "+tt.subject+"</p>") || strings.Contains(body, "obsidian://") || strings.Contains(body, "issue not found") {
 			t.Errorf("%s: body = %s", target, body)
 		}
 	}

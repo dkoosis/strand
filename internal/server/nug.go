@@ -66,7 +66,11 @@ func (s *Server) handleNug(w http.ResponseWriter, r *http.Request) {
 	}
 	path, err := s.resolveNug(ctx, r)
 	if errors.Is(err, bd.ErrNotFound) {
-		renderNugNotFound(w, err)
+		subject := r.PathValue("id")
+		if subject == "" {
+			subject = r.URL.Query().Get("path")
+		}
+		renderNugNotFound(w, subject)
 		return
 	}
 	if err != nil {
@@ -94,14 +98,14 @@ func (s *Server) handleNug(w http.ResponseWriter, r *http.Request) {
 var nugNotFoundPage = template.Must(template.New("nugNotFound").Parse(`<!doctype html>
 <html><head><meta charset="utf-8"><title>Nug not found</title></head>
 <body style="font-family:system-ui,sans-serif;margin:2rem">
-<p>Nug not found. {{.}}</p>
+<p>Nug not found: {{.}}</p>
 </body></html>
 `))
 
-func renderNugNotFound(w http.ResponseWriter, err error) {
+func renderNugNotFound(w http.ResponseWriter, subject string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusNotFound)
-	if rerr := nugNotFoundPage.Execute(w, err.Error()); rerr != nil {
+	if rerr := nugNotFoundPage.Execute(w, subject); rerr != nil {
 		log.Printf("strand: render nug not-found page: %v", rerr)
 	}
 }
