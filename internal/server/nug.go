@@ -167,7 +167,7 @@ func frontmatterID(path string) string {
 	defer func() { _ = f.Close() }()
 	head, _ := io.ReadAll(io.LimitReader(f, 4096))
 	lines := strings.Split(string(head), "\n")
-	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
+	if strings.TrimRight(lines[0], "\r") != "---" {
 		return ""
 	}
 	for _, line := range lines[1:] {
@@ -254,9 +254,7 @@ func defaultNugVaults() []string {
 		}
 		if err == nil && json.Unmarshal(b, &cfg) == nil {
 			for _, v := range cfg.Vaults {
-				if v.Path != "" {
-					vaults = append(vaults, v.Path)
-				}
+				vaults = append(vaults, v.Path)
 			}
 		}
 	}

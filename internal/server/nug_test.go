@@ -49,6 +49,17 @@ func writeNug(t *testing.T, dir, name, id string) string {
 	return p
 }
 
+// writeLedger writes the vault's mnemd write ledger.
+func writeLedger(t *testing.T, vault, ledger string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(vault, ".mnemd"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(vault, ".mnemd", "mnemd-write-ledger.jsonl"), []byte(ledger), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // openPath serves target and returns the status, body and the one URL opened.
 func openPath(t *testing.T, srv *Server, opened *[]string, target string) (code int, body, link string) {
 	t.Helper()
@@ -184,12 +195,7 @@ func TestNugLinkStalePathFollowsMove(t *testing.T) {
 {"verb":"move","id":"bbbbbbbbbbbb","path":"projects/new/n.md","from":"old/n.md"}
 {"verb":"move","id":"cccccccccccc","path":"elsewhere/n.md","from":"projects/new/n.md"}
 `
-	if err := os.MkdirAll(filepath.Join(vault, ".mnemd"), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(vault, ".mnemd", "mnemd-write-ledger.jsonl"), []byte(ledger), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeLedger(t, vault, ledger)
 	srv, opened := nugServer(t)
 	srv.nugVaults = func() []string { return []string{vault} }
 	srv.nugPath = func(_ context.Context, id string) (string, error) {
@@ -208,12 +214,7 @@ func TestNugLinkStalePathFollowsMove(t *testing.T) {
 func TestNugLinkMnemdFailureIsNotNotFound(t *testing.T) {
 	vault := t.TempDir()
 	ledger := `{"verb":"move","id":"bbbbbbbbbbbb","path":"new/n.md","from":"old/n.md"}` + "\n"
-	if err := os.MkdirAll(filepath.Join(vault, ".mnemd"), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(vault, ".mnemd", "mnemd-write-ledger.jsonl"), []byte(ledger), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeLedger(t, vault, ledger)
 	srv, opened := nugServer(t)
 	srv.nugVaults = func() []string { return []string{vault} }
 	srv.nugPath = func(context.Context, string) (string, error) {
