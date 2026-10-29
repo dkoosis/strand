@@ -243,3 +243,22 @@ func TestNugLinkNotFoundIsAPageNotARedirect(t *testing.T) {
 		t.Errorf("opened %v for a missing nug", *opened)
 	}
 }
+
+// A foreign page must not probe the disk through ?path=: whether a file exists
+// never shows in the status.
+func TestNugLinkCrossSitePathProbesNothing(t *testing.T) {
+	srv, opened := nugServer(t)
+	note := writeNug(t, t.TempDir(), "n.md", "cd3e1d8d4f05")
+	for _, p := range []string{note, note + ".missing"} {
+		req := httptest.NewRequest(http.MethodGet, "/nug?path="+url.QueryEscape(p), nil)
+		req.Header.Set(headerSecFetchSite, secFetchCrossSite)
+		rec := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s: status = %d, want 403", p, rec.Code)
+		}
+	}
+	if len(*opened) != 0 {
+		t.Errorf("cross-site request opened %v", *opened)
+	}
+}

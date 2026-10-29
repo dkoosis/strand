@@ -58,6 +58,12 @@ type nugPageData struct {
 func (s *Server) handleNug(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
+	if r.PathValue("id") == "" && !sameSite(r) {
+		// A ?path= answer reads the disk (is there a file, which id); a foreign
+		// page must not learn that from the status.
+		s.renderError(w, errCrossSite)
+		return
+	}
 	path, err := s.resolveNug(ctx, r)
 	if errors.Is(err, bd.ErrNotFound) {
 		renderNugNotFound(w, err)
