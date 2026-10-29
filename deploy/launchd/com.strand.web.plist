@@ -46,6 +46,8 @@
         <!-- strand shells out to `bd`; ensure the daemon's PATH finds it. -->
         <key>PATH</key>
         <string>__REPLACE_PATH__</string>
+        <!-- /nug/<id> asks mnemd where a nug lives; launchd runs strand from /, so
+             mnemd needs its nugbase named. install.sh sets MNEMD_NUGBASE here. -->
     </dict>
 </dict>
 </plist>

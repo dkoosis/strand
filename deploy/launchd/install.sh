@@ -37,12 +37,14 @@ bash "${HERE}/rotate-log.sh" "$LOG_DIR/serve.log" \
     || echo "warning: serve.log rotation failed; continuing install" >&2
 
 # Generate plist from template — substitute non-secret placeholders. Pin PATH so
-# the launchd daemon (which inherits a minimal PATH) can find `bd` and friends.
+# the launchd daemon (which inherits a minimal PATH) can find `bd` and friends,
+# and name mnemd's nugbase (set below with plutil, which escapes it for XML).
 sed -e "s|__REPLACE_STRAND_BIN__|${STRAND_BIN}|" \
     -e "s|__REPLACE_ADDR__|${ADDR}|" \
     -e "s|__REPLACE_LOG_DIR__|${LOG_DIR}|" \
     -e "s|__REPLACE_PATH__|$(dirname "$STRAND_BIN"):${HOME}/go/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin|" \
     "$PLIST_SRC" > "$PLIST_DST"
+plutil -replace EnvironmentVariables.MNEMD_NUGBASE -string "${MNEMD_NUGBASE:-${HOME}/nugbases/dk}" "$PLIST_DST"
 chmod 600 "$PLIST_DST"
 
 # Load agent.
