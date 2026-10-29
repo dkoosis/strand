@@ -1,14 +1,18 @@
 package server
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -54,12 +58,22 @@ type nugPageData struct {
 func (s *Server) handleNug(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := reqContext(r)
 	defer cancel()
+	if r.PathValue("id") == "" && !sameSite(r) {
+		// A ?path= answer reads the disk (is there a file, which id); a foreign
+		// page must not learn that from the status.
+		s.renderError(w, errCrossSite)
+		return
+	}
 	path, err := s.resolveNug(ctx, r)
+	if errors.Is(err, bd.ErrNotFound) {
+		renderNugNotFound(w, err)
+		return
+	}
 	if err != nil {
 		s.renderError(w, err)
 		return
 	}
-	link := obsidianURL(path)
+	link := obsidianURL(registeredPath(path, s.nugVaults()))
 	opened := false
 	if sameSite(r) {
 		if err := s.openURL(ctx, link); err != nil {
@@ -75,8 +89,25 @@ func (s *Server) handleNug(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// nugNotFoundPage answers a link no nug answers to: a page, never a dead
+// obsidian:// redirect.
+var nugNotFoundPage = template.Must(template.New("nugNotFound").Parse(`<!doctype html>
+<html><head><meta charset="utf-8"><title>Nug not found</title></head>
+<body style="font-family:system-ui,sans-serif;margin:2rem">
+<p>Nug not found. {{.}}</p>
+</body></html>
+`))
+
+func renderNugNotFound(w http.ResponseWriter, err error) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusNotFound)
+	if rerr := nugNotFoundPage.Execute(w, err.Error()); rerr != nil {
+		log.Printf("strand: render nug not-found page: %v", rerr)
+	}
+}
+
 // resolveNug turns the request into the note's absolute path: the {id} path value
-// through mnemd, or the ?path= query as given.
+// through mnemd, or the ?path= query as a hint for the nug it names.
 func (s *Server) resolveNug(ctx context.Context, r *http.Request) (string, error) {
 	if id := r.PathValue("id"); id != "" {
 		if !nugIDPattern.MatchString(id) {
@@ -88,7 +119,146 @@ func (s *Server) resolveNug(ctx context.Context, r *http.Request) (string, error
 	if path == "" || !filepath.IsAbs(path) {
 		return "", fmt.Errorf("%w: path must be absolute: %q", bd.ErrInvalidArg, path)
 	}
-	return filepath.Clean(path), nil
+	return s.resolveNugPath(ctx, filepath.Clean(path))
+}
+
+// resolveNugPath finds where the nug a ?path= link names lives now. A link's
+// path goes stale (mnemd move) and may differ in case from the vault, so the
+// path is only a hint: the file's own id, else the id mnemd moved away from
+// that path, names the nug, and mnemd says where it is. A path no nug answers to is bd.ErrNotFound.
+func (s *Server) resolveNugPath(ctx context.Context, path string) (string, error) {
+	if id := frontmatterID(path); id != "" {
+		if cur, err := s.nugPath(ctx, id); err == nil {
+			return cur, nil
+		}
+		return path, nil // mnemd cannot say; the file itself is there
+	}
+	if fileExists(path) {
+		return path, nil
+	}
+	root, ok := vaultRoot(path, s.nugVaults())
+	if !ok {
+		root, ok = vaultRoot(path, []string{os.Getenv("MNEMD_NUGBASE")})
+	}
+	if ok {
+		rel := strings.TrimPrefix(path[len(root):], "/")
+		if id := movedTo(filepath.Join(root, ".mnemd", "mnemd-write-ledger.jsonl"), rel); id != "" {
+			cur, err := s.nugPath(ctx, id)
+			if err == nil || !errors.Is(err, bd.ErrNotFound) {
+				return cur, err // a failing mnemd is a 502, not "not found"
+			}
+		}
+	}
+	return "", fmt.Errorf("%w: no nug at %s", bd.ErrNotFound, path)
+}
+
+func fileExists(path string) bool {
+	fi, err := os.Stat(path) //nolint:gosec // a stat of the link's own path reads nothing
+	return err == nil && !fi.IsDir()
+}
+
+// frontmatterID reads the id: line of a note's frontmatter, or "" when the file
+// is unreadable, has no frontmatter or carries no valid id.
+func frontmatterID(path string) string {
+	f, err := os.Open(path) //nolint:gosec // path is the link's own, read-only, first 4 KB
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	head, _ := io.ReadAll(io.LimitReader(f, 4096))
+	lines := strings.Split(string(head), "\n")
+	if strings.TrimRight(lines[0], "\r") != "---" {
+		return ""
+	}
+	for _, line := range lines[1:] {
+		line = strings.TrimRight(line, "\r")
+		if line == "---" {
+			return ""
+		}
+		if v, ok := strings.CutPrefix(line, "id:"); ok {
+			v = strings.Trim(strings.TrimSpace(v), `"'`)
+			if nugIDPattern.MatchString(v) {
+				return v
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
+// vaultRoot is the registered vault that holds path, matched without regard to
+// case and spelled as registered; the longest wins.
+func vaultRoot(path string, vaults []string) (string, bool) {
+	best := ""
+	for _, v := range vaults {
+		v = strings.TrimRight(v, "/")
+		if v == "" || len(path) < len(v) || len(v) < len(best) {
+			continue
+		}
+		if !strings.EqualFold(path[:len(v)], v) || (len(path) > len(v) && path[len(v)] != '/') {
+			continue
+		}
+		best = v
+	}
+	return best, best != ""
+}
+
+// registeredPath rewrites path onto the vault as Obsidian registers it: Obsidian
+// matches the vault path case-sensitively, and a link may spell it otherwise.
+func registeredPath(path string, vaults []string) string {
+	root, ok := vaultRoot(path, vaults)
+	if !ok {
+		return path
+	}
+	return root + path[len(root):]
+}
+
+// movedTo reads mnemd's write ledger for the nug that most recently left the
+// vault-relative path rel by a move, and returns its id, "" when none did. A
+// later nug that took the path and left it is the likelier target of a link
+// made while it lived there; the id, not the path, is what mnemd then resolves.
+func movedTo(ledger, rel string) string {
+	b, err := os.ReadFile(ledger) //nolint:gosec // the ledger inside a registered vault
+	if err != nil {
+		return ""
+	}
+	id := ""
+	sc := bufio.NewScanner(bytes.NewReader(b))
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		line := sc.Bytes()
+		if !bytes.Contains(line, []byte(`"from"`)) {
+			continue
+		}
+		var e struct {
+			Verb string `json:"verb"`
+			ID   string `json:"id"`
+			From string `json:"from"`
+		}
+		if json.Unmarshal(line, &e) == nil && e.Verb == "move" && strings.EqualFold(e.From, rel) {
+			id = e.ID
+		}
+	}
+	return id
+}
+
+// defaultNugVaults lists the vault paths as Obsidian registers them.
+func defaultNugVaults() []string {
+	var vaults []string
+	if home, err := os.UserHomeDir(); err == nil {
+		b, err := os.ReadFile(filepath.Join(home, "Library", "Application Support", "obsidian", "obsidian.json"))
+		var cfg struct {
+			Vaults map[string]struct {
+				Path string `json:"path"`
+			} `json:"vaults"`
+		}
+		if err == nil && json.Unmarshal(b, &cfg) == nil {
+			for _, v := range cfg.Vaults {
+				vaults = append(vaults, v.Path)
+			}
+		}
+	}
+	return vaults
 }
 
 // defaultNugPath asks mnemd for a nug's path: `mnemd --json recall --id <id>`.
@@ -98,7 +268,7 @@ func defaultNugPath(ctx context.Context, id string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("%w: mnemd binary not found", bd.ErrBD)
 	}
-	out, runErr := exec.CommandContext(ctx, bin, "--json", "recall", "--id", id).Output()
+	out, runErr := exec.CommandContext(ctx, bin, "--json", "recall", "--id", id).Output() //nolint:gosec // id passed nugIDPattern (lowercase hex)
 	var res struct {
 		Path  string `json:"path"`
 		Error string `json:"error"`
