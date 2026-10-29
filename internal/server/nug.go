@@ -234,8 +234,8 @@ func movedTo(ledger, rel string) string {
 			Path string `json:"path"`
 			From string `json:"from"`
 		}
-		if json.Unmarshal(line, &e) != nil || e.Verb != "move" || !strings.EqualFold(e.From, cur) {
-			continue
+		if json.Unmarshal(line, &e) != nil || e.Verb != "move" || !strings.EqualFold(e.From, cur) || (id != "" && e.ID != id) {
+			continue // a later nug that took the path is not the one that left it
 		}
 		cur, id = e.Path, e.ID
 	}

@@ -182,6 +182,7 @@ func TestNugLinkStalePathFollowsMove(t *testing.T) {
 	moved := writeNug(t, vault, "projects/new/n.md", "bbbbbbbbbbbb")
 	ledger := `{"verb":"correct","id":"bbbbbbbbbbbb","path":"old/n.md"}
 {"verb":"move","id":"bbbbbbbbbbbb","path":"projects/new/n.md","from":"old/n.md"}
+{"verb":"move","id":"cccccccccccc","path":"elsewhere/n.md","from":"projects/new/n.md"}
 `
 	if err := os.MkdirAll(filepath.Join(vault, ".mnemd"), 0o750); err != nil {
 		t.Fatal(err)
