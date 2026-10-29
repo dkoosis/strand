@@ -131,7 +131,11 @@ func (s *Server) resolveNugPath(ctx context.Context, path string) (string, error
 	if fileExists(path) {
 		return path, nil
 	}
-	if root, ok := vaultRoot(path, s.nugVaults()); ok {
+	root, ok := vaultRoot(path, s.nugVaults())
+	if !ok {
+		root, ok = vaultRoot(path, []string{os.Getenv("MNEMD_NUGBASE")})
+	}
+	if ok {
 		rel := strings.TrimPrefix(path[len(root):], "/")
 		if id := movedTo(filepath.Join(root, ".mnemd", "mnemd-write-ledger.jsonl"), rel); id != "" {
 			if cur, err := s.nugPath(ctx, id); err == nil {
@@ -209,7 +213,7 @@ func registeredPath(path string, vaults []string) string {
 // movedTo follows mnemd's write ledger from a vault-relative path through every
 // move that renamed it, and returns the id of the nug that left, "" when none.
 func movedTo(ledger, rel string) string {
-	b, err := os.ReadFile(ledger)
+	b, err := os.ReadFile(ledger) //nolint:gosec // the ledger inside a registered vault
 	if err != nil {
 		return ""
 	}
@@ -235,8 +239,7 @@ func movedTo(ledger, rel string) string {
 	return id
 }
 
-// defaultNugVaults lists the vault paths as Obsidian registers them, plus the
-// nugbase mnemd is told to use.
+// defaultNugVaults lists the vault paths as Obsidian registers them.
 func defaultNugVaults() []string {
 	var vaults []string
 	if home, err := os.UserHomeDir(); err == nil {
@@ -254,10 +257,27 @@ func defaultNugVaults() []string {
 			}
 		}
 	}
-	if nb := os.Getenv("MNEMD_NUGBASE"); nb != "" {
-		vaults = append(vaults, nb)
-	}
 	return vaults
+}
+
+// uniqueByName returns the one path whose file name is name (without regard to
+// case). Two nugs may share a name (index.md in every folder); then the link
+// names none of them, and the face-page names are never matched.
+func uniqueByName(paths []string, name string) (string, bool) {
+	if base := strings.ToLower(name); base == "index.md" || base == "_index.md" {
+		return "", false
+	}
+	found := ""
+	for _, p := range paths {
+		if !strings.EqualFold(filepath.Base(p), name) {
+			continue
+		}
+		if found != "" && found != p {
+			return "", false
+		}
+		found = p
+	}
+	return found, found != ""
 }
 
 // defaultNugFind recalls a nug by its file name: mnemd matches words, and the
@@ -273,6 +293,7 @@ func defaultNugFind(ctx context.Context, name string) (string, error) {
 	}
 	args := append([]string{"--json", "recall", "--limit", "50", "--"}, words...)
 	out, _ := exec.CommandContext(ctx, bin, args...).Output() //nolint:gosec // bin is mnemd; words follow "--", so they are never flags
+	var paths []string
 	dec := json.NewDecoder(bytes.NewReader(out))
 	for {
 		var hit struct {
@@ -281,9 +302,10 @@ func defaultNugFind(ctx context.Context, name string) (string, error) {
 		if err := dec.Decode(&hit); err != nil {
 			break
 		}
-		if strings.EqualFold(filepath.Base(hit.Path), name) {
-			return hit.Path, nil
-		}
+		paths = append(paths, hit.Path)
+	}
+	if p, ok := uniqueByName(paths, name); ok {
+		return p, nil
 	}
 	return "", fmt.Errorf("%w: no nug named %q", bd.ErrNotFound, name)
 }

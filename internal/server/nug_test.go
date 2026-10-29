@@ -240,3 +240,26 @@ func TestNugLinkNotFoundIsAPageNotARedirect(t *testing.T) {
 		t.Errorf("opened %v for a missing nug", *opened)
 	}
 }
+
+func TestUniqueByName(t *testing.T) {
+	tests := []struct {
+		name  string
+		paths []string
+		file  string
+		want  string
+	}{
+		{"one", []string{"/v/a/x.md", "/v/b/y.md"}, "x.md", "/v/a/x.md"},
+		{"case", []string{"/v/a/X.md"}, "x.md", "/v/a/X.md"},
+		{"two share a name", []string{"/v/a/x.md", "/v/b/x.md"}, "x.md", ""},
+		{"none", []string{"/v/b/y.md"}, "x.md", ""},
+		{"face page", []string{"/v/a/index.md"}, "index.md", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := uniqueByName(tt.paths, tt.file)
+			if got != tt.want || ok != (tt.want != "") {
+				t.Errorf("uniqueByName = %q, %v; want %q", got, ok, tt.want)
+			}
+		})
+	}
+}
