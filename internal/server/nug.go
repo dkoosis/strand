@@ -119,8 +119,7 @@ func (s *Server) resolveNug(ctx context.Context, r *http.Request) (string, error
 // resolveNugPath finds where the nug a ?path= link names lives now. A link's
 // path goes stale (mnemd move) and may differ in case from the vault, so the
 // path is only a hint: the file's own id, else the id mnemd moved away from
-// that path, else a recall by file name, names the nug, and mnemd says where it
-// is. A path no nug answers to is bd.ErrNotFound.
+// that path, names the nug, and mnemd says where it is. A path no nug answers to is bd.ErrNotFound.
 func (s *Server) resolveNugPath(ctx context.Context, path string) (string, error) {
 	if id := frontmatterID(path); id != "" {
 		if cur, err := s.nugPath(ctx, id); err == nil {
@@ -138,13 +137,11 @@ func (s *Server) resolveNugPath(ctx context.Context, path string) (string, error
 	if ok {
 		rel := strings.TrimPrefix(path[len(root):], "/")
 		if id := movedTo(filepath.Join(root, ".mnemd", "mnemd-write-ledger.jsonl"), rel); id != "" {
-			if cur, err := s.nugPath(ctx, id); err == nil {
-				return cur, nil
+			cur, err := s.nugPath(ctx, id)
+			if err == nil || !errors.Is(err, bd.ErrNotFound) {
+				return cur, err // a failing mnemd is a 502, not "not found"
 			}
 		}
-	}
-	if cur, err := s.nugFind(ctx, filepath.Base(path)); err == nil {
-		return cur, nil
 	}
 	return "", fmt.Errorf("%w: no nug at %s", bd.ErrNotFound, path)
 }
@@ -258,56 +255,6 @@ func defaultNugVaults() []string {
 		}
 	}
 	return vaults
-}
-
-// uniqueByName returns the one path whose file name is name (without regard to
-// case). Two nugs may share a name (index.md in every folder); then the link
-// names none of them, and the face-page names are never matched.
-func uniqueByName(paths []string, name string) (string, bool) {
-	if base := strings.ToLower(name); base == "index.md" || base == "_index.md" {
-		return "", false
-	}
-	found := ""
-	for _, p := range paths {
-		if !strings.EqualFold(filepath.Base(p), name) {
-			continue
-		}
-		if found != "" && found != p {
-			return "", false
-		}
-		found = p
-	}
-	return found, found != ""
-}
-
-// defaultNugFind recalls a nug by its file name: mnemd matches words, and the
-// hit whose file name equals name (without regard to case) is the nug.
-func defaultNugFind(ctx context.Context, name string) (string, error) {
-	bin, ok := binPath("mnemd")
-	if !ok {
-		return "", fmt.Errorf("%w: mnemd binary not found", bd.ErrBD)
-	}
-	words := strings.Fields(strings.NewReplacer("-", " ", "_", " ").Replace(strings.TrimSuffix(name, filepath.Ext(name))))
-	if len(words) == 0 {
-		return "", fmt.Errorf("%w: no nug named %q", bd.ErrNotFound, name)
-	}
-	args := append([]string{"--json", "recall", "--limit", "50", "--"}, words...)
-	out, _ := exec.CommandContext(ctx, bin, args...).Output() //nolint:gosec // bin is mnemd; words follow "--", so they are never flags
-	var paths []string
-	dec := json.NewDecoder(bytes.NewReader(out))
-	for {
-		var hit struct {
-			Path string `json:"path"`
-		}
-		if err := dec.Decode(&hit); err != nil {
-			break
-		}
-		paths = append(paths, hit.Path)
-	}
-	if p, ok := uniqueByName(paths, name); ok {
-		return p, nil
-	}
-	return "", fmt.Errorf("%w: no nug named %q", bd.ErrNotFound, name)
 }
 
 // defaultNugPath asks mnemd for a nug's path: `mnemd --json recall --id <id>`.

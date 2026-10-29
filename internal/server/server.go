@@ -159,10 +159,8 @@ type Server struct {
 	// (default: macOS open); tests swap both so /nug never shells out.
 	nugPath func(ctx context.Context, id string) (string, error)
 	openURL func(ctx context.Context, link string) error
-	// nugVaults lists the Obsidian vault paths as Obsidian registers them, and
-	// nugFind recalls a nug's current path by file name (a stale ?path= link).
+	// nugVaults lists the Obsidian vault paths as Obsidian registers them.
 	nugVaults func() []string
-	nugFind   func(ctx context.Context, name string) (string, error)
 
 	// Lifecycle for detached background work (the Insights deps prefetch). bgCtx
 	// roots every goBackground context so Stop can cancel them; bgWG tracks the
@@ -223,7 +221,6 @@ func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, sta
 	s.nugPath = defaultNugPath
 	s.openURL = defaultOpenURL
 	s.nugVaults = defaultNugVaults
-	s.nugFind = defaultNugFind
 	s.start = sync.OnceFunc(func() { s.goBackground(0, s.reconcileLoop) })
 	return s
 }

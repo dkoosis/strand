@@ -29,9 +29,6 @@ func nugServer(t *testing.T) (srv *Server, opened *[]string) {
 		return "", fmt.Errorf("%w: no nug has id %q", bd.ErrNotFound, id)
 	}
 	srv.nugVaults = func() []string { return []string{"/Users/dk/nugbases/dk"} }
-	srv.nugFind = func(context.Context, string) (string, error) {
-		return "", fmt.Errorf("%w: no nug named", bd.ErrNotFound)
-	}
 	srv.openURL = func(_ context.Context, link string) error {
 		*opened = append(*opened, link)
 		return nil
@@ -206,18 +203,24 @@ func TestNugLinkStalePathFollowsMove(t *testing.T) {
 	}
 }
 
-// With no ledger line, the file name finds the nug.
-func TestNugLinkStalePathFindsByName(t *testing.T) {
-	srv, opened := nugServer(t)
-	srv.nugFind = func(_ context.Context, name string) (string, error) {
-		if name == "gone.md" {
-			return testNugPath, nil
-		}
-		return "", fmt.Errorf("%w: no nug named %q", bd.ErrNotFound, name)
+// A mnemd that fails is a bad gateway, not a missing nug.
+func TestNugLinkMnemdFailureIsNotNotFound(t *testing.T) {
+	vault := t.TempDir()
+	ledger := `{"verb":"move","id":"bbbbbbbbbbbb","path":"new/n.md","from":"old/n.md"}` + "\n"
+	if err := os.MkdirAll(filepath.Join(vault, ".mnemd"), 0o750); err != nil {
+		t.Fatal(err)
 	}
-	code, _, link := openPath(t, srv, opened, "/nug?path="+url.QueryEscape("/Users/dk/nugbases/dk/old/gone.md"))
-	if want := obsidianURL(testNugPath); code != http.StatusOK || link != want {
-		t.Fatalf("status %d, opened %q, want %q", code, link, want)
+	if err := os.WriteFile(filepath.Join(vault, ".mnemd", "mnemd-write-ledger.jsonl"), []byte(ledger), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv, opened := nugServer(t)
+	srv.nugVaults = func() []string { return []string{vault} }
+	srv.nugPath = func(context.Context, string) (string, error) {
+		return "", fmt.Errorf("%w: mnemd down", bd.ErrBD)
+	}
+	code, body, _ := openPath(t, srv, opened, "/nug?path="+url.QueryEscape(filepath.Join(vault, "old", "n.md")))
+	if code != http.StatusBadGateway || strings.Contains(body, "Nug not found") || len(*opened) != 0 {
+		t.Fatalf("status %d, opened %v, body %s", code, *opened, body)
 	}
 }
 
@@ -238,28 +241,5 @@ func TestNugLinkNotFoundIsAPageNotARedirect(t *testing.T) {
 	}
 	if len(*opened) != 0 {
 		t.Errorf("opened %v for a missing nug", *opened)
-	}
-}
-
-func TestUniqueByName(t *testing.T) {
-	tests := []struct {
-		name  string
-		paths []string
-		file  string
-		want  string
-	}{
-		{"one", []string{"/v/a/x.md", "/v/b/y.md"}, "x.md", "/v/a/x.md"},
-		{"case", []string{"/v/a/X.md"}, "x.md", "/v/a/X.md"},
-		{"two share a name", []string{"/v/a/x.md", "/v/b/x.md"}, "x.md", ""},
-		{"none", []string{"/v/b/y.md"}, "x.md", ""},
-		{"face page", []string{"/v/a/index.md"}, "index.md", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, ok := uniqueByName(tt.paths, tt.file)
-			if got != tt.want || ok != (tt.want != "") {
-				t.Errorf("uniqueByName = %q, %v; want %q", got, ok, tt.want)
-			}
-		})
 	}
 }
