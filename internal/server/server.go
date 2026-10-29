@@ -154,6 +154,12 @@ type Server struct {
 	// this on every write instead of once per process.
 	beadwatchOnce sync.Once
 
+	// Nug-link seams (st-e9s). nugPath resolves a nug id to its note's path
+	// (default: mnemd recall) and openURL hands the obsidian:// URL to the OS
+	// (default: macOS open); tests swap both so /nug never shells out.
+	nugPath func(ctx context.Context, id string) (string, error)
+	openURL func(ctx context.Context, link string) error
+
 	// Lifecycle for detached background work (the Insights deps prefetch). bgCtx
 	// roots every goBackground context so Stop can cancel them; bgWG tracks the
 	// goroutines so Stop can wait them out. The HTTP drain covers request handlers
@@ -210,6 +216,8 @@ func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, sta
 	s.cache.onChange = func(repo string) { s.broadcastChange(repo) }
 	s.suggestLLM = defaultSuggestLLM
 	s.homeDir, _ = os.UserHomeDir()
+	s.nugPath = defaultNugPath
+	s.openURL = defaultOpenURL
 	s.start = sync.OnceFunc(func() { s.goBackground(0, s.reconcileLoop) })
 	return s
 }
@@ -266,7 +274,7 @@ func (s *Server) goBackground(timeout time.Duration, fn func(context.Context)) {
 // would otherwise keep every queued post-write goroutine alive past the 10s
 // timeout and pin Stop's bgWG wait behind it.
 func (s *Server) defaultRefreshCounts(repo registry.Repo) {
-	bin, ok := beadwatchPath()
+	bin, ok := binPath("beadwatch")
 	if !ok {
 		s.beadwatchOnce.Do(func() {
 			log.Printf("strand: beadwatch binary not found (checked PATH and $HOME/go/bin) — counts refresh skipped")
@@ -281,19 +289,19 @@ func (s *Server) defaultRefreshCounts(repo registry.Repo) {
 	})
 }
 
-// beadwatchPath resolves the beadwatch binary: PATH first (exec.LookPath, the
-// normal case once it's installed), else $HOME/go/bin/beadwatch — the `go
-// install` default a machine that built beadwatch from source but never put
-// $HOME/go/bin on PATH would still have. ok is false when neither resolves.
-func beadwatchPath() (string, bool) {
-	if p, err := exec.LookPath("beadwatch"); err == nil {
+// binPath resolves a binary: PATH first (exec.LookPath, the normal case once
+// it's installed), else $HOME/go/bin/<name> — the `go install` default a machine
+// that built it from source but never put $HOME/go/bin on PATH would still have.
+// ok is false when neither resolves.
+func binPath(name string) (string, bool) {
+	if p, err := exec.LookPath(name); err == nil {
 		return p, true
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", false
 	}
-	p := filepath.Join(home, "go", "bin", "beadwatch")
+	p := filepath.Join(home, "go", "bin", name)
 	if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
 		return p, true
 	}
@@ -456,6 +464,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /insights", s.handleInsights)
 	mux.HandleFunc("GET /bead/{id}", s.handleBead)
 	mux.HandleFunc("GET /bead/{id}/assist", s.handleAssist)
+	mux.HandleFunc("GET /nug/{id}", s.handleNug)
+	mux.HandleFunc("GET /nug", s.handleNug)
 	s.mutate(mux, "PATCH /bead/{id}", s.handleEdit)
 	s.mutate(mux, "POST /bead/{id}/move", s.handleMove)
 	s.mutate(mux, "POST /bead/{id}/rank", s.handleRank)

@@ -55,6 +55,6 @@ func TestDefaultRefreshCountsSkipsWhenBeadwatchMissing(t *testing.T) {
 
 	s.defaultRefreshCounts(registry.Repo{Path: "/tmp/some-repo"})
 	s.bgWG.Wait()
-	// No assertion beyond "did not hang/panic" — beadwatchPath's ok=false path
+	// No assertion beyond "did not hang/panic" — binPath("beadwatch")'s ok=false path
 	// logs once and returns before spawning anything.
 }
