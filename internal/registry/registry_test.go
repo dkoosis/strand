@@ -105,6 +105,7 @@ func TestDiscoverRecursesAndSkips(t *testing.T) {
 	for _, protected := range []string{"Desktop", "Documents", "Downloads"} {
 		mkRepo(t, filepath.Join(root, protected), "private")
 	}
+	nested := mkRepo(t, filepath.Join(root, "work", "Documents"), "notes")
 	outer := mkRepo(t, root, "outer")
 	mkRepo(t, outer, "inner")
 
@@ -113,8 +114,8 @@ func TestDiscoverRecursesAndSkips(t *testing.T) {
 	for _, f := range found {
 		got[f.Path] = true
 	}
-	if len(found) != 2 || !got[deep] || !got[outer] {
-		t.Errorf("discover = %+v, want only %s and %s", found, deep, outer)
+	if len(found) != 3 || !got[deep] || !got[outer] || !got[nested] {
+		t.Errorf("discover = %+v, want only %s, %s and %s", found, deep, outer, nested)
 	}
 }
 

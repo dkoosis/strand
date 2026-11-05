@@ -398,16 +398,19 @@ func (r *Registry) saveLocked() error {
 const maxScanDepth = 8
 
 // skipScanDir names directories discovery never enters: package and build trees
-// and the macOS user folders that hold no workspaces but many files. Desktop,
-// Documents and Downloads are privacy-protected: opening one from a newly
-// installed binary blocks until the user answers macOS's access prompt, and
-// under launchd that stalled strand's startup. Hidden directories
-// (dot-prefixed) are skipped separately.
+// and the macOS user folders that hold no workspaces but many files. Hidden
+// directories (dot-prefixed) are skipped separately.
 var skipScanDir = map[string]bool{
 	"Library": true, "Applications": true, "Movies": true, "Music": true,
-	"Pictures": true, "Desktop": true, "Documents": true, "Downloads": true,
-	"node_modules": true, "vendor": true,
+	"Pictures": true, "node_modules": true, "vendor": true,
 }
+
+// skipTopDir names folders skipped only directly under the scan root (home).
+// macOS privacy-protects ~/Desktop, ~/Documents and ~/Downloads: opening one
+// from a newly installed binary blocks until the user answers the access
+// prompt, which under launchd stalled strand's startup. A folder of the same
+// name deeper down is not protected and is scanned.
+var skipTopDir = map[string]bool{"Desktop": true, "Documents": true, "Downloads": true}
 
 // discover finds beads workspaces at any depth under root by walking it. A
 // directory holding .beads is a workspace and is not entered further, so its
@@ -437,13 +440,14 @@ func discover(root string) []Repo {
 }
 
 // skipScanPath reports whether discovery must not enter the directory at path:
-// hidden, named in skipScanDir, or deeper than maxScanDepth. The root itself is
+// hidden, named in skipScanDir, a top-level skipTopDir, or deeper than maxScanDepth. The root itself is
 // always entered.
 func skipScanPath(root, path, name string) bool {
 	if path == root {
 		return false
 	}
-	return strings.HasPrefix(name, ".") || skipScanDir[name] || scanDepth(root, path) > maxScanDepth
+	depth := scanDepth(root, path)
+	return strings.HasPrefix(name, ".") || skipScanDir[name] || (depth == 1 && skipTopDir[name]) || depth > maxScanDepth
 }
 
 // scanDepth counts path components of path below root.
