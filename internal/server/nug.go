@@ -272,7 +272,9 @@ func defaultNugPath(ctx context.Context, id string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("%w: mnemd binary not found", bd.ErrBD)
 	}
-	out, runErr := exec.CommandContext(ctx, bin, "--json", "recall", "--id", id).Output() //nolint:gosec // id passed nugIDPattern (lowercase hex)
+	cmd := exec.CommandContext(ctx, bin, "--json", "recall", "--id", id) //nolint:gosec // id passed nugIDPattern (lowercase hex)
+	cmd.WaitDelay = bd.ExecWaitDelay
+	out, runErr := cmd.Output()
 	var res struct {
 		Path  string `json:"path"`
 		Error string `json:"error"`
@@ -292,8 +294,10 @@ func defaultNugPath(ctx context.Context, id string) (string, error) {
 // defaultOpenURL hands a URL to macOS `open`, which routes obsidian:// to
 // Obsidian.
 func defaultOpenURL(ctx context.Context, link string) error {
-	out, err := exec.CommandContext(ctx, "open", link).CombinedOutput()
-	if err != nil {
+	cmd := exec.CommandContext(ctx, "open", link)
+	cmd.WaitDelay = bd.ExecWaitDelay
+	out, err := cmd.CombinedOutput()
+	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		return fmt.Errorf("%w: %s", err, out)
 	}
 	return nil
