@@ -90,8 +90,8 @@ func main() {
 		if errors.Is(err, syscall.EADDRINUSE) {
 			log.Fatalf("strand: looks like a strand is already running on %s — no need to start another. 🌲\n"+
 				"  to use that one:    open http://%s\n"+
-				"  to restart fresh:   pkill -f 'strand --addr'  &&  strand\n"+
-				"  to run side by side: strand --addr 127.0.0.1:7778", *addr, *addr)
+				"  to restart it:      launchctl kickstart -k gui/%d/com.strand.web  (launchd restarts a killed one)\n"+
+				"  to run side by side: strand --addr 127.0.0.1:7778", *addr, *addr, os.Getuid())
 		}
 		log.Fatalf("strand: listen %s: %v", *addr, err)
 	}

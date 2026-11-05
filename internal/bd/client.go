@@ -54,6 +54,11 @@ func classify(msg string) error {
 // 1 keeps the single-writer guarantee — at most one goroutine holds the slot.
 var execMu = make(chan struct{}, 1)
 
+// ExecWaitDelay is how long a cancelled child process gets to release its
+// output pipes before Wait gives up on it. Every strand exec sets it, so a
+// grandchild that outlives its killed parent cannot hang the caller.
+const ExecWaitDelay = 2 * time.Second
+
 // Issue mirrors the JSON shape bd emits from `list`/`show`. Fields bd omits stay
 // at their zero value; extra fields bd adds later are ignored, not an error.
 type Issue struct {
@@ -174,6 +179,10 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	//nolint:gosec // G204: bd is an operator-configured binary and args run via exec (no shell), so values like a status filter can't inject commands.
 	cmd := exec.CommandContext(ctx, c.bin(), args...)
 	cmd.Dir = c.Dir
+	// Cancel kills bd but not anything bd started; a grandchild still holding
+	// the stdout pipe would block Run — and every bd call queued behind execMu —
+	// until it exited. WaitDelay bounds that wait.
+	cmd.WaitDelay = ExecWaitDelay
 	var out bytes.Buffer
 	var errBuf strings.Builder
 	cmd.Stdout = &out
