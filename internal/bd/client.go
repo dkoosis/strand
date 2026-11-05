@@ -56,7 +56,9 @@ var execMu = make(chan struct{}, 1)
 
 // ExecWaitDelay is how long a cancelled child process gets to release its
 // output pipes before Wait gives up on it. Every strand exec sets it, so a
-// grandchild that outlives its killed parent cannot hang the caller.
+// grandchild that outlives its killed parent cannot hang the caller. A
+// child that exited 0 then yields exec.ErrWaitDelay, which callers treat as
+// success.
 const ExecWaitDelay = 2 * time.Second
 
 // Issue mirrors the JSON shape bd emits from `list`/`show`. Fields bd omits stay
@@ -181,13 +183,14 @@ func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	cmd.Dir = c.Dir
 	// Cancel kills bd but not anything bd started; a grandchild still holding
 	// the stdout pipe would block Run — and every bd call queued behind execMu —
-	// until it exited. WaitDelay bounds that wait.
+	// until it exited. WaitDelay bounds that wait. Go returns ErrWaitDelay only
+	// when bd itself exited 0, so that case is a success with bd's full output.
 	cmd.WaitDelay = ExecWaitDelay
 	var out bytes.Buffer
 	var errBuf strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Run(); err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		msg := strings.TrimSpace(errBuf.String())
 		if msg == "" {
 			msg = err.Error()

@@ -287,7 +287,7 @@ func (s *Server) defaultRefreshCounts(repo registry.Repo) {
 	s.goBackground(10*time.Second, func(ctx context.Context) {
 		cmd := exec.CommandContext(ctx, bin, repo.Path) //nolint:gosec // bin is resolved via LookPath/a fixed path, repo.Path is a registry-known repo root, not user input
 		cmd.WaitDelay = bd.ExecWaitDelay
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if out, err := cmd.CombinedOutput(); err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 			log.Printf("strand: post-write beadwatch refresh for %s: %v: %s", repo.Path, err, out)
 		}
 	})

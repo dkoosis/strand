@@ -297,7 +297,7 @@ func defaultOpenURL(ctx context.Context, link string) error {
 	cmd := exec.CommandContext(ctx, "open", link)
 	cmd.WaitDelay = bd.ExecWaitDelay
 	out, err := cmd.CombinedOutput()
-	if err != nil {
+	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		return fmt.Errorf("%w: %s", err, out)
 	}
 	return nil

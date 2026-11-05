@@ -24,13 +24,7 @@ func TestListReturnsWhenGrandchildHoldsStdout(t *testing.T) {
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if b, err := os.ReadFile(pidFile); err == nil {
-			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil {
-				_ = syscall.Kill(pid, syscall.SIGKILL)
-			}
-		}
-	})
+	t.Cleanup(func() { killPIDFile(pidFile) })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
@@ -41,5 +35,32 @@ func TestListReturnsWhenGrandchildHoldsStdout(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > bd.ExecWaitDelay+3*time.Second {
 		t.Fatalf("List took %v after cancel; WaitDelay should bound it near %v", elapsed, bd.ExecWaitDelay)
+	}
+}
+
+// A bd that exits 0 while its child still holds stdout is a success: List
+// returns bd's output instead of the ErrWaitDelay Go reports for it.
+func TestListSucceedsWhenGrandchildOutlivesCleanExit(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "grandchild.pid")
+	path := filepath.Join(dir, "bd")
+	script := "#!/bin/sh\nsleep 20 &\necho $! > " + pidFile + "\necho '[]'\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { killPIDFile(pidFile) })
+
+	if _, err := (&bd.Client{Bin: path}).List(context.Background(), bd.ListOpts{}); err != nil {
+		t.Fatalf("List: %v; want success after bd exited 0", err)
+	}
+}
+
+func killPIDFile(pidFile string) {
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		return
+	}
+	if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
 	}
 }
