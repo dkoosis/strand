@@ -398,11 +398,15 @@ func (r *Registry) saveLocked() error {
 const maxScanDepth = 8
 
 // skipScanDir names directories discovery never enters: package and build trees
-// and the macOS user folders that hold no workspaces but many files. Hidden
-// directories (dot-prefixed) are skipped separately.
+// and the macOS user folders that hold no workspaces but many files. Desktop,
+// Documents and Downloads are privacy-protected: opening one from a newly
+// installed binary blocks until the user answers macOS's access prompt, and
+// under launchd that stalled strand's startup. Hidden directories
+// (dot-prefixed) are skipped separately.
 var skipScanDir = map[string]bool{
 	"Library": true, "Applications": true, "Movies": true, "Music": true,
-	"Pictures": true, "node_modules": true, "vendor": true,
+	"Pictures": true, "Desktop": true, "Documents": true, "Downloads": true,
+	"node_modules": true, "vendor": true,
 }
 
 // discover finds beads workspaces at any depth under root by walking it. A

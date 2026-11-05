@@ -102,6 +102,9 @@ func TestDiscoverRecursesAndSkips(t *testing.T) {
 	mkRepo(t, filepath.Join(root, ".hidden"), "ghost")
 	mkRepo(t, filepath.Join(root, "Library"), "cache")
 	mkRepo(t, filepath.Join(root, "node_modules"), "dep")
+	for _, protected := range []string{"Desktop", "Documents", "Downloads"} {
+		mkRepo(t, filepath.Join(root, protected), "private")
+	}
 	outer := mkRepo(t, root, "outer")
 	mkRepo(t, outer, "inner")
 
