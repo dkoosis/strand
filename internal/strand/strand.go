@@ -4,7 +4,7 @@
 // work, so weight and heat read before a word does.
 //
 // Epics are the project's top-level work — the keystones the human shapes (spec
-// §1a: trixi's MEMORY, WETWARE, RETRIEVAL …). An epic's stories are the issues
+// §1a: e.g. MEMORY, WETWARE, RETRIEVAL …). An epic's stories are the issues
 // one level beneath it; deeper tasks and subtasks roll up into the story they
 // descend from. Live work that doesn't ladder up to any epic collects in a
 // catch-all epic. The epic hierarchy lives in bd (parent edges), so the synthesis

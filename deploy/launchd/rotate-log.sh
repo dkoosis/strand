@@ -6,7 +6,7 @@
 # writer is the gap between bootout and bootstrap. Call this from that window
 # (see Makefile `deploy` and install.sh), never against a running daemon: a live
 # fd keeps writing to the rotated inode, so any rename-based rotation outside
-# this window silently does nothing. (modeled on trixi-b6x6)
+# this window silently does nothing.
 set -euo pipefail
 
 SERVE_LOG="${1:-$HOME/.strand/logs/serve.log}"

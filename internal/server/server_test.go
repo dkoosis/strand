@@ -616,7 +616,7 @@ func TestHomeRepoDeepLinkScopesUnregisteredRepoEphemerally(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse templates: %v", err)
 	}
-	// A real directory with a .beads marker, standing in for a repo (e.g. itzy)
+	// A real directory with a .beads marker, standing in for a repo
 	// that has a valid workspace but was never registered with strand.
 	unregisteredPath := t.TempDir()
 	if err := os.Mkdir(filepath.Join(unregisteredPath, ".beads"), 0o755); err != nil {
