@@ -3,6 +3,7 @@
 .dolt/
 *.db
 .beads-credential-key
+.beads.gate.lock
 .beads/proxieddb/
 
 # Go
