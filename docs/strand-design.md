@@ -80,12 +80,12 @@ roll-up over the catalog. This is strand's entire reason to exist, and it is pro
 ```
 project north star    one line — what this project is FOR
   └ epics              ┐ human territory — the big picture the human shapes:
-      └ stories        ┘ recognizable epics (e.g. trixi's MEMORY) + their stories.
+      └ stories        ┘ recognizable epics (e.g. MEMORY) + their stories.
           └ tasks      ← agent territory: decomposition, deps, order; shown, read-mostly.
 ```
 
 The structure is three tiers — **epic → story → task**. The L1 units the human reads first
-are the recognizable **epics** (e.g. trixi's MEMORY, WETWARE, RETRIEVAL); their **stories**
+are the recognizable **epics** (e.g. MEMORY, WETWARE, RETRIEVAL); their **stories**
 are the level beneath, and **tasks** are the agent-owned bottom.
 
 **The Northstar keystone.** Each project carries a **one-line north star** stating its

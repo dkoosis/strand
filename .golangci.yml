@@ -1,4 +1,4 @@
-# Strict lint for strand, adapted from ../trixi/.golangci.yml.
+# Strict lint for strand.
 # Greenfield — tight from day one. depguard arch rules omitted until the
 # package graph is worth fencing; re-add per-boundary rules as it grows.
 version: "2"
@@ -140,8 +140,8 @@ linters:
         - ifElseChain
     forbidigo:
       # bugclasses rule 5: context.Background() deep in daemon code should
-      # thread the caller/shutdown ctx (strand st-47z, trixi #606,
-      # trixi-bot gg-8rq.3, canapay can-x38). Path-scoped below to strand's
+      # thread the caller/shutdown ctx (strand st-47z, canapay can-x38).
+      # Path-scoped below to strand's
       # daemon packages. Types-aware so a `ctx.Background` field can't misfire.
       analyze-types: true
       forbid:

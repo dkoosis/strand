@@ -682,7 +682,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	// line's OSC 8 links carry the line's own repo path so a click lands on THAT
 	// repo, not whatever was last active. source(r) resolves it per-request —
 	// via registry.Resolve, covering an already-registered repo, an unregistered
-	// but valid one (st-55q: e.g. itzy, never added but has a working .beads),
+	// but valid one (st-55q: a repo never added but has a working .beads),
 	// or falling back to the persistent active repo — without mutating the
 	// registry or writing repos.json (st-ga4: a GET must not have that side
 	// effect; that was the CSRF vector CodeRabbit flagged on #102, and it also

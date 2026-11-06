@@ -52,7 +52,7 @@ selfcheck: ## Run conform-to-sdlc (fleet SDLC checker) against this repo
 check: vet lint test build pack-drift selfcheck ## Full repo: vet + lint + test + build + pack-drift + conform-to-sdlc
 	@echo "=== check pass ==="
 
-# audit is the exhaustive gate (modeled on ../trixi): check + race + dupe +
+# audit is the exhaustive gate: check + race + dupe +
 # vuln + nilcheck. Slower; run before a release or a risky merge.
 audit: check race dupe vuln nilcheck ## Exhaustive: check + race + dupe + vuln + nilcheck
 	@echo "=== audit pass ==="

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Install + load the strand web UI LaunchAgent (macOS).
-# Modeled on trixi's deploy/launchd/install.sh — no secrets/DB, strand is a
+# No secrets/DB — strand is a
 # local web server that shells out to `bd`.
 #
 # Usage: install.sh [addr]
