@@ -10,8 +10,6 @@ github.com/dkoosis/atomicfile v0.0.0-20260811102456-9091c28d4820 h1:x7UDk0isvTYx
 github.com/dkoosis/atomicfile v0.0.0-20260811102456-9091c28d4820/go.mod h1:6wCWesghtzLYJ0IjlbbddyTCU8ZowoiIUzcy4Qi9fDc=
 github.com/dkoosis/beadwatch v0.0.0-20260907034816-4486ef37c03f h1:lsIS6Dzb2sdOe4qzlsjZ5Ce5wTFjgIKebKkcKA20e1k=
 github.com/dkoosis/beadwatch v0.0.0-20260907034816-4486ef37c03f/go.mod h1:ej/vRzMnCY5bUKpF6jZRDlrpsuIRgsStYDvKcsDzJnI=
-github.com/dkoosis/conform-to-sdlc v0.3.5-0.20261005021949-3c0bd7b9e254 h1:/UyxuhNcUnmEQYUTIy+dT3muZA9aafIb9/6QzfZ2o4E=
-github.com/dkoosis/conform-to-sdlc v0.3.5-0.20261005021949-3c0bd7b9e254/go.mod h1:p5Nu8EntCJQ1k4yqTlAUDYRpdvpkebWjLcPJCVUgKlM=
 github.com/dnaeon/go-vcr v1.2.0 h1:zHCHvJYTMh1N7xnV7zf1m1GPBF9Ad0Jk/whtQ1663qI=
 github.com/dnaeon/go-vcr v1.2.0/go.mod h1:R4UdLID7HZT3taECzJs4YgbbH6PIGXB6W/sc5OLb6RQ=
 github.com/google/renameio/v2 v2.0.2 h1:qKZs+tfn+arruZZhQ7TKC/ergJunuJicWS6gLDt/dGw=
@@ -46,8 +44,6 @@ golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
 golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 gonum.org/v1/gonum v0.17.0 h1:VbpOemQlsSMrYmn7T2OUvQ4dqxQXU+ouZFQsZOx50z4=
 gonum.org/v1/gonum v0.17.0/go.mod h1:El3tOrEuMpv2UdMrbNlKEh9vd86bmQ6vqIcDwxEOc1E=
-gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
-gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 gopkg.in/yaml.v2 v2.2.8 h1:obN1ZagJSUGI0Ek/LBmuj4SNLPfIny3KsKFopxRdj10=
 gopkg.in/yaml.v2 v2.2.8/go.mod h1:hI93XBmqTisBFMUTm0b8Fm+jr3Dg1NNxqwp+5A1VGuI=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=

@@ -1,4 +1,4 @@
-.PHONY: help build run test race lint vet tidy check selfcheck audit dupe vuln nilcheck install deploy uninstall clean pack-drift
+.PHONY: help build run test race lint vet tidy check standard audit fuzz dupe vuln nilcheck deadcode omitempty install deploy uninstall clean cross
 
 .DEFAULT_GOAL := check
 
@@ -43,37 +43,62 @@ vet: ## Run go vet
 tidy: ## Tidy go.mod/go.sum
 	go mod tidy
 
-# Dogfood the fleet gate (sd-th5.16): conform-to-sdlc is pinned as a go.mod tool
-# directive, so `go tool conform-to-sdlc` runs the go.sum-verified pinned version.
-selfcheck: ## Run conform-to-sdlc (fleet SDLC checker) against this repo
-	go tool conform-to-sdlc
+# repo-standard is the fleet checker, pinned by version (go run <pkg>@$(VER)).
+# v0.4.0 is the first tag that holds the module under this name and the omitempty command.
+REPO_STANDARD_VER := v0.4.0
+OMITEMPTYSCALAR_VER := v0.4.0
+NILAWAY_VER := v0.0.0-20260918162853-acb8859b9031
+GOVULNCHECK_VER := v1.9.0
+DEADCODE_VER := v0.52.0
+JSCPD_VER := 5.1.2
 
-# check is the fast local gate; CI runs the same verb (conform-to-sdlc ci-gate rule).
-check: vet lint test build pack-drift selfcheck ## Full repo: vet + lint + test + build + pack-drift + conform-to-sdlc
+standard: ## Run repo-standard (fleet checker, pinned) against this repo
+	go run github.com/dkoosis/repo-standard/cmd/repo-standard@$(REPO_STANDARD_VER)
+
+# check is the fast local gate; CI runs the same verb. standard runs last so it
+# grades the tree the rest of the gate passed.
+check: vet lint test build standard ## Full repo: vet + lint + test + build + repo-standard
 	@echo "=== check pass ==="
 
-# audit is the exhaustive gate: check + race + dupe +
-# vuln + nilcheck. Slower; run before a release or a risky merge.
-audit: check race dupe vuln nilcheck ## Exhaustive: check + race + dupe + vuln + nilcheck
+# audit is the exhaustive gate: check + race + fuzz + dupe + nilcheck + deadcode
+# + omitempty + vuln. Slower; run before a release or a risky merge.
+audit: check race fuzz dupe nilcheck deadcode omitempty vuln ## Exhaustive: check + race + fuzz + dupe + nilcheck + deadcode + omitempty + vuln
 	@echo "=== audit pass ==="
 
+# Runs each Fuzz function it finds, FUZZTIME apiece.
+FUZZTIME ?= 10s
+fuzz: ## Fuzz every Fuzz test (FUZZTIME=10s each)
+	@set -e; \
+	for pkg in $$(go list ./...); do \
+		list=$$(go test -list '^Fuzz' $$pkg) || exit $$?; \
+		for f in $$(printf '%s\n' "$$list" | sed -n '/^Fuzz/p'); do \
+			echo "fuzz $$pkg $$f"; \
+			go test -run '^$$' -fuzz "^$$f$$" -fuzztime=$(FUZZTIME) $$pkg; \
+		done; \
+	done
+
 # dupe flags copy-paste duplication (jscpd, config in .jscpd.json).
-dupe: ## Flag copy-paste duplication (jscpd)
-	@command -v jscpd >/dev/null 2>&1 || { echo "dupe: jscpd missing — npm i -g jscpd@latest"; exit 1; }
-	@TMP=$$(mktemp -d); jscpd . --output $$TMP; rm -rf $$TMP
+dupe: ## Flag copy-paste duplication (jscpd, pinned)
+	npx --yes jscpd@$(JSCPD_VER) . --silent --reporters console
 
-vuln: ## Scan dependencies for known vulnerabilities
-	govulncheck ./...
+vuln: ## Scan dependencies for known vulnerabilities (govulncheck, pinned)
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VER) ./...
 
-# nilcheck runs nilaway over the whole module (skips if nilaway missing).
+# nilcheck runs nilaway over the whole module.
 # -test=false: tests deliberately pass nil to exercise error paths.
-nilcheck: ## Run nilaway nil-safety analysis (skips if missing)
-	@if ! command -v nilaway >/dev/null 2>&1; then \
-		echo "nilcheck: nilaway not installed — skipping (go install go.uber.org/nilaway/cmd/nilaway@latest)"; \
-		exit 0; \
-	fi
-	nilaway -test=false -include-pkgs=github.com/dkoosis/strand ./...
+nilcheck: ## Run nilaway nil-safety analysis (pinned)
+	go run go.uber.org/nilaway/cmd/nilaway@$(NILAWAY_VER) -test=false -include-pkgs=github.com/dkoosis/strand ./...
 	@echo "=== nilcheck pass ==="
+
+# deadcode lists each function no path from main reaches, and exits 0 either way,
+# so the target fails on any output.
+deadcode: ## Fail on any function unreachable from main (deadcode, pinned)
+	@out=$$(go run golang.org/x/tools/cmd/deadcode@$(DEADCODE_VER) ./cmd/strand) || { echo "deadcode: could not run"; exit 1; }; \
+	if [ -n "$$out" ]; then echo "$$out"; echo "deadcode: the functions above are unreachable; cut them"; exit 1; fi
+
+# omitemptyscalar exits 3 on a ,omitempty tag on a bool (a false lost on write).
+omitempty: ## Fail on a bool field tagged omitempty (omitemptyscalar, pinned)
+	go run github.com/dkoosis/repo-standard/cmd/omitemptyscalar@$(OMITEMPTYSCALAR_VER) ./...
 
 install: ## Build + install the strand binary into GOBIN
 	go install -ldflags='-X main.Version=$(VERSION)' ./cmd/strand
@@ -93,6 +118,3 @@ clean: ## Remove build artifacts and lint cache
 
 cross: ## Cross-compile linux-amd64 and linux-arm64 into .sandbox/bin/
 	for a in amd64 arm64; do mkdir -p .sandbox/bin/linux-$$a && CGO_ENABLED=0 GOOS=linux GOARCH=$$a go build -o .sandbox/bin/linux-$$a/ ./cmd/strand; done
-
-pack-drift: ## Fail if the copied lintbrush pack rules drifted from upstream (network-soft)
-	@.golangci-rules/check-pack-drift.sh
