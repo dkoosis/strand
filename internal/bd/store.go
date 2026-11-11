@@ -25,7 +25,7 @@ import (
 // re-implementation of the glob is exactly the drift the shared home exists to kill
 // (st-nm5; the st-p1f failure mode).
 func StoreMTime(repoPath string) (time.Time, bool) {
-	matches, _ := filepath.Glob(filepath.Join(repoPath, ".beads", "embeddeddolt", "*", ".dolt", "noms", "manifest"))
+	matches, _ := filepath.Glob(filepath.Join(repoPath, ".beads", "embeddeddolt", "*", ".dolt", "noms", "manifest")) //nolint:errcheck // the pattern is a constant; Glob errs only on a malformed pattern
 	var newest time.Time
 	found := false
 	for _, m := range matches {
@@ -57,7 +57,7 @@ func StoreMTime(repoPath string) (time.Time, bool) {
 // directly" contract. ok is false when nothing matches or every read fails, the same
 // degrade-to-caller-behavior signal StoreMTime returns.
 func StoreContentKey(repoPath string) (int64, bool) {
-	matches, _ := filepath.Glob(filepath.Join(repoPath, ".beads", "embeddeddolt", "*", ".dolt", "noms", "manifest"))
+	matches, _ := filepath.Glob(filepath.Join(repoPath, ".beads", "embeddeddolt", "*", ".dolt", "noms", "manifest")) //nolint:errcheck // the pattern is a constant; Glob errs only on a malformed pattern
 	sort.Strings(matches)
 	h := fnv.New64a()
 	found := false

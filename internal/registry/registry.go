@@ -58,7 +58,7 @@ type Registry struct {
 func ConfigPath() string {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
-		home, _ := os.UserHomeDir()
+		home, _ := os.UserHomeDir() //nolint:errcheck // no home dir leaves home empty, so the config path is relative; best-effort fallback
 		base = filepath.Join(home, ".config")
 	}
 	return filepath.Join(base, "strand", "repos.json")
@@ -67,7 +67,10 @@ func ConfigPath() string {
 // ScanRoot is the directory tree discovery walks: the user's home directory, so
 // workspaces outside ~/Projects (a nugbase, a scratch repo) are found too.
 func ScanRoot() string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "" // discover treats an empty root as nothing to scan
+	}
 	return home
 }
 
@@ -423,7 +426,7 @@ func discover(root string) []Repo {
 		return nil
 	}
 	var out []Repo
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error { //nolint:errcheck // best-effort discovery: the callback skips unreadable entries and never returns a real error
 		if d == nil || !d.IsDir() {
 			return nil
 		}

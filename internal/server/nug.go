@@ -169,7 +169,10 @@ func frontmatterID(path string) string {
 		return ""
 	}
 	defer func() { _ = f.Close() }()
-	head, _ := io.ReadAll(io.LimitReader(f, 4096))
+	head, err := io.ReadAll(io.LimitReader(f, 4096))
+	if err != nil {
+		return ""
+	}
 	lines := strings.Split(string(head), "\n")
 	if strings.TrimRight(lines[0], "\r") != "---" {
 		return ""
