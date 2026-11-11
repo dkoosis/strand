@@ -128,3 +128,17 @@ func readerAt(t *testing.T, path string) *bdcounts.Reader {
 	t.Setenv("BD_COUNTS_CACHE_DIR", filepath.Dir(path))
 	return bdcounts.NewReader()
 }
+
+// scratchCountsDir is an empty directory for a counts cache that never exists. It is
+// not t.TempDir: a write-path test spawns the post-write beadwatch refresh, which
+// honors the env var and may still be writing counts.json here when the test ends,
+// so t.TempDir's strict cleanup would fail the test. The removal is best-effort.
+func scratchCountsDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "strand-counts-") //nolint:usetesting // t.TempDir fails the test when the async refresh still writes here at cleanup (see above)
+	if err != nil {
+		t.Fatalf("mkdir counts dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
