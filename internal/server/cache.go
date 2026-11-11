@@ -332,20 +332,6 @@ func (c *snapshotCache) liveClosed(repo string) ([]bd.Issue, bool) {
 // refresh rather than appending, so a handler holding an older slice keeps a
 // valid, immutable view. Callers must treat the returned slices as read-only.
 
-// putList records a fresh List result, opening the repo's snapshot and stamping it
-// with both the wall time (the "data as of" readout) and the Dolt store key the
-// out-of-band gate compares against. A storeKey that can't read now leaves
-// storeKeyOK false, which disables the gate for this entry (freshEntryLocked) — the
-// same degrade-to-old-behavior a missing signal gets everywhere else. Kept in step
-// with publishList, which stamps the same pair on the production path.
-func (c *snapshotCache) putList(repo string, list []bd.Issue) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.gen++
-	key, keyOK := c.readStoreKey(repo)
-	c.entries[repo] = &snapshot{at: c.now(), storeKey: key, storeKeyOK: keyOK, gen: c.gen, list: list}
-}
-
 // readStoreKey reads the repo's store content key through the seam, reporting ok
 // false when there is no seam or it can't read — the one place the nil-seam and
 // unreadable-store degrades are decided, so publishList and putList stamp

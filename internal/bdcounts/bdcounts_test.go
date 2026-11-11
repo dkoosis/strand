@@ -151,3 +151,9 @@ func TestReaderStaleAndMeta(t *testing.T) {
 		}
 	})
 }
+
+// NewReaderAt points at an explicit file. Only tests need it, so it lives here and
+// not in the binary (deadcode).
+func NewReaderAt(path string) *Reader {
+	return &Reader{path: path}
+}

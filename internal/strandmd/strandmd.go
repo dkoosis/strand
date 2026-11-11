@@ -43,9 +43,6 @@ type Context struct {
 	Actors string
 }
 
-// Default returns the shipped STRAND.md template embedded in the binary.
-func Default() string { return defaultTemplate }
-
 // Load resolves the layered STRAND.md context.
 //
 // homeDir is the root that holds ~/.strand/STRAND.md; it is injected (never read

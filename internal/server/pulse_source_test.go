@@ -20,7 +20,7 @@ func pointCounts(t *testing.T, srv *Server, row string) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write counts.json: %v", err)
 	}
-	srv.counts = bdcounts.NewReaderAt(path)
+	srv.counts = readerAt(t, path)
 }
 
 // TestPulseReadsCountsCache pins the st-p1f contract: when counts.json has a row for
@@ -106,7 +106,7 @@ func pointCountsWithMeta(t *testing.T, srv *Server, row, meta string) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write counts.json: %v", err)
 	}
-	srv.counts = bdcounts.NewReaderAt(path)
+	srv.counts = readerAt(t, path)
 }
 
 // pointCountsForOtherRepo writes a well-formed counts.json that has no row for
@@ -118,5 +118,13 @@ func pointCountsForOtherRepo(t *testing.T, srv *Server) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write counts.json: %v", err)
 	}
-	srv.counts = bdcounts.NewReaderAt(path)
+	srv.counts = readerAt(t, path)
+}
+
+// readerAt points a bdcounts reader at path through the production seam: the cache
+// directory env var, which defaultPath joins with counts.json.
+func readerAt(t *testing.T, path string) *bdcounts.Reader {
+	t.Helper()
+	t.Setenv("BD_COUNTS_CACHE_DIR", filepath.Dir(path))
+	return bdcounts.NewReader()
 }

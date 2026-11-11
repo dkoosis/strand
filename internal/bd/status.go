@@ -41,9 +41,6 @@ var IssueTypes = []IssueType{
 	IssueTypeStory, IssueTypeEpic, IssueTypeChore,
 }
 
-// Valid reports whether t is a known issue kind.
-func (t IssueType) Valid() bool { return slices.Contains(IssueTypes, t) }
-
 // DepType is a dependency edge's kind. The graph view keeps only the real blocking
 // edge (DepBlocks); epic hierarchy (DepParentChild) and soft links (DepRelatesTo)
 // are filtered out. bd owns this closed set, so it lives here as a named type:

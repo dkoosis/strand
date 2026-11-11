@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
-	"github.com/dkoosis/strand/internal/bdcounts"
 	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/internal/strand"
 	"github.com/dkoosis/strand/internal/suggest"
@@ -479,7 +478,7 @@ func newTestServer(t *testing.T, src IssueSource) *Server {
 	// ~/.cache/cc-dashboard/counts.json on the machine running the suite (st-p1f).
 	// The counts.json path is asserted directly in bdcounts_test.go and via the
 	// override in the pulse-source tests.
-	srv.counts = bdcounts.NewReaderAt(filepath.Join(t.TempDir(), "counts.json"))
+	srv.counts = readerAt(t, filepath.Join(t.TempDir(), "counts.json"))
 	return srv
 }
 
@@ -632,7 +631,7 @@ func TestHomeRepoDeepLinkScopesUnregisteredRepoEphemerally(t *testing.T) {
 	}
 	srv := New(srcFor, reg, tmpl, web.Static(), strand.Synthesis{NorthStar: "x"})
 	srv.suggestLLM = func() (suggest.Completer, bool) { return nil, false }
-	srv.counts = bdcounts.NewReaderAt(filepath.Join(t.TempDir(), "counts.json"))
+	srv.counts = readerAt(t, filepath.Join(t.TempDir(), "counts.json"))
 
 	body := do(t, srv, "/?repo="+unregisteredPath).Body.String()
 	if !strings.Contains(body, `data-id="other-1"`) {
@@ -675,7 +674,7 @@ func TestHomeRepoDeepLinkCrossSiteStillScopes(t *testing.T) {
 	}
 	srv := New(srcFor, reg, tmpl, web.Static(), strand.Synthesis{NorthStar: "x"})
 	srv.suggestLLM = func() (suggest.Completer, bool) { return nil, false }
-	srv.counts = bdcounts.NewReaderAt(filepath.Join(t.TempDir(), "counts.json"))
+	srv.counts = readerAt(t, filepath.Join(t.TempDir(), "counts.json"))
 
 	rec := sendWithHeaders(t, srv, http.MethodGet, "/?repo="+unregisteredPath,
 		map[string]string{"Sec-Fetch-Site": "cross-site"})

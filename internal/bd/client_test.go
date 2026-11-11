@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 )
@@ -363,3 +364,8 @@ func TestIDValid(t *testing.T) {
 		t.Error("empty ID should be invalid")
 	}
 }
+
+// Only tests ask whether an IssueType is known, so the method lives here and not in
+// the binary (deadcode).
+// Valid reports whether t is a known issue kind.
+func (t IssueType) Valid() bool { return slices.Contains(IssueTypes, t) }
