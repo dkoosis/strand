@@ -283,3 +283,7 @@ func TestEmptyHomeDirErrors(t *testing.T) {
 		t.Errorf("Load(\"\", repo) must error to protect the real filesystem")
 	}
 }
+
+// Default returns the shipped STRAND.md template embedded in the binary. Only tests
+// read it, so it lives here and not in the binary (deadcode).
+func Default() string { return defaultTemplate }

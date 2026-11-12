@@ -430,3 +430,16 @@ func TestOpenMissingFileIsEmpty(t *testing.T) {
 		t.Error("missing-file registry reports an active repo")
 	}
 }
+
+// InMemory builds a registry with no persistence and no live check, for the tests in
+// this package that register paths that are not on disk. It lives here, not in the
+// binary: only tests call it (deadcode). Other packages build a registry through
+// Open, as production does.
+// InMemory builds a registry with no persistence, for tests and callers that
+// supply their own repos. The most-recently-used repo is active by default.
+func InMemory(repos ...Repo) *Registry {
+	r := &Registry{repos: repos}
+	r.sortLocked()
+	r.pickActiveLocked()
+	return r
+}

@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
-	"github.com/dkoosis/strand/internal/bdcounts"
 	"github.com/dkoosis/strand/internal/registry"
 	"github.com/dkoosis/strand/internal/strand"
 	"github.com/dkoosis/strand/internal/suggest"
@@ -368,7 +367,7 @@ func (s *stubBD) Close(_ context.Context, id, _ string) (*bd.Issue, error) {
 
 // demoRepo is the active repo every test server scopes to; its name labels the
 // strand the way the active repo's name does in production.
-var demoRepo = registry.Repo{Name: "demo", Path: "/demo"}
+var demoRepo = repoAt("demo")
 
 // readOnlyStub implements ONLY the readSource methods (List/Deps/Comments) — no
 // writes. It pins the narrowed seam (strand-8zg): the read helpers must depend on
@@ -467,7 +466,7 @@ func newTestServer(t *testing.T, src IssueSource) *Server {
 	if err != nil {
 		t.Fatalf("parse templates: %v", err)
 	}
-	reg := registry.InMemory(demoRepo)
+	reg := newRegistry(t, demoRepo)
 	srcFor := func(registry.Repo) IssueSource { return src }
 	srv := New(srcFor, reg, tmpl, web.Static(), strand.Synthesis{NorthStar: "remember across sessions"})
 	// Default the model gate to unavailable so the Tier-1 suggest tests stay
@@ -479,7 +478,7 @@ func newTestServer(t *testing.T, src IssueSource) *Server {
 	// ~/.cache/cc-dashboard/counts.json on the machine running the suite (st-p1f).
 	// The counts.json path is asserted directly in bdcounts_test.go and via the
 	// override in the pulse-source tests.
-	srv.counts = bdcounts.NewReaderAt(filepath.Join(t.TempDir(), "counts.json"))
+	srv.counts = readerAt(t, filepath.Join(scratchCountsDir(t), "counts.json"))
 	return srv
 }
 
@@ -623,7 +622,7 @@ func TestHomeRepoDeepLinkScopesUnregisteredRepoEphemerally(t *testing.T) {
 		t.Fatalf("seed .beads: %v", err)
 	}
 	unregisteredIssues := []bd.Issue{{ID: "other-1", Title: "Other repo's bead", IssueType: "task", Status: "open"}}
-	reg := registry.InMemory(demoRepo)
+	reg := newRegistry(t, demoRepo)
 	srcFor := func(r registry.Repo) IssueSource {
 		if r.Path == unregisteredPath {
 			return &stubBD{issues: unregisteredIssues}
@@ -632,7 +631,7 @@ func TestHomeRepoDeepLinkScopesUnregisteredRepoEphemerally(t *testing.T) {
 	}
 	srv := New(srcFor, reg, tmpl, web.Static(), strand.Synthesis{NorthStar: "x"})
 	srv.suggestLLM = func() (suggest.Completer, bool) { return nil, false }
-	srv.counts = bdcounts.NewReaderAt(filepath.Join(t.TempDir(), "counts.json"))
+	srv.counts = readerAt(t, filepath.Join(scratchCountsDir(t), "counts.json"))
 
 	body := do(t, srv, "/?repo="+unregisteredPath).Body.String()
 	if !strings.Contains(body, `data-id="other-1"`) {
@@ -666,7 +665,7 @@ func TestHomeRepoDeepLinkCrossSiteStillScopes(t *testing.T) {
 		t.Fatalf("seed .beads: %v", err)
 	}
 	unregisteredIssues := []bd.Issue{{ID: "other-1", Title: "Other repo's bead", IssueType: "task", Status: "open"}}
-	reg := registry.InMemory(demoRepo)
+	reg := newRegistry(t, demoRepo)
 	srcFor := func(r registry.Repo) IssueSource {
 		if r.Path == unregisteredPath {
 			return &stubBD{issues: unregisteredIssues}
@@ -675,7 +674,7 @@ func TestHomeRepoDeepLinkCrossSiteStillScopes(t *testing.T) {
 	}
 	srv := New(srcFor, reg, tmpl, web.Static(), strand.Synthesis{NorthStar: "x"})
 	srv.suggestLLM = func() (suggest.Completer, bool) { return nil, false }
-	srv.counts = bdcounts.NewReaderAt(filepath.Join(t.TempDir(), "counts.json"))
+	srv.counts = readerAt(t, filepath.Join(scratchCountsDir(t), "counts.json"))
 
 	rec := sendWithHeaders(t, srv, http.MethodGet, "/?repo="+unregisteredPath,
 		map[string]string{"Sec-Fetch-Site": "cross-site"})
@@ -2622,7 +2621,7 @@ func TestInsightsNoRepo(t *testing.T) {
 		t.Fatalf("parse templates: %v", err)
 	}
 	srv := New(func(registry.Repo) IssueSource { return &stubBD{} },
-		registry.InMemory(), tmpl, web.Static(), strand.Synthesis{})
+		newRegistry(t), tmpl, web.Static(), strand.Synthesis{})
 	rec := do(t, srv, "/insights")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /insights (no repo) = %d, want 200", rec.Code)
@@ -2959,11 +2958,11 @@ func TestSnapshotCacheRepoSwitchRescopes(t *testing.T) {
 	}
 	srcA := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
 	srcB := &countingBD{stubBD: stubBD{issues: sampleIssues, deps: sampleDeps}}
-	repoA := registry.Repo{Name: "alpha", Path: "/alpha"}
-	repoB := registry.Repo{Name: "bravo", Path: "/bravo"}
-	reg := registry.InMemory(repoA, repoB)
+	repoA := repoAt("alpha")
+	repoB := repoAt("bravo")
+	reg := newRegistry(t, repoA, repoB)
 	srcFor := func(r registry.Repo) IssueSource {
-		if r.Path == "/bravo" {
+		if r.Path == repoB.Path {
 			return srcB
 		}
 		return srcA
@@ -2971,13 +2970,13 @@ func TestSnapshotCacheRepoSwitchRescopes(t *testing.T) {
 	srv := New(srcFor, reg, tmpl, web.Static(), strand.Synthesis{NorthStar: "x"})
 	srv.now = func() time.Time { return cacheNow }
 
-	// Warm repoB's snapshot (InMemory makes the last-added repo active).
+	// Warm repoB's snapshot (the registry picks the active repo).
 	do(t, srv, "/")
 	bBefore := srcB.listCalls.Load()
 
 	// Switch to repoA, then load a view: it must fetch repoA's source, not serve
 	// repoB's snapshot.
-	if rec := send(t, srv, http.MethodPost, "/repo", "path=/alpha"); rec.Code != http.StatusNoContent {
+	if rec := send(t, srv, http.MethodPost, "/repo", "path="+repoA.Path); rec.Code != http.StatusNoContent {
 		t.Fatalf("POST /repo = %d, want 204", rec.Code)
 	}
 	do(t, srv, "/")

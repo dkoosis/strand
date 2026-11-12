@@ -115,3 +115,19 @@ func TestWriteFollowedByReadUsesPublishedIssue(t *testing.T) {
 		t.Fatalf("title = %q, want new", got[0].Title)
 	}
 }
+
+// putList is a test seam: production publishes through publishList, so deadcode
+// would fail it in the binary.
+// putList records a fresh List result, opening the repo's snapshot and stamping it
+// with both the wall time (the "data as of" readout) and the Dolt store key the
+// out-of-band gate compares against. A storeKey that can't read now leaves
+// storeKeyOK false, which disables the gate for this entry (freshEntryLocked) — the
+// same degrade-to-old-behavior a missing signal gets everywhere else. Kept in step
+// with publishList, which stamps the same pair on the production path.
+func (c *snapshotCache) putList(repo string, list []bd.Issue) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.gen++
+	key, keyOK := c.readStoreKey(repo)
+	c.entries[repo] = &snapshot{at: c.now(), storeKey: key, storeKeyOK: keyOK, gen: c.gen, list: list}
+}

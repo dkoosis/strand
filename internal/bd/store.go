@@ -5,41 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"time"
 )
-
-// StoreMTime reports the newest mtime of the repo's Dolt noms manifest, the file
-// Dolt rewrites on every commit — strand's out-of-band change signal. The glob
-// covers the (single) embedded database under the workspace without strand having
-// to know its name. ok is false when nothing matches or every stat fails (a non-bd
-// path, a permissions error): a missing signal degrades to the caller's pre-gate
-// behavior rather than forcing churn. Read-only — it stats, never opens, the store,
-// so it stays inside bd's "never touch Dolt directly" contract.
-//
-// This was the ONE freshness signal both strand surfaces gated on; the server's
-// snapshot cache (freshEntryLocked/checkStale) still does. The counts refresher
-// (internal/counts) has since switched to StoreContentKey below — StoreMTime moves on
-// every bd read, including the refresher's own, so gating on it never lets a repo
-// settle (st-3wp.1). The server cache self-churns the same way today; fixing it is a
-// follow-up bead, not this one. Both signals still glob the one shared path — a second
-// re-implementation of the glob is exactly the drift the shared home exists to kill
-// (st-nm5; the st-p1f failure mode).
-func StoreMTime(repoPath string) (time.Time, bool) {
-	matches, _ := filepath.Glob(filepath.Join(repoPath, ".beads", "embeddeddolt", "*", ".dolt", "noms", "manifest"))
-	var newest time.Time
-	found := false
-	for _, m := range matches {
-		fi, err := os.Stat(m)
-		if err != nil {
-			continue
-		}
-		found = true
-		if fi.ModTime().After(newest) {
-			newest = fi.ModTime()
-		}
-	}
-	return newest, found
-}
 
 // StoreContentKey reports a content-derived key for the repo's Dolt noms manifest(s):
 // FNV-1a 64 folded over each manifest's (path, content) pair, sorted by path for a
@@ -57,7 +23,7 @@ func StoreMTime(repoPath string) (time.Time, bool) {
 // directly" contract. ok is false when nothing matches or every read fails, the same
 // degrade-to-caller-behavior signal StoreMTime returns.
 func StoreContentKey(repoPath string) (int64, bool) {
-	matches, _ := filepath.Glob(filepath.Join(repoPath, ".beads", "embeddeddolt", "*", ".dolt", "noms", "manifest"))
+	matches, _ := filepath.Glob(filepath.Join(repoPath, ".beads", "embeddeddolt", "*", ".dolt", "noms", "manifest")) //nolint:errcheck // the pattern is a constant; Glob errs only on a malformed pattern
 	sort.Strings(matches)
 	h := fnv.New64a()
 	found := false

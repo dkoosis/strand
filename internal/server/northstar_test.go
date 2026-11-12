@@ -36,7 +36,7 @@ func TestMastheadReadsFileThenFlagOverrides(t *testing.T) {
 		t.Fatalf("parse templates: %v", err)
 	}
 	srcFor := func(registry.Repo) IssueSource { return &stubBD{} }
-	reg := registry.InMemory(repo)
+	reg := newRegistry(t, repo)
 
 	noFlag := New(srcFor, reg, tmpl, web.Static(), strand.Synthesis{})
 	if got := noFlag.synFor(repo).NorthStar; got != "from the file" {

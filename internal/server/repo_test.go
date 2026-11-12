@@ -42,13 +42,13 @@ func TestHeaderShowsActiveRepo(t *testing.T) {
 // TestReposMenuListsRegistered: GET /repos renders a selector row per registered
 // repo, each wired to POST /repo with its path.
 func TestReposMenuListsRegistered(t *testing.T) {
-	reg := registry.InMemory(
-		registry.Repo{Name: "alpha", Path: "/a"},
-		registry.Repo{Name: "beta", Path: "/b"},
+	reg := newRegistry(t,
+		alphaRepo,
+		betaRepo,
 	)
-	srv := serverFor(t, reg, map[string]IssueSource{"/a": &stubBD{}, "/b": &stubBD{}})
+	srv := serverFor(t, reg, map[string]IssueSource{alphaRepo.Path: &stubBD{}, betaRepo.Path: &stubBD{}})
 	body := do(t, srv, "/repos").Body.String()
-	for _, want := range []string{"alpha", "beta", `hx-post="/repo"`, `"path":"/a"`} {
+	for _, want := range []string{"alpha", "beta", `hx-post="/repo"`, `"path":"` + alphaRepo.Path + `"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("repo menu missing %q:\n%s", want, body)
 		}
@@ -59,20 +59,20 @@ func TestReposMenuListsRegistered(t *testing.T) {
 // pane then shows the new repo's beads and not the old one's, and the switch tells
 // htmx to reload so every view re-scopes (R1: switch active repo).
 func TestSwitchRepoReScopes(t *testing.T) {
-	reg := registry.InMemory(
-		registry.Repo{Name: "alpha", Path: "/a"},
-		registry.Repo{Name: "beta", Path: "/b"},
+	reg := newRegistry(t,
+		alphaRepo,
+		betaRepo,
 	)
 	stubA := &stubBD{issues: []bd.Issue{{ID: "a-1", Title: "Alpha work", Status: "open"}}}
 	stubB := &stubBD{issues: []bd.Issue{{ID: "b-1", Title: "Beta work", Status: "open"}}}
-	srv := serverFor(t, reg, map[string]IssueSource{"/a": stubA, "/b": stubB})
+	srv := serverFor(t, reg, map[string]IssueSource{alphaRepo.Path: stubA, betaRepo.Path: stubB})
 
 	// alpha is active by default (ties broken by name); the list shows its bead.
 	if body := do(t, srv, "/list").Body.String(); !strings.Contains(body, "Alpha work") {
 		t.Fatalf("default list not scoped to alpha:\n%s", body)
 	}
 
-	rec := send(t, srv, http.MethodPost, "/repo", "path=/b")
+	rec := send(t, srv, http.MethodPost, "/repo", "path="+betaRepo.Path)
 	if rec.Header().Get("HX-Redirect") != "/" {
 		t.Errorf("switch did not redirect to the unscoped landing, got %q", rec.Header().Get("HX-Redirect"))
 	}
@@ -95,23 +95,23 @@ func TestSwitchRepoReScopes(t *testing.T) {
 // and every fragment carries its own scope the same way the page's hx-vals
 // would (a bare fragment request with no param falls back to the default).
 func TestHomeRepoDeepLinkScopesPerRequest(t *testing.T) {
-	reg := registry.InMemory(
-		registry.Repo{Name: "alpha", Path: "/a"},
-		registry.Repo{Name: "beta", Path: "/b"},
+	reg := newRegistry(t,
+		alphaRepo,
+		betaRepo,
 	)
 	stubA := &stubBD{issues: []bd.Issue{{ID: "a-1", Title: "Alpha work", Status: "open"}}}
 	stubB := &stubBD{issues: []bd.Issue{{ID: "b-1", Title: "Beta work", Status: "open"}}}
-	srv := serverFor(t, reg, map[string]IssueSource{"/a": stubA, "/b": stubB})
+	srv := serverFor(t, reg, map[string]IssueSource{alphaRepo.Path: stubA, betaRepo.Path: stubB})
 
 	// alpha is active by default (ties broken by name); the deep-link names beta.
-	body := do(t, srv, "/?repo=/b").Body.String()
+	body := do(t, srv, "/?repo="+betaRepo.Path).Body.String()
 	if !strings.Contains(body, "Beta work") {
 		t.Errorf("deep-link did not scope the landing to beta:\n%s", body)
 	}
 	if strings.Contains(body, "Alpha work") {
 		t.Error("deep-link landing still shows the old active repo's beads")
 	}
-	if active, ok := reg.Active(); !ok || active.Path != "/a" {
+	if active, ok := reg.Active(); !ok || active.Path != alphaRepo.Path {
 		t.Errorf("registry active = %+v, ok=%v; a scoping GET must not re-point the default", active, ok)
 	}
 
@@ -123,7 +123,7 @@ func TestHomeRepoDeepLinkScopesPerRequest(t *testing.T) {
 
 	// A fragment that DOES carry the scope (mirroring the page's inherited
 	// hx-vals) resolves to the named repo.
-	if lb := do(t, srv, "/list?repo=/b").Body.String(); !strings.Contains(lb, "Beta work") || strings.Contains(lb, "Alpha work") {
+	if lb := do(t, srv, "/list?repo="+betaRepo.Path).Body.String(); !strings.Contains(lb, "Beta work") || strings.Contains(lb, "Alpha work") {
 		t.Errorf("fragment carrying ?repo=/b not scoped to beta:\n%s", lb)
 	}
 
@@ -136,7 +136,7 @@ func TestHomeRepoDeepLinkScopesPerRequest(t *testing.T) {
 
 	// A combined ?repo=&filter= applies both: scope repo, then the pulse cut. A
 	// trailing slash still resolves (filepath.Clean) — a hand-typed/bookmarked link.
-	cb := do(t, srv, "/?repo=/a/&filter=open").Body.String()
+	cb := do(t, srv, "/?repo="+alphaRepo.Path+"/&filter=open").Body.String()
 	if !strings.Contains(cb, "Alpha work") || strings.Contains(cb, "Beta work") {
 		t.Errorf("combined repo+filter deep-link (trailing slash) not scoped to alpha:\n%s", cb)
 	}
@@ -152,20 +152,20 @@ func TestHomeRepoDeepLinkScopesPerRequest(t *testing.T) {
 // status-line click landed on the right beads under the wrong project name —
 // which reads as "the URL doesn't match what strand displays".
 func TestSelectorNamesTheScopedRepo(t *testing.T) {
-	reg := registry.InMemory(
-		registry.Repo{Name: "alpha", Path: "/a"},
-		registry.Repo{Name: "beta", Path: "/b"},
+	reg := newRegistry(t,
+		alphaRepo,
+		betaRepo,
 	)
-	srv := serverFor(t, reg, map[string]IssueSource{"/a": &stubBD{}, "/b": &stubBD{}})
+	srv := serverFor(t, reg, map[string]IssueSource{alphaRepo.Path: &stubBD{}, betaRepo.Path: &stubBD{}})
 
-	head := headerCaption(t, do(t, srv, "/?repo=/b").Body.String())
+	head := headerCaption(t, do(t, srv, "/?repo="+betaRepo.Path).Body.String())
 	if head != "beta" {
 		t.Errorf("header caption on a ?repo=/b landing = %q, want beta", head)
 	}
 
 	// The dropdown fragment carries the same scope (the page's inherited
 	// hx-vals) and must mark the scoped row, not the registry default.
-	menu := do(t, srv, "/repos?repo=/b").Body.String()
+	menu := do(t, srv, "/repos?repo="+betaRepo.Path).Body.String()
 	i := strings.Index(menu, `class="rm-item active"`)
 	if i < 0 {
 		t.Fatalf("menu marked no row active:\n%s", menu)
@@ -201,7 +201,7 @@ func headerCaption(t *testing.T, body string) string {
 // TestEmptyStateWhenNoRepo: with no registered repo the landing renders the
 // actionable empty state, not an error dump (R1: no repos / empty).
 func TestEmptyStateWhenNoRepo(t *testing.T) {
-	srv := serverFor(t, registry.InMemory(), map[string]IssueSource{})
+	srv := serverFor(t, newRegistry(t), map[string]IssueSource{})
 	rec := do(t, srv, "/")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET / empty = %d, want 200", rec.Code)
@@ -218,8 +218,8 @@ func TestEmptyStateWhenNoRepo(t *testing.T) {
 // TestSwitchUnknownRepoSurfacesError: switching to an unregistered path re-renders
 // the menu with the error instead of scoping to nothing.
 func TestSwitchUnknownRepoSurfacesError(t *testing.T) {
-	reg := registry.InMemory(registry.Repo{Name: "alpha", Path: "/a"})
-	srv := serverFor(t, reg, map[string]IssueSource{"/a": &stubBD{}})
+	reg := newRegistry(t, alphaRepo)
+	srv := serverFor(t, reg, map[string]IssueSource{alphaRepo.Path: &stubBD{}})
 	rec := send(t, srv, http.MethodPost, "/repo", "path=/nope")
 	if rec.Header().Get("HX-Redirect") != "" {
 		t.Error("a failed switch still requested a reload")

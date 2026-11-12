@@ -15,8 +15,8 @@ import (
 // channels watching the repo that changed, and watchedRepos must report the
 // distinct set reconcileLoop needs to poll.
 var (
-	repoA = registry.Repo{Name: "a", Path: "/repo-a"}
-	repoB = registry.Repo{Name: "b", Path: "/repo-b"}
+	repoA = repoAt("repo-a")
+	repoB = repoAt("repo-b")
 )
 
 func TestBroadcastChangeScopesToItsRepo(t *testing.T) {
@@ -148,7 +148,7 @@ func TestHandleEventsRegistersRequestedRepo(t *testing.T) {
 // single-repo behavior again.
 func TestHandleEventsRegistersNonActiveRepo(t *testing.T) {
 	srv := newTestServer(t, &stubBD{})
-	srv.reg = registry.InMemory(demoRepo, repoA)
+	srv.reg = newRegistry(t, demoRepo, repoA)
 	ctx, cancel := context.WithCancel(context.Background())
 	req := httptest.NewRequest(http.MethodGet, "/events?repo="+repoA.Path, nil).WithContext(ctx)
 

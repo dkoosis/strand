@@ -15,6 +15,7 @@ linters:
 
   enable:
     # Error handling
+    - dupl
     - err113
     - errchkjson
     - errorlint
@@ -28,6 +29,8 @@ linters:
     - containedctx
     - forcetypeassert
     - forbidigo
+    - godoclint
+    - unqueryvet
     - gosec
     - noctx
     - predeclared
@@ -100,6 +103,9 @@ linters:
       ignore-interface-regexps:
         - IssueSource
     errcheck:
+      # A blank-discarded error (x, _ := f(), _ = f()) fails; a deliberate discard
+      # names itself: //nolint:errcheck // reason. Test files are exempt (exclusions).
+      check-blank: true
       # STRICT (baseline floor): only calls whose dropped error is genuinely
       # discardable — a Close on a read handle, a printer to a known-good
       # writer. Never a path/package blanket.
@@ -123,16 +129,15 @@ linters:
       # bugclasses pack (ccp-sbp, decision nug d7ea466a8172): the ruleguard
       # checker runs the shared machine rules for the recurring cross-repo Go
       # defect classes. Rules live in .golangci-rules/bugclasses.go — a verbatim
-      # copy of the upstream pack, drift-guarded by scripts/check-pack-drift.sh.
+      # copy of the upstream pack, drift-guarded by repo-standard's lint-pack rule.
       enabled-checks:
         - ruleguard
       settings:
         ruleguard:
           # ${base-path} = the .golangci.yml directory (golangci-lint v2). The
-          # glob names ONLY bugclasses.go, so rule 2 (raw-state-write, the
-          # opt-in file) stays off — strand hasn't moved durable state to
-          # atomicfile.
-          rules: "${base-path}/.golangci-rules/bugclasses.go,${base-path}/.golangci-rules/modern.go"
+          # glob names the pack files, including rule 2 (raw-state-write, the
+          # opt-in file): strand requires atomicfile, so it must run.
+          rules: "${base-path}/.golangci-rules/bugclasses.go,${base-path}/.golangci-rules/modern.go,${base-path}/.golangci-rules/optin_rawstatewrite.go"
           # Fail the run on rule-compile errors — never silently skip them.
           failOn: dsl
       disabled-checks:
@@ -200,6 +205,13 @@ linters:
       # each carries a copy of go.mod, so don't lint them as part of this module.
       - (^|/)strand-[^/]+/
     rules:
+      # check-blank applies to non-test code only: a blank assignment in a
+      # _test.go file is not reported (the lintbrush baseline's entry).
+      - path: _test\.go$
+        linters:
+          - errcheck
+        text: Error return value
+        source: '(^|[^A-Za-z0-9_.])_\s*(,\s*[A-Za-z0-9_]+\s*)*(:=|=[^=])|,\s*_\s*(:=|=[^=])'
       # Test files: relax security, complexity, context, and wrapping.
       - linters:
           - gosec

@@ -93,11 +93,6 @@ func NewReader() *Reader {
 	return &Reader{path: defaultPath()}
 }
 
-// NewReaderAt points at an explicit file — the test seam.
-func NewReaderAt(path string) *Reader {
-	return &Reader{path: path}
-}
-
 // defaultPath resolves the cache file, honoring BD_COUNTS_CACHE_DIR so a caller can
 // redirect it the way the writer does. A missing home dir falls back to a relative
 // path, which simply won't exist — Lookup then reports absent and the caller uses bd.

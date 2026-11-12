@@ -158,7 +158,10 @@ func (s *Server) resolveNugPath(ctx context.Context, path string) (string, error
 
 func fileExists(path string) bool {
 	fi, err := os.Stat(path) //nolint:gosec // a stat of the link's own path reads nothing
-	return err == nil && !fi.IsDir()
+	if err != nil {
+		return false
+	}
+	return !fi.IsDir()
 }
 
 // frontmatterID reads the id: line of a note's frontmatter, or "" when the file
@@ -169,7 +172,10 @@ func frontmatterID(path string) string {
 		return ""
 	}
 	defer func() { _ = f.Close() }()
-	head, _ := io.ReadAll(io.LimitReader(f, 4096))
+	head, err := io.ReadAll(io.LimitReader(f, 4096))
+	if err != nil {
+		return ""
+	}
 	lines := strings.Split(string(head), "\n")
 	if strings.TrimRight(lines[0], "\r") != "---" {
 		return ""

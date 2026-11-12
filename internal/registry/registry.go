@@ -42,8 +42,8 @@ type Repo struct {
 // concurrent HTTP requests can read and switch safely. file is the persistence
 // path; an empty file means in-memory (tests), with no disk reads or writes.
 // liveCheck is set by Open: a repo whose folder has gone since Open (deleted
-// while strand runs) is dropped before it can serve as the default. InMemory
-// leaves it off so tests can register paths that are not on disk.
+// while strand runs) is dropped before it can serve as the default. The in-package
+// test constructor leaves it off so tests can register paths that are not on disk.
 type Registry struct {
 	mu        sync.Mutex
 	file      string
@@ -58,7 +58,7 @@ type Registry struct {
 func ConfigPath() string {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
-		home, _ := os.UserHomeDir()
+		home, _ := os.UserHomeDir() //nolint:errcheck // no home dir leaves home empty, so the config path is relative; best-effort fallback
 		base = filepath.Join(home, ".config")
 	}
 	return filepath.Join(base, "strand", "repos.json")
@@ -67,7 +67,10 @@ func ConfigPath() string {
 // ScanRoot is the directory tree discovery walks: the user's home directory, so
 // workspaces outside ~/Projects (a nugbase, a scratch repo) are found too.
 func ScanRoot() string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "" // discover treats an empty root as nothing to scan
+	}
 	return home
 }
 
@@ -89,15 +92,6 @@ func Open(file, scanRoot string) (*Registry, error) {
 		return nil, err
 	}
 	return r, nil
-}
-
-// InMemory builds a registry with no persistence, for tests and callers that
-// supply their own repos. The most-recently-used repo is active by default.
-func InMemory(repos ...Repo) *Registry {
-	r := &Registry{repos: repos}
-	r.sortLocked()
-	r.pickActiveLocked()
-	return r
 }
 
 // Repos returns the known repos in most-recently-used order. The slice is a copy;
@@ -423,7 +417,7 @@ func discover(root string) []Repo {
 		return nil
 	}
 	var out []Repo
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error { //nolint:errcheck // best-effort discovery: the callback skips unreadable entries and never returns a real error
 		if d == nil || !d.IsDir() {
 			return nil
 		}

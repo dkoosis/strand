@@ -40,7 +40,7 @@ jobs:
             echo "run_check=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # The docs-only set is conform-to-sdlc's (ci-docs-skip): drop entries to
+          # The docs-only set is repo-standard's (ci-docs-skip): drop entries to
           # narrow it; adding one is a finding.
           run_check="$(git diff --name-status --no-renames "$base" "$head" | awk -F'\t' '
             NF < 2 { next }

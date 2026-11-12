@@ -199,7 +199,7 @@ const externalFreshnessBound = 2 * time.Second
 // portable (no syscall import); main already listens for it. Tests replace it.
 func defaultShutdown() {
 	if p, err := os.FindProcess(os.Getpid()); err == nil {
-		_ = p.Signal(os.Interrupt)
+		_ = p.Signal(os.Interrupt) //nolint:errcheck // no caller to report to; a failed self-signal leaves the process running, as the Quit button already shows
 	}
 }
 
@@ -217,7 +217,7 @@ func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, sta
 	s.events = make(map[chan struct{}]registry.Repo)
 	s.cache.onChange = func(repo string) { s.broadcastChange(repo) }
 	s.suggestLLM = defaultSuggestLLM
-	s.homeDir, _ = os.UserHomeDir()
+	s.homeDir, _ = os.UserHomeDir() //nolint:errcheck // no home dir leaves homeDir empty, which the nug path code treats as unset
 	s.nugPath = defaultNugPath
 	s.openURL = defaultOpenURL
 	s.nugVaults = defaultNugVaults
@@ -402,7 +402,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// (dropping every open tab and forcing an EventSource reconnect) even though
 	// the connection is healthy. Clear it for this handler only.
 	if rc := http.NewResponseController(w); rc != nil {
-		_ = rc.SetWriteDeadline(time.Time{})
+		_ = rc.SetWriteDeadline(time.Time{}) //nolint:errcheck // a writer without deadline support (ErrNotSupported) just keeps its default; the stream still works
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -715,7 +715,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	// prefetch failure is non-fatal — the landing renders and Insights fetches its
 	// own deps on demand.
 	s.goBackground(10*time.Second, func(ctx context.Context) {
-		_, _ = src.Deps(ctx)
+		_, _ = src.Deps(ctx) //nolint:errcheck // warm-up prefetch: a failure is non-fatal, Insights fetches its own deps on demand
 	})
 	// A deep-link `/?filter=<token>` (the status line's OSC 8 links) opens the
 	// landing with a masthead-pulse cut already applied to the List pane — the same
@@ -2268,7 +2268,7 @@ func (s *Server) renderStatus(w http.ResponseWriter, name string, data any, code
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(code)
-	_, _ = buf.WriteTo(w)
+	_, _ = buf.WriteTo(w) //nolint:errcheck // the status line is already sent; a client that went away cannot be told
 	return nil
 }
 
