@@ -2,6 +2,8 @@ module github.com/dkoosis/strand
 
 go 1.26.11
 
+toolchain go1.27.4
+
 require (
 	github.com/anthropics/anthropic-sdk-go v1.52.0
 	github.com/dkoosis/atomicfile v0.0.0-20260811102456-9091c28d4820
