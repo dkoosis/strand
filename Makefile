@@ -43,17 +43,15 @@ vet: ## Run go vet
 tidy: ## Tidy go.mod/go.sum
 	go mod tidy
 
-# repo-standard is the fleet checker, pinned by version (go run <pkg>@$(VER)).
-# v0.4.0 is the first tag that holds the module under this name and the omitempty command.
-REPO_STANDARD_VER := v0.4.0
-OMITEMPTYSCALAR_VER := v0.4.0
+# Tool pins for go-run tools (repo-standard is not pinned: standard runs current main).
+OMITEMPTYSCALAR_VER := v0.4.1
 NILAWAY_VER := v0.0.0-20260918162853-acb8859b9031
 GOVULNCHECK_VER := v1.9.0
 DEADCODE_VER := v0.52.0
 JSCPD_VER := 5.1.2
 
-standard: ## Run repo-standard (fleet checker, pinned) against this repo
-	go run github.com/dkoosis/repo-standard/cmd/repo-standard@$(REPO_STANDARD_VER)
+standard: ## Run repo-standard (fleet checker, current main) against this repo
+	GOPRIVATE=github.com/dkoosis/repo-standard go run github.com/dkoosis/repo-standard/cmd/repo-standard@main
 
 # check is the fast local gate; CI runs the same verb. standard runs last so it
 # grades the tree the rest of the gate passed.
