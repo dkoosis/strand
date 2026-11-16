@@ -44,7 +44,7 @@ tidy: ## Tidy go.mod/go.sum
 	go mod tidy
 
 # Tool pins for go-run tools (repo-standard is not pinned: standard runs current main).
-OMITEMPTYSCALAR_VER := v0.4.0
+OMITEMPTYSCALAR_VER := v0.4.1
 NILAWAY_VER := v0.0.0-20260918162853-acb8859b9031
 GOVULNCHECK_VER := v1.9.0
 DEADCODE_VER := v0.52.0
