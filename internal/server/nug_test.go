@@ -29,6 +29,7 @@ func nugServer(t *testing.T) (srv *Server, opened *[]string) {
 		return "", fmt.Errorf("%w: no nug has id %q", bd.ErrNotFound, id)
 	}
 	srv.nugVaults = func() []string { return []string{"/Users/dk/nugbases/dk"} }
+	srv.nugOpenDelay = 0
 	srv.openURL = func(_ context.Context, link string) error {
 		*opened = append(*opened, link)
 		return nil
@@ -84,12 +85,23 @@ func TestNugLinkOpensObsidian(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			srv, opened := nugServer(t)
 			rec := httptest.NewRecorder()
+			// st-62i: the page is written and flushed before Obsidian opens, so
+			// Obsidian is activated after the browser and stays in front.
+			var flushedFirst bool
+			srv.openURL = func(_ context.Context, link string) error {
+				flushedFirst = rec.Flushed && strings.Contains(rec.Body.String(), "</html>")
+				*opened = append(*opened, link)
+				return nil
+			}
 			srv.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.target, nil))
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
 			}
 			if len(*opened) != 1 || (*opened)[0] != want {
 				t.Fatalf("opened = %v, want [%s]", *opened, want)
+			}
+			if !flushedFirst {
+				t.Error("Obsidian opened before the page was written and flushed")
 			}
 			body := rec.Body.String()
 			if !strings.Contains(body, "window.close()") {

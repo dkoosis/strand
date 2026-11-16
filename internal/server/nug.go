@@ -16,7 +16,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dkoosis/strand/internal/bd"
 )
@@ -78,20 +80,44 @@ func (s *Server) handleNug(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	link := obsidianURL(registeredPath(path, s.nugVaults()))
-	opened := false
-	if sameSite(r) {
-		if err := s.openURL(ctx, link); err != nil {
-			log.Printf("strand: open %s: %v", link, err)
-		} else {
-			opened = true
-		}
+	launch := sameSite(r)
+	// The page goes out and is flushed before Obsidian opens (st-62i). The
+	// terminal brings the browser forward for the new tab; Obsidian, activated
+	// last, then stays in front. The page says "Opened" before the open runs;
+	// a failed open is logged and the page's link still works.
+	data := nugPageData{Title: strings.TrimSuffix(filepath.Base(path), ".md"), Link: template.URL(link), Opened: launch} //nolint:gosec // link is obsidianURL's own construction over an escaped path
+	var page bytes.Buffer
+	if err := nugPage.Execute(&page, data); err != nil {
+		s.renderError(w, err)
+		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	data := nugPageData{Title: strings.TrimSuffix(filepath.Base(path), ".md"), Link: template.URL(link), Opened: opened} //nolint:gosec // link is obsidianURL's own construction over an escaped path
-	if err := nugPage.Execute(w, data); err != nil {
-		log.Printf("strand: render nug page: %v", err)
+	w.Header().Set("Content-Length", strconv.Itoa(page.Len()))
+	if _, err := w.Write(page.Bytes()); err != nil {
+		log.Printf("strand: write nug page: %v", err)
+	}
+	if err := http.NewResponseController(w).Flush(); err != nil {
+		log.Printf("strand: flush nug page: %v", err)
+	}
+	if !launch {
+		return
+	}
+	// The page closes its own tab, which may drop the connection; the open must
+	// outlive that, so it does not hang off the request's context.
+	openCtx, openCancel := context.WithTimeout(context.WithoutCancel(r.Context()), nugOpenTimeout)
+	defer openCancel()
+	time.Sleep(s.nugOpenDelay)
+	if err := s.openURL(openCtx, link); err != nil {
+		log.Printf("strand: open %s: %v", link, err)
 	}
 }
+
+// nugOpenDelay is the pause between flushing the nug page and opening
+// Obsidian, so the browser's own activation for the new tab lands first.
+const nugOpenDelay = 250 * time.Millisecond
+
+// nugOpenTimeout bounds the open after the page has gone out.
+const nugOpenTimeout = 10 * time.Second
 
 // nugNotFoundPage answers a link no nug answers to: a page, never a dead
 // obsidian:// redirect.

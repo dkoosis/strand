@@ -159,6 +159,9 @@ type Server struct {
 	// (default: macOS open); tests swap both so /nug never shells out.
 	nugPath func(ctx context.Context, id string) (string, error)
 	openURL func(ctx context.Context, link string) error
+	// nugOpenDelay is the pause after the nug page is flushed and before
+	// openURL runs (st-62i); tests set it to zero.
+	nugOpenDelay time.Duration
 	// nugVaults lists the Obsidian vault paths as Obsidian registers them.
 	nugVaults func() []string
 
@@ -220,6 +223,7 @@ func New(srcFor SourceFunc, reg *registry.Registry, tmpl *template.Template, sta
 	s.homeDir, _ = os.UserHomeDir() //nolint:errcheck // no home dir leaves homeDir empty, which the nug path code treats as unset
 	s.nugPath = defaultNugPath
 	s.openURL = defaultOpenURL
+	s.nugOpenDelay = nugOpenDelay
 	s.nugVaults = defaultNugVaults
 	s.start = sync.OnceFunc(func() { s.goBackground(0, s.reconcileLoop) })
 	return s
