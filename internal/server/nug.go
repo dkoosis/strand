@@ -84,7 +84,7 @@ func (s *Server) handleNug(w http.ResponseWriter, r *http.Request) {
 	// The page goes out and is flushed before Obsidian opens (st-62i). The
 	// terminal brings the browser forward for the new tab; Obsidian, activated
 	// last, then stays in front. The page says "Opened" before the open runs;
-	// a failed open is logged and the page's link still works.
+	// a failed open is only logged, since the page has already closed its tab.
 	data := nugPageData{Title: strings.TrimSuffix(filepath.Base(path), ".md"), Link: template.URL(link), Opened: launch} //nolint:gosec // link is obsidianURL's own construction over an escaped path
 	var page bytes.Buffer
 	if err := nugPage.Execute(&page, data); err != nil {
